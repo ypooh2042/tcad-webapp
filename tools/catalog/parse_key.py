@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """Parse SUPREM-IV.GS `suprem.key` into a JSON command catalog.
 
+NOTE: this is the original exploration script, kept for one-off inspection.
+The webapp does NOT use it — see backend/app/catalog/ instead.
+
+It differs from the app parser in one way that matters: it emits names exactly
+as written in suprem.key.  At run time the simulator reads suprem.uk, where
+names are truncated to 11 characters, and resolution is by prefix — so a token
+LONGER than the stored name matches nothing.  `concentration` is rejected;
+`concentrati` works.  Do not feed this file's output to an editor's
+autocomplete: it would produce code that does not run.
+
 Grammar (inferred from the file header + the file itself):
 
     file        := stmt*
