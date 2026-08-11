@@ -5,7 +5,7 @@
  * 구조에는 arsenic 컬럼이 아예 없다. 그래서 단계를 옮기면 무엇을 그릴 수 있는지
  * 부터 다시 물어야 한다.
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ResultView } from './ResultView'
@@ -174,5 +174,54 @@ describe('경고와 오류', () => {
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/정리되어/)
+  })
+})
+
+describe('단계 비교', () => {
+  it('단계가 하나면 비교 선택이 없다', async () => {
+    render(<ResultView jobId={1} artifacts={[ARTIFACTS[0]!]} />)
+    await screen.findByText(/after_implant/)
+
+    expect(screen.queryByLabelText('비교')).not.toBeInTheDocument()
+  })
+
+  it('현재 단계는 비교 대상에서 뺀다', async () => {
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+
+    const select = await screen.findByLabelText('비교')
+    const options = within(select).getAllByRole('option').map((o) => o.textContent)
+    expect(options).toEqual(['없음', 'after_diffuse.str'])
+  })
+
+  it('고른 단계의 프로파일을 같은 조건으로 읽는다', async () => {
+    // 물리량과 컷 위치가 다르면 비교가 의미를 잃는다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await screen.findByLabelText('비교')
+    plot.profile.mockClear()
+
+    await userEvent.selectOptions(screen.getByLabelText('비교'), '2')
+
+    await waitFor(() =>
+      expect(plot.profile).toHaveBeenCalledWith(1, 2, 'chem_boron', undefined),
+    )
+  })
+
+  it('비교를 끄면 겹친 선이 사라진다', async () => {
+    // 같은 이름이 비교 <option> 에도 있으므로 범례 안에서만 찾는다.
+    const { container } = render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await userEvent.selectOptions(await screen.findByLabelText('비교'), '2')
+    await waitFor(() =>
+      expect(container.querySelector('.legend')).toHaveTextContent(
+        'after_diffuse.str',
+      ),
+    )
+
+    await userEvent.selectOptions(screen.getByLabelText('비교'), '')
+
+    await waitFor(() =>
+      expect(container.querySelector('.legend')).not.toHaveTextContent(
+        'after_diffuse.str',
+      ),
+    )
   })
 })

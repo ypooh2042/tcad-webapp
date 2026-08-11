@@ -82,7 +82,7 @@ input:focus { outline: none; border-color: var(--accent); }
 .toolbar .message { color: var(--muted); font-size: 13px; }
 .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
 
-.workspace main { flex: 1; display: grid; grid-template-columns: 1fr 420px; min-height: 0; }
+.workspace main { flex: 1; display: grid; min-height: 0; }
 .workspace .editor { min-height: 0; border-right: 1px solid var(--border); }
 .workspace aside { min-height: 0; overflow: auto; }
 
@@ -207,7 +207,7 @@ select {
 
 /* ── 매뉴얼 ──────────────────────────────────────────────── */
 
-.workspace main.with-docs { grid-template-columns: 1fr 360px 400px; }
+
 
 .docs {
   min-height: 0;
@@ -266,3 +266,16 @@ select {
 .badge.warn { background: #4a3a1a; color: #ff9f43; }
 .badge.error { background: #4a1f1f; color: var(--error); }
 .badge.group { background: var(--border); color: var(--muted); }
+
+/* 크기 조절 손잡이. 얇으면 잡기 어려우므로 보이는 선보다 넓게 잡는다. */
+.splitter {
+  width: 7px;
+  cursor: col-resize;
+  background: var(--border);
+  border: none;
+  padding: 0;
+  flex: none;
+}
+.splitter:hover, .splitter:focus-visible { background: var(--accent); outline: none; }
+/* 드래그 중 텍스트가 선택되면 화면이 파랗게 물든다. */
+body.resizing { user-select: none; cursor: col-resize; }

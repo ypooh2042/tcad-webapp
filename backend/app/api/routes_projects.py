@@ -14,6 +14,7 @@ from app.projects.service import (
     add_revision,
     create_project,
     get_owned_project,
+    latest_revision,
     list_projects,
 )
 
@@ -40,6 +41,10 @@ class RevisionCreate(BaseModel):
 class RevisionResponse(BaseModel):
     id: int
     revision: int
+
+
+class RevisionWithSource(RevisionResponse):
+    source: str
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -77,6 +82,29 @@ async def create_revision(
     project = await _owned_or_404(db, project_id, session)
     revision = await add_revision(db, project, payload.source)
     return RevisionResponse(id=revision.id, revision=revision.revision)
+
+
+@router.get("/{project_id}/revisions/latest")
+async def latest(
+    project_id: int,
+    session: Session = Depends(current_session),
+    db: AsyncSession = Depends(get_db),
+) -> RevisionWithSource:
+    """마지막으로 저장한 소스.
+
+    프로젝트를 열 때 편집기를 채우는 데 쓴다. 이게 없으면 탭을 눌러도 이전
+    프로젝트의 내용이 그대로 남아, 사용자가 엉뚱한 소스를 고치게 된다.
+    """
+    project = await _owned_or_404(db, project_id, session)
+    revision = await latest_revision(db, project)
+    if revision is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="저장된 소스가 없습니다",
+        )
+    return RevisionWithSource(
+        id=revision.id, revision=revision.revision, source=revision.source
+    )
 
 
 async def _owned_or_404(db: AsyncSession, project_id: int, session: Session):

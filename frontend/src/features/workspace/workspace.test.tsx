@@ -17,6 +17,7 @@ const { auth, projects, jobs, plot, admin, docs } = vi.hoisted(() => ({
     list: vi.fn(),
     create: vi.fn(),
     saveSource: vi.fn(),
+    latestSource: vi.fn(),
     submit: vi.fn(),
     jobs: vi.fn(),
   },
@@ -57,6 +58,7 @@ beforeEach(() => {
   docs.search.mockResolvedValue({ query: '', hits: [] })
   projects.list.mockResolvedValue([PROJECT])
   projects.saveSource.mockResolvedValue({ id: 1, revision: 1 })
+  projects.latestSource.mockResolvedValue({ id: 1, revision: 1, source: '저장된 소스\n' })
   projects.submit.mockResolvedValue({ id: 42, status: 'queued', source_revision_id: 1 })
   plot.summary.mockResolvedValue({
     filename: 'result.str',
@@ -247,5 +249,80 @@ describe('매뉴얼 패널', () => {
 
     await userEvent.click(screen.getByRole('button', { name: '매뉴얼 닫기' }))
     expect(screen.queryByLabelText('매뉴얼 검색')).not.toBeInTheDocument()
+  })
+})
+
+
+describe('프로젝트 전환', () => {
+  const SECOND = { id: 8, name: 'nmos' }
+
+  it('연 프로젝트의 저장된 소스를 편집기에 채운다', async () => {
+    renderWorkspace()
+
+    expect(await screen.findByDisplayValue(/저장된 소스/)).toBeInTheDocument()
+  })
+
+  it('탭을 누르면 그 프로젝트를 읽는다', async () => {
+    // 이게 안 되면 탭만 강조되고 편집기에는 이전 내용이 남는다.
+    projects.list.mockResolvedValue([PROJECT, SECOND])
+    renderWorkspace()
+    await screen.findByRole('button', { name: 'nmos' })
+    projects.latestSource.mockClear()
+
+    await userEvent.click(screen.getByRole('button', { name: 'nmos' }))
+
+    await waitFor(() => expect(projects.latestSource).toHaveBeenCalledWith(8))
+  })
+
+  it('저장한 적 없는 프로젝트는 예제로 시작한다', async () => {
+    const { ApiError } = await import('../../api/client')
+    projects.latestSource.mockRejectedValue(
+      new ApiError(404, '저장된 소스가 없습니다', null),
+    )
+    renderWorkspace()
+
+    expect(await screen.findByDisplayValue(/mode one.dim/)).toBeInTheDocument()
+  })
+
+  it('저장하지 않은 편집이 있으면 먼저 묻는다', async () => {
+    // 말없이 덮어쓰면 사용자는 방금 쓴 것을 잃고 이유도 모른다.
+    projects.list.mockResolvedValue([PROJECT, SECOND])
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderWorkspace()
+    await screen.findByRole('button', { name: 'nmos' })
+    await userEvent.type(screen.getByLabelText('소스'), 'x')
+    projects.latestSource.mockClear()
+
+    await userEvent.click(screen.getByRole('button', { name: 'nmos' }))
+
+    expect(confirm).toHaveBeenCalled()
+    expect(projects.latestSource).not.toHaveBeenCalled()
+    confirm.mockRestore()
+  })
+
+  it('버리기로 하면 이동한다', async () => {
+    projects.list.mockResolvedValue([PROJECT, SECOND])
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderWorkspace()
+    await screen.findByRole('button', { name: 'nmos' })
+    await userEvent.type(screen.getByLabelText('소스'), 'x')
+    projects.latestSource.mockClear()
+
+    await userEvent.click(screen.getByRole('button', { name: 'nmos' }))
+
+    await waitFor(() => expect(projects.latestSource).toHaveBeenCalledWith(8))
+    confirm.mockRestore()
+  })
+
+  it('같은 탭을 다시 눌러도 묻지 않는다', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderWorkspace()
+    await screen.findByRole('button', { name: 'cmos' })
+    await userEvent.type(screen.getByLabelText('소스'), 'x')
+
+    await userEvent.click(screen.getByRole('button', { name: 'cmos' }))
+
+    expect(confirm).not.toHaveBeenCalled()
+    confirm.mockRestore()
   })
 })

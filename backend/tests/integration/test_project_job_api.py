@@ -277,3 +277,48 @@ class TestJobVisibility:
 
         assert (await bob.get(f"/api/projects/{project_id}/jobs")).status_code == 404
         assert len((await alice.get(f"/api/projects/{project_id}/jobs")).json()) == 1
+
+
+class TestLoadingSource:
+    """프로젝트를 열면 저장해 둔 소스가 나와야 한다.
+
+    이게 없으면 탭을 눌러도 편집기에는 이전 프로젝트의 내용이 그대로 남는다 —
+    사용자는 다른 프로젝트를 보고 있다고 믿으면서 엉뚱한 소스를 고치게 된다.
+    """
+
+    async def test_returns_the_latest_revision(self, alice) -> None:
+        project_id = await make_project_with_source(alice)
+        await alice.post(
+            f"/api/projects/{project_id}/revisions", json={"source": "second\n"}
+        )
+
+        body = (
+            await alice.get(f"/api/projects/{project_id}/revisions/latest")
+        ).json()
+
+        assert body["source"] == "second\n"
+        assert body["revision"] == 2
+
+    async def test_project_without_source_is_404(self, alice) -> None:
+        project_id = (
+            await alice.post("/api/projects", json={"name": "empty"})
+        ).json()["id"]
+
+        response = await alice.get(f"/api/projects/{project_id}/revisions/latest")
+
+        assert response.status_code == 404
+
+    async def test_other_users_project_is_404(self, alice, bob) -> None:
+        project_id = await make_project_with_source(alice)
+
+        response = await bob.get(f"/api/projects/{project_id}/revisions/latest")
+
+        assert response.status_code == 404
+
+    async def test_anonymous_is_rejected(self, app) -> None:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as anon:
+            response = await anon.get("/api/projects/1/revisions/latest")
+
+        assert response.status_code == 401

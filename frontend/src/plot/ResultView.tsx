@@ -14,7 +14,7 @@ import type {
   StructureSummary,
   SurfaceResponse,
 } from '../api/types'
-import { ProfileChart } from './ProfileChart'
+import { ProfileChart, type Series } from './ProfileChart'
 import { SurfaceView } from './SurfaceView'
 
 interface Props {
@@ -30,6 +30,10 @@ export function ResultView({ jobId, artifacts }: Props) {
   const [surface, setSurface] = useState<SurfaceResponse | null>(null)
   const [cutX, setCutX] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  //: 겹쳐 볼 다른 공정 단계. 확산이 프로파일을 얼마나 넓혔는지 같은 것은
+  //: 두 그림을 번갈아 봐서는 알 수 없다.
+  const [compareTo, setCompareTo] = useState<number | null>(null)
+  const [overlay, setOverlay] = useState<Series[]>([])
 
   const current = artifacts[Math.min(step, artifacts.length - 1)]
   const sequence = current?.sequence ?? null
@@ -109,6 +113,36 @@ export function ResultView({ jobId, artifacts }: Props) {
     }
   }, [jobId, sequence, summary, quantity, report])
 
+  // 비교 대상 단계의 프로파일을 따로 읽는다. 같은 물리량·같은 컷 위치여야
+  // 비교가 의미를 가진다.
+  useEffect(() => {
+    if (compareTo === null || !summary || !quantity) {
+      setOverlay([])
+      return
+    }
+    let cancelled = false
+
+    plot
+      .profile(
+        jobId,
+        compareTo,
+        quantity,
+        summary.dimension === 2 ? (cutX ?? undefined) : undefined,
+      )
+      .then((next) => {
+        if (cancelled) return
+        const name =
+          artifacts.find((a) => a.sequence === compareTo)?.filename ??
+          `#${compareTo}`
+        setOverlay([{ label: name, points: next.points, color: '#ff9f43' }])
+      })
+      .catch(() => !cancelled && setOverlay([]))
+
+    return () => {
+      cancelled = true
+    }
+  }, [jobId, compareTo, quantity, summary, cutX, artifacts])
+
   if (artifacts.length === 0) {
     return <p className="muted">저장된 구조가 없습니다. `structure out=` 을 넣어 보세요.</p>
   }
@@ -151,6 +185,29 @@ export function ResultView({ jobId, artifacts }: Props) {
             </option>
           ))}
         </select>
+        {artifacts.length > 1 && (
+          <>
+            <label htmlFor="compare">비교</label>
+            <select
+              id="compare"
+              value={compareTo ?? ''}
+              onChange={(event) =>
+                setCompareTo(
+                  event.target.value ? Number(event.target.value) : null,
+                )
+              }
+            >
+              <option value="">없음</option>
+              {artifacts
+                .filter((a) => a.sequence !== sequence)
+                .map((a) => (
+                  <option key={a.sequence} value={a.sequence}>
+                    {a.filename}
+                  </option>
+                ))}
+            </select>
+          </>
+        )}
         {summary && (
           <span className="muted">
             {summary.dimension}D · 노드 {summary.node_count}
@@ -174,7 +231,11 @@ export function ResultView({ jobId, artifacts }: Props) {
       )}
 
       {profile && quantity && (
-        <ProfileChart points={profile.points} quantity={quantity} />
+        <ProfileChart
+          points={profile.points}
+          quantity={quantity}
+          overlays={overlay}
+        />
       )}
     </div>
   )

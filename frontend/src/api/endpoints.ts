@@ -12,6 +12,7 @@ import type {
   ProfileResponse,
   Project,
   Revision,
+  RevisionWithSource,
   StructureSummary,
   SurfaceResponse,
   User,
@@ -42,6 +43,10 @@ export const projects = {
 
   create: (name: string) =>
     request<Project>('/api/projects', { method: 'POST', body: { name } }),
+
+  /** 마지막으로 저장한 소스. 프로젝트를 열 때 편집기를 채운다. */
+  latestSource: (projectId: number) =>
+    request<RevisionWithSource>(`/api/projects/${projectId}/revisions/latest`),
 
   saveSource: (projectId: number, source: string) =>
     request<Revision>(`/api/projects/${projectId}/revisions`, {
@@ -134,6 +139,7 @@ export type {
   ProfileResponse,
   Project,
   Revision,
+  RevisionWithSource,
   StructureSummary,
   SurfaceResponse,
   User,

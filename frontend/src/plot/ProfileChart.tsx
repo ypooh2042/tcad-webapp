@@ -45,16 +45,37 @@ function formatDepth(value: number, step: number): string {
   return value.toFixed(decimals)
 }
 
+export interface Series {
+  /** 범례에 쓸 이름. 무엇과 무엇을 비교 중인지 알려면 필요하다. */
+  label: string
+  points: ProfilePoint[]
+  color: string
+}
+
 interface Props {
   points: ProfilePoint[]
   quantity: string
+  /**
+   * 함께 그릴 다른 프로파일.
+   *
+   * 공정 단계 비교(주입 전/후)나 물리량 비교(chem vs active)에 쓴다. 겹쳐 두면
+   * 확산이 프로파일을 얼마나 넓혔는지 한눈에 보인다 — 두 그림을 번갈아 보면서는
+   * 알 수 없다.
+   *
+   * 재질 구분은 하지 않는다. 겹쳐 보기의 관심은 "무엇이 달라졌나"이지 층 구조가
+   * 아니고, 선마다 재질별로 또 나누면 색이 뒤엉킨다.
+   */
+  overlays?: Series[]
 }
 
-export function ProfileChart({ points, quantity }: Props) {
+export function ProfileChart({ points, quantity, overlays = [] }: Props) {
   const chart = useMemo(() => {
-    // 절댓값을 축에 올린다. 부호는 선 모양으로 구분한다.
-    const domain = toLogDomain(points.map((point) => Math.abs(point.value)))
-    const depths = points.map((point) => point.depth)
+    const overlayPoints = overlays.flatMap((series) => series.points)
+    // 축은 겹친 것까지 모두 담아야 한다. 기준선만 보고 잡으면 비교 대상이
+    // 화면 밖으로 나간다.
+    const all = [...points, ...overlayPoints]
+    const domain = toLogDomain(all.map((point) => Math.abs(point.value)))
+    const depths = all.map((point) => point.depth)
     const depthMin = Math.min(...depths, 0)
     const depthMax = Math.max(...depths, 0)
 
@@ -85,9 +106,9 @@ export function ProfileChart({ points, quantity }: Props) {
       segments: splitByMaterial(points),
       ticks: logTicks(domain.min, domain.max),
       depthTicks: linearTicks(depthMin, depthMax),
-      hasNegative: points.some((point) => point.value < 0),
+      hasNegative: all.some((point) => point.value < 0),
     }
-  }, [points])
+  }, [points, overlays])
 
   if (points.length === 0) {
     return <p className="muted">그릴 데이터가 없습니다.</p>
@@ -162,6 +183,23 @@ export function ProfileChart({ points, quantity }: Props) {
           />
         )}
 
+        {/* 겹친 선을 먼저 그려 기준선이 위에 오게 한다. */}
+        {overlays.map((series) =>
+          splitByMaterial(series.points).map((segment, index) => (
+            <polyline
+              key={`${series.label}-${index}`}
+              fill="none"
+              stroke={series.color}
+              strokeWidth={1.4}
+              strokeOpacity={0.75}
+              strokeDasharray={segment.negative ? '5 3' : undefined}
+              points={segment.points
+                .map((point) => `${chart.xOf(point.depth)},${chart.yOf(point.value)}`)
+                .join(' ')}
+            />
+          )),
+        )}
+
         {chart.segments.map((segment, index) => (
           <polyline
             key={`${segment.material}-${index}`}
@@ -188,12 +226,28 @@ export function ProfileChart({ points, quantity }: Props) {
 
       <figcaption>
         <span className="legend">
-          {[...new Set(chart.segments.map((s) => s.material))].map((material) => (
-            <span key={material}>
-              <i style={{ background: colorOf(material) }} />
-              {material}
-            </span>
-          ))}
+          {overlays.length === 0 ? (
+            // 겹친 것이 없으면 층 구조를 보여주는 편이 유용하다.
+            [...new Set(chart.segments.map((s) => s.material))].map((material) => (
+              <span key={material}>
+                <i style={{ background: colorOf(material) }} />
+                {material}
+              </span>
+            ))
+          ) : (
+            <>
+              <span>
+                <i style={{ background: colorOf('silicon') }} />
+                {quantity}
+              </span>
+              {overlays.map((series) => (
+                <span key={series.label}>
+                  <i style={{ background: series.color }} />
+                  {series.label}
+                </span>
+              ))}
+            </>
+          )}
         </span>
         {chart.hasNegative && (
           // 버리지 않고 절댓값으로 그린다. 어느 쪽이 음수인지 알려주지 않으면

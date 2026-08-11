@@ -152,3 +152,47 @@ class TestVerticalCut:
     def test_rejects_1d_structure(self, boron_1d) -> None:
         with pytest.raises(ValueError, match="2D"):
             vertical_cut(boron_1d, x=0.0, quantity="chem_boron")
+
+
+class TestInterfaceOrdering:
+    """계면에서 같은 깊이에 놓인 두 점의 순서.
+
+    재질명 알파벳순으로 정렬하면 물리적 적층과 어긋난다. CMOS 게이트에서 실제로
+    겪었다 — x=2.0 의 적층은 oxide/poly/oxide/silicon 인데, 깊이 -0.00129 에서
+    poly 가 끝나고 oxide 가 시작하는 자리를 알파벳순(oxide < poly)으로 놓는
+    바람에 poly 층이 고립된 두 점으로 쪼개져 선이 그려지지 않았다.
+
+    같은 깊이에서는 **앞 구간을 잇는 재질이 먼저** 와야 한다.
+    """
+
+    def test_material_runs_follow_the_stack(self, cmos_2d) -> None:
+        cut = vertical_cut(cmos_2d, x=2.0, quantity="chem_boron")
+
+        runs: list[str] = []
+        for point in cut.points:
+            if not runs or runs[-1] != point.material:
+                runs.append(point.material)
+
+        assert runs == ["oxide", "poly", "oxide", "silicon"]
+
+    def test_each_layer_keeps_its_points_together(self, cmos_2d) -> None:
+        """한 층의 점들이 흩어지면 선이 끊겨 그려진다."""
+        cut = vertical_cut(cmos_2d, x=2.0, quantity="chem_boron")
+
+        seen: dict[str, int] = {}
+        runs = 0
+        previous = None
+        for point in cut.points:
+            if point.material != previous:
+                runs += 1
+                seen[point.material] = seen.get(point.material, 0) + 1
+            previous = point.material
+
+        # poly 는 위아래가 산화막이라 한 번만 나타나야 한다.
+        assert seen["poly"] == 1
+
+    def test_depths_are_still_sorted(self, cmos_2d) -> None:
+        """순서를 고쳐도 깊이 정렬은 깨지면 안 된다."""
+        depths = [p.depth for p in vertical_cut(cmos_2d, 2.0, "chem_boron").points]
+
+        assert depths == sorted(depths)

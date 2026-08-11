@@ -251,3 +251,75 @@ describe('균일 도핑', () => {
     )
   })
 })
+
+describe('겹쳐 보기', () => {
+  const overlay = {
+    label: 'before.str',
+    color: '#ff9f43',
+    points: [point(0, 2e19), point(1, 1e16)],
+  }
+
+  it('겹친 선을 함께 그린다', () => {
+    const { container } = render(
+      <ProfileChart
+        points={[point(0, 1e18), point(1, 1e15)]}
+        quantity="chem_boron"
+        overlays={[overlay]}
+      />,
+    )
+
+    expect(polylines(container)).toHaveLength(2)
+  })
+
+  it('겹친 선은 자기 색을 쓴다', () => {
+    const { container } = render(
+      <ProfileChart
+        points={[point(0, 1e18), point(1, 1e15)]}
+        quantity="q"
+        overlays={[overlay]}
+      />,
+    )
+    const strokes = polylines(container).map((l) => l.getAttribute('stroke'))
+
+    expect(strokes).toContain('#ff9f43')
+  })
+
+  it('축이 겹친 값까지 담는다', () => {
+    // 기준선만 보고 축을 잡으면 비교 대상이 화면 밖으로 나간다.
+    render(
+      <ProfileChart
+        points={[point(0, 1e15), point(1, 1e16)]}
+        quantity="q"
+        overlays={[overlay]}
+      />,
+    )
+
+    expect(screen.getByText('1e19')).toBeInTheDocument()
+  })
+
+  it('범례에 무엇과 무엇을 비교하는지 적는다', () => {
+    render(
+      <ProfileChart
+        points={[point(0, 1e18)]}
+        quantity="chem_boron"
+        overlays={[overlay]}
+      />,
+    )
+
+    expect(screen.getByText('chem_boron')).toBeInTheDocument()
+    expect(screen.getByText('before.str')).toBeInTheDocument()
+  })
+
+  it('겹친 것이 없으면 범례는 재질을 보여준다', () => {
+    // 층 구조를 아는 편이 유용하다.
+    render(
+      <ProfileChart
+        points={[point(0, 1e18, 'oxide'), point(1, 1e15, 'silicon')]}
+        quantity="q"
+      />,
+    )
+
+    expect(screen.getByText('oxide')).toBeInTheDocument()
+    expect(screen.getByText('silicon')).toBeInTheDocument()
+  })
+})

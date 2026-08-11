@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from app.plotting.quantities import value_of
@@ -68,10 +69,9 @@ def depth_profile(structure: Structure, quantity: str) -> Profile:
         for solution in structure.solutions
         if solution.material_id in solid_materials
     ]
-    # 계면에서는 같은 깊이가 물질 수만큼 나온다. 물질 이름까지 정렬 키에 넣어야
-    # 순서가 실행마다 흔들리지 않는다.
-    points.sort(key=lambda point: (point.depth, point.material))
-    return Profile(quantity=quantity, points=tuple(points))
+    # 계면에서는 같은 깊이가 물질 수만큼 나온다. 2D 와 같은 규칙으로 층 순서를
+    # 맞춘다 — 1D 는 층이 단순해 지금까지 드러나지 않았을 뿐 원리는 같다.
+    return Profile(quantity=quantity, points=_ordered_by_stack(points))
 
 
 def vertical_cut(structure: Structure, x: float, quantity: str) -> Profile:
@@ -114,8 +114,46 @@ def vertical_cut(structure: Structure, x: float, quantity: str) -> Profile:
                 key = (round(point.depth / _DEPTH_EPSILON), point.material)
                 collected.setdefault(key, point)
 
-    points = sorted(collected.values(), key=lambda p: (p.depth, p.material))
-    return Profile(quantity=quantity, points=tuple(points))
+    return Profile(
+        quantity=quantity, points=_ordered_by_stack(collected.values())
+    )
+
+
+def _ordered_by_stack(
+    points: Iterable[ProfilePoint],
+) -> tuple[ProfilePoint, ...]:
+    """깊이순으로 늘어놓되, 계면에서 층 순서가 어긋나지 않게 한다.
+
+    계면에서는 같은 깊이에 재질별 점이 하나씩 놓인다. 이때 **앞 구간을 잇는
+    재질을 먼저** 놓아야 한다. 재질 이름으로 정렬하면 물리적 적층과 무관한
+    순서가 나온다.
+
+    CMOS 게이트에서 실제로 깨졌다. x=2.0 의 적층은
+
+        oxide(-0.406~-0.401) / poly(-0.401~-0.001) / oxide(-0.001~0.042) / silicon
+
+    인데, 깊이 -0.001 에서 poly 가 끝나고 oxide 가 시작한다. 알파벳순은
+    oxide 를 먼저 놓으므로 poly 의 두 점이 서로 떨어지고, 화면은 poly 층을
+    이어진 선이 아니라 고립된 점 두 개로 받는다 — 선이 아예 안 그려진다.
+    """
+    by_depth: dict[float, list[ProfilePoint]] = {}
+    for point in points:
+        by_depth.setdefault(point.depth, []).append(point)
+
+    ordered: list[ProfilePoint] = []
+    for depth in sorted(by_depth):
+        group = by_depth[depth]
+        if len(group) == 1:
+            ordered.extend(group)
+            continue
+
+        # 앞 구간과 같은 재질을 먼저. 나머지는 이름순으로 놓아 실행마다
+        # 순서가 흔들리지 않게 한다.
+        previous = ordered[-1].material if ordered else None
+        group.sort(key=lambda p: (p.material != previous, p.material))
+        ordered.extend(group)
+
+    return tuple(ordered)
 
 
 def _edge_crossings(

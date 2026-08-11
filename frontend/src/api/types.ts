@@ -14,6 +14,10 @@ export interface Revision {
   revision: number
 }
 
+export interface RevisionWithSource extends Revision {
+  source: string
+}
+
 export type JobStatus =
   | 'queued'
   | 'running'

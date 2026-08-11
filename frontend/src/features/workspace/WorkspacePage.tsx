@@ -14,6 +14,8 @@ import { AdminPanel } from '../admin/AdminPanel'
 import { DocsPanel } from '../docs/DocsPanel'
 import { SupremEditor } from '../editor/SupremEditor'
 import { JobPanel } from '../jobs/JobPanel'
+import { Splitter } from '../../components/Splitter'
+import { usePanelWidth } from './usePanelWidth'
 
 //: 새 프로젝트를 열면 이 소스가 들어 있다. **반드시 그대로 실행되어야 한다** —
 //: 처음 들어온 사람이 가장 먼저 누르는 것이 실행 버튼이다.
@@ -46,6 +48,8 @@ export function WorkspacePage() {
   const [showAdmin, setShowAdmin] = useState(false)
   const [showDocs, setShowDocs] = useState(false)
   const [cursorCommand, setCursorCommand] = useState<string | null>(null)
+  const [resultWidth, setResultWidth] = usePanelWidth('tcad.width.result', 400)
+  const [docsWidth, setDocsWidth] = usePanelWidth('tcad.width.docs', 360)
 
   const report = useCallback(
     (error: unknown) => {
@@ -68,6 +72,51 @@ export function WorkspacePage() {
       })
       .catch(report)
   }, [report])
+
+  /** 프로젝트를 연다. 저장하지 않은 편집이 있으면 먼저 묻는다. */
+  const openProject = useCallback(
+    (project: Project) => {
+      if (project.id === active?.id) return
+      // 편집 중이던 내용은 서버에 없다. 말없이 덮어쓰면 사용자는 방금 쓴 것을
+      // 잃고 이유도 모른다.
+      if (dirty && !window.confirm('저장하지 않은 변경이 있습니다. 버리고 이동할까요?')) {
+        return
+      }
+      setActive(project)
+    },
+    [active, dirty],
+  )
+
+  // 연 프로젝트의 저장된 소스를 편집기에 채운다. 이게 없으면 탭을 눌러도
+  // 이전 프로젝트의 내용이 그대로 남아 엉뚱한 소스를 고치게 된다.
+  useEffect(() => {
+    if (!active) return
+    let cancelled = false
+
+    projectApi
+      .latestSource(active.id)
+      .then((revision) => {
+        if (cancelled) return
+        setSource(revision.source)
+        setDirty(false)
+        setMessage(null)
+      })
+      .catch((error) => {
+        if (cancelled) return
+        if (error instanceof ApiError && error.status === 404) {
+          // 아직 한 번도 저장하지 않은 프로젝트다. 예제로 시작하게 둔다.
+          setSource(STARTER_SOURCE)
+          setDirty(true)
+          setMessage(null)
+          return
+        }
+        report(error)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [active, report])
 
   async function createProject() {
     const name = window.prompt('프로젝트 이름')
@@ -119,7 +168,7 @@ export function WorkspacePage() {
             <button
               key={project.id}
               className={project.id === active?.id ? 'tab active' : 'tab'}
-              onClick={() => setActive(project)}
+              onClick={() => openProject(project)}
             >
               {project.name}
             </button>
@@ -156,7 +205,16 @@ export function WorkspacePage() {
 
       {showAdmin && <AdminPanel onClose={() => setShowAdmin(false)} />}
 
-      <main className={showDocs ? "with-docs" : ""}>
+      {/* 폭은 인라인 스타일로 준다. 드래그 중에는 값이 계속 바뀌므로 CSS
+          클래스로는 표현할 수 없다. */}
+      <main
+        className={showDocs ? 'with-docs' : ''}
+        style={{
+          gridTemplateColumns: showDocs
+            ? `minmax(0, 1fr) auto ${docsWidth}px auto ${resultWidth}px`
+            : `minmax(0, 1fr) auto ${resultWidth}px`,
+        }}
+      >
         <section className="editor">
           <SupremEditor
             value={source}
@@ -169,8 +227,20 @@ export function WorkspacePage() {
           />
         </section>
         {showDocs && (
-          <DocsPanel command={cursorCommand} onClose={() => setShowDocs(false)} />
+          <>
+            <Splitter
+              width={docsWidth}
+              onChange={setDocsWidth}
+              label="매뉴얼 패널 크기"
+            />
+            <DocsPanel command={cursorCommand} onClose={() => setShowDocs(false)} />
+          </>
         )}
+        <Splitter
+          width={resultWidth}
+          onChange={setResultWidth}
+          label="결과 패널 크기"
+        />
         <aside>
           <JobPanel jobId={jobId} />
         </aside>
