@@ -18,6 +18,7 @@ from app.auth.store import InMemorySessionStore
 from app.core.config import Settings
 from app.db.models import Base
 from app.jobs.queue import JobQueue
+from tests.helpers import register
 
 pytestmark = pytest.mark.integration
 
@@ -60,9 +61,7 @@ async def login_as(app, email: str) -> AsyncClient:
     client = AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     )
-    await client.post(
-        "/api/auth/register", json={"email": email, "password": PASSWORD}
-    )
+    await register(client, app.state.sessionmaker, email, PASSWORD)
     await client.post(
         "/api/auth/login", json={"email": email, "password": PASSWORD}
     )

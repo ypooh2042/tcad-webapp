@@ -26,12 +26,18 @@ function lastCall() {
 }
 
 describe('인증', () => {
-  it('가입', async () => {
-    await auth.register('a@example.com', 'pw')
+  it('가입은 초대 코드를 함께 보낸다', async () => {
+    // 초대 없이는 가입할 수 없다. 코드를 빠뜨리면 서버가 422 로 거절한다.
+    await auth.register('a@example.com', 'pw', 'invite-xyz')
 
     expect(lastCall()).toMatchObject({
       path: '/api/auth/register',
       method: 'POST',
+    })
+    expect(JSON.parse(lastCall().body)).toEqual({
+      email: 'a@example.com',
+      password: 'pw',
+      invite_code: 'invite-xyz',
     })
   })
 

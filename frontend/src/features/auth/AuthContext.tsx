@@ -25,7 +25,7 @@ interface AuthState {
   /** 최초 확인이 끝나기 전에는 로그인 화면을 띄우면 안 된다(깜빡임). */
   loading: boolean
   login: (email: string, password: string) => Promise<void>
-  register: (email: string, password: string) => Promise<void>
+  register: (email: string, password: string, inviteCode: string) => Promise<void>
   logout: () => Promise<void>
   /** 401 을 받은 쪽에서 부른다. */
   clear: () => void
@@ -53,8 +53,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       clear,
       login: async (email, password) => setUser(await auth.login(email, password)),
-      register: async (email, password) => {
-        await auth.register(email, password)
+      register: async (email, password, inviteCode) => {
+        await auth.register(email, password, inviteCode)
         setUser(await auth.login(email, password))
       },
       logout: async () => {

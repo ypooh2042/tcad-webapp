@@ -113,10 +113,31 @@ describe('로그인', () => {
 
     await userEvent.type(screen.getByLabelText('이메일'), 'new@example.com')
     await userEvent.type(screen.getByLabelText('비밀번호'), 'correct-horse-battery')
+    await userEvent.type(screen.getByLabelText('초대 코드'), 'invite-xyz')
     await userEvent.click(screen.getByRole('button', { name: '가입하고 시작' }))
 
-    await waitFor(() => expect(auth.register).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(auth.register).toHaveBeenCalledWith(
+        'new@example.com',
+        'correct-horse-battery',
+        'invite-xyz',
+      ),
+    )
     expect(auth.login).toHaveBeenCalled()
+  })
+
+  it('로그인 화면에는 초대 코드 칸이 없다', async () => {
+    renderWithAuth(<LoginPage />)
+
+    expect(screen.queryByLabelText('초대 코드')).not.toBeInTheDocument()
+  })
+
+  it('가입으로 바꾸면 초대 코드 칸이 나온다', async () => {
+    renderWithAuth(<LoginPage />)
+
+    await userEvent.click(screen.getByRole('button', { name: /계정이 없으신가요/ }))
+
+    expect(screen.getByLabelText('초대 코드')).toBeRequired()
   })
 
   it('비밀번호에 최소 길이를 요구한다', async () => {

@@ -16,7 +16,9 @@ from app.api import routes_auth
 from app.auth.policy import SessionPolicy
 from app.auth.store import InMemorySessionStore
 from app.core.config import Settings
-from app.db.models import Base
+from app.auth.passwords import hash_password
+from app.db.models import Base, User
+from tests.helpers import fresh_invite_code
 
 pytestmark = pytest.mark.integration
 
@@ -53,53 +55,66 @@ async def client(app_and_state):
     async with AsyncClient(
         transport=transport, base_url="http://test"
     ) as async_client:
+        # 가입에 초대 코드가 필요하다. 테스트에서 그 요구를 끄는 설정은 두지
+        # 않는다 — 끌 수 있으면 배포에서 실수로 꺼질 수 있고, 그 순간 가입이
+        # 개방된다. 대신 테스트가 실제로 초대를 발급해서 쓴다.
+        async_client.sessionmaker = app_and_state.state.sessionmaker
         yield async_client
 
 
-async def register(client, email: str) -> None:
-    response = await client.post(
-        "/api/auth/register", json={"email": email, "password": PASSWORD}
+async def seed_users(app, count: int) -> None:
+    """계정을 DB 에 직접 만든다. 가입 경로(초대·빈도 제한)를 우회한다."""
+    async with app.state.sessionmaker() as session:
+        for i in range(count):
+            session.add(
+                User(
+                    email=f"user{i}@example.com",
+                    password_hash=hash_password(PASSWORD),
+                    role="user",
+                )
+            )
+        await session.commit()
+
+
+async def signup(client, email: str, password: str = PASSWORD):
+    """초대를 발급해 가입 요청을 보낸다. 상태 코드는 호출부가 판정한다."""
+    return await client.post(
+        "/api/auth/register",
+        json={
+            "email": email,
+            "password": password,
+            "invite_code": await fresh_invite_code(client.sessionmaker),
+        },
     )
-    assert response.status_code == 201
+
+
+async def register(client, email: str) -> None:
+    response = await signup(client, email)
+    assert response.status_code == 201, response.text
 
 
 class TestRegistration:
     async def test_creates_account(self, client) -> None:
-        response = await client.post(
-            "/api/auth/register",
-            json={"email": "a@example.com", "password": PASSWORD},
-        )
+        response = await signup(client, "a@example.com", password=PASSWORD)
         assert response.status_code == 201
         assert response.json()["email"] == "a@example.com"
 
     async def test_rejects_duplicate_email(self, client) -> None:
         await register(client, "dup@example.com")
-        response = await client.post(
-            "/api/auth/register",
-            json={"email": "dup@example.com", "password": PASSWORD},
-        )
+        response = await signup(client, "dup@example.com", password=PASSWORD)
         assert response.status_code == 409
 
     async def test_email_is_case_insensitive(self, client) -> None:
         await register(client, "Mixed@Example.com")
-        response = await client.post(
-            "/api/auth/register",
-            json={"email": "mixed@example.com", "password": PASSWORD},
-        )
+        response = await signup(client, "mixed@example.com", password=PASSWORD)
         assert response.status_code == 409
 
     async def test_rejects_short_password(self, client) -> None:
-        response = await client.post(
-            "/api/auth/register",
-            json={"email": "b@example.com", "password": "short"},
-        )
+        response = await signup(client, "b@example.com", password="short")
         assert response.status_code == 422
 
     async def test_never_returns_password_hash(self, client) -> None:
-        response = await client.post(
-            "/api/auth/register",
-            json={"email": "c@example.com", "password": PASSWORD},
-        )
+        response = await signup(client, "c@example.com", password=PASSWORD)
         assert "password" not in response.text
         assert "argon2" not in response.text
 
@@ -186,11 +201,14 @@ class TestConcurrentLimitOverHttp:
         """정원이 차면 503 으로 거절한다."""
         transport = ASGITransport(app=app_and_state)
 
+        # 계정은 DB 에 직접 심는다. HTTP 가입을 11번 하면 가입 빈도 제한에
+        # 먼저 걸리는데, 이 테스트가 보려는 것은 **세션 정원**이다.
+        await seed_users(app_and_state, 11)
+
         for i in range(10):
             async with AsyncClient(
                 transport=transport, base_url="http://test"
             ) as user_client:
-                await register(user_client, f"user{i}@example.com")
                 response = await user_client.post(
                     "/api/auth/login",
                     json={"email": f"user{i}@example.com", "password": PASSWORD},
@@ -200,7 +218,6 @@ class TestConcurrentLimitOverHttp:
         async with AsyncClient(
             transport=transport, base_url="http://test"
         ) as extra_client:
-            await register(extra_client, "user10@example.com")
             response = await extra_client.post(
                 "/api/auth/login",
                 json={"email": "user10@example.com", "password": PASSWORD},

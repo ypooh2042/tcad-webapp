@@ -63,6 +63,22 @@ class User(Base):
     #: 'user' 또는 'admin'. admin 은 동시 접속 정원과 유휴 만료를 면제받는다.
     role: Mapped[str] = mapped_column(String(16), default="user")
     is_active: Mapped[bool] = mapped_column(default=True)
+    #: 어떤 초대로 가입했는지. 나중에 계정 출처를 따질 수 있어야 한다.
+    #: CLI 로 만든 첫 관리자는 초대가 없으므로 NULL.
+    #: 제약에 이름을 준다. 이름이 없으면 downgrade 에서 DROP CONSTRAINT 를
+    #: 만들 수 없어 롤백이 막힌다.
+    invite_code_id: Mapped[int | None] = mapped_column(
+        # users 와 invite_codes 가 서로를 참조한다(초대는 발급자를, 사용자는
+        # 자기 초대를 가리킨다). use_alter 로 이 제약을 테이블 생성 뒤에 걸어야
+        # 생성 순서를 정할 수 있다.
+        ForeignKey(
+            "invite_codes.id",
+            ondelete="SET NULL",
+            name="fk_users_invite_code_id",
+            use_alter=True,
+        ),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -200,4 +216,43 @@ class Artifact(Base):
 
     __table_args__ = (
         UniqueConstraint("job_id", "sequence", name="uq_artifacts_job_sequence"),
+    )
+
+
+class InviteCode(Base):
+    """가입 초대 코드.
+
+    가입을 열어 두면 도메인을 찾은 누구나 홈서버 컨테이너 안에서 코드를 실행할
+    수 있다. 격리는 별개로 튼튼하지만, 모르는 사람이 서버 자원을 쓰는 것 자체를
+    막아야 한다.
+
+    코드는 **argon2 가 아니라 SHA-256** 으로 저장한다. argon2 는 솔트가 섞여
+    있어 해시로 행을 찾을 수 없고, 가입 시도마다 모든 초대를 하나씩 검증해야
+    한다 — 느릴 뿐 아니라 그 자체가 DoS 벡터다. 초대 코드는 비밀번호와 달리
+    256비트 무작위라 느린 해시로 무차별 대입을 늦출 이유가 없다.
+    """
+
+    __tablename__ = "invite_codes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    #: SHA-256 hex. 평문은 발급 순간에만 존재하고 저장하지 않는다.
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    max_uses: Mapped[int] = mapped_column(Integer, default=1)
+    used_count: Mapped[int] = mapped_column(Integer, default=0)
+    #: 발급자. 계정이 지워져도 발급 이력은 남겨야 하므로 NULL 허용.
+    created_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    #: 회수 시각. 재배포 없이 즉시 막기 위한 것이라 행을 지우지 않는다.
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint("max_uses > 0", name="ck_invite_codes_max_uses"),
+        CheckConstraint("used_count >= 0", name="ck_invite_codes_used_count"),
     )

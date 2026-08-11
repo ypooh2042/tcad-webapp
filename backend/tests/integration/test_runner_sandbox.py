@@ -140,8 +140,10 @@ class TestIsolation:
 
     def test_writes_stay_inside_scratch_directory(self, tmp_path: Path) -> None:
         workdir = tmp_path / "job"
-        self._run(tmp_path, "touch /work/marker")
-        assert (workdir / "marker").exists()
+        # 산출물 확장자로 만든다. 러너가 실행 후 `.str` 이 아닌 파일을 지우기
+        # 때문이다(디스크가 무한정 늘지 않게 하는 조치).
+        self._run(tmp_path, "touch /work/marker.str")
+        assert (workdir / "marker.str").exists()
 
 
 @requires_sandbox

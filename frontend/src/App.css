@@ -157,3 +157,5 @@ select {
 .legend { display: flex; gap: 10px; }
 .legend span { display: flex; align-items: center; gap: 4px; }
 .legend i { width: 10px; height: 3px; border-radius: 2px; }
+
+.auth .hint { margin: 2px 0 0; font-size: 12px; }

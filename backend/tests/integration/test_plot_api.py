@@ -20,6 +20,8 @@ from app.db.models import Artifact, Base, Job, JobStatus
 from app.jobs.queue import JobQueue
 from pathlib import Path
 
+from tests.helpers import register
+
 pytestmark = pytest.mark.integration
 
 PASSWORD = "correct-horse-battery-staple"
@@ -62,9 +64,7 @@ async def app(tmp_path):
 
 async def login_as(app, email: str) -> AsyncClient:
     client = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-    await client.post(
-        "/api/auth/register", json={"email": email, "password": PASSWORD}
-    )
+    await register(client, app.state.sessionmaker, email, PASSWORD)
     await client.post("/api/auth/login", json={"email": email, "password": PASSWORD})
     return client
 

@@ -13,6 +13,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import (
+    routes_admin,
     routes_auth,
     routes_catalog,
     routes_jobs,
@@ -50,6 +51,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.session_policy = SessionPolicy()
 
     app.include_router(routes_auth.router, prefix="/api")
+    app.include_router(routes_admin.router, prefix="/api")
     app.include_router(routes_projects.router, prefix="/api")
     app.include_router(routes_jobs.router, prefix="/api")
     app.include_router(routes_catalog.router, prefix="/api")

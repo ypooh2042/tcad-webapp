@@ -40,6 +40,18 @@ class SandboxLimits:
     memory_mb: int = 2048
     max_pids: int = 128
     timeout_seconds: int = 600
+    #: /work 에 쓸 수 있는 총량. bind mount 라 컨테이너 옵션으로는 막을 수 없어
+    #: 러너가 감시한다. CMOS 예제 한 번이 약 5MB 이므로 넉넉하다.
+    max_output_mb: int = 256
+
+
+def container_name(host_workdir: Path) -> str:
+    """컨테이너 이름. 상한을 넘겼을 때 확실히 죽이려면 이름이 필요하다.
+
+    workdir 이름(`job-<uuid>`)에서 만든다. 서버가 정한 값이라 사용자 입력이
+    섞이지 않는다.
+    """
+    return f"tcad-{host_workdir.name}"
 
 
 def build_sandbox_argv(
@@ -65,6 +77,9 @@ def build_sandbox_argv(
         "podman",
         "run",
         "--rm",
+        # 이름을 붙여야 출력 상한을 넘겼을 때 `podman kill` 로 확실히 죽일 수
+        # 있다. 클라이언트 프로세스만 죽이면 컨테이너가 남아 계속 쓴다.
+        "--name", container_name(host_workdir),
         # stdin 을 붙이지 않으면 `source job.in` 이 시뮬레이터에 전달되지 않아
         # 배너만 찍고 조용히 종료된다(exit 0). --tty 는 붙이지 않는다. 출력에
         # 제어문자가 섞여 로그 파싱이 깨진다.

@@ -13,10 +13,12 @@ import type {
 } from './types'
 
 export const auth = {
-  register: (email: string, password: string) =>
+  register: (email: string, password: string, inviteCode: string) =>
     request<User>('/api/auth/register', {
       method: 'POST',
-      body: { email, password },
+      // 초대 없이는 가입할 수 없다. 이 서버는 제출된 코드를 컨테이너에서
+      // 실행하므로 누가 쓰는지 모르는 상태로 열어 둘 수 없다.
+      body: { email, password, invite_code: inviteCode },
     }),
 
   login: (email: string, password: string) =>

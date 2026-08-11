@@ -25,7 +25,11 @@ class EmailAlreadyRegistered(Exception):
 
 
 async def register_user(
-    session: AsyncSession, email: str, password: str, role: Role = Role.USER
+    session: AsyncSession,
+    email: str,
+    password: str,
+    role: Role = Role.USER,
+    invite_code_id: int | None = None,
 ) -> User:
     """계정을 만든다.
 
@@ -43,6 +47,7 @@ async def register_user(
         email=normalized,
         password_hash=hash_password(password),
         role=role.value,
+        invite_code_id=invite_code_id,
     )
     session.add(user)
     await session.commit()

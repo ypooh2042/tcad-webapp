@@ -8,12 +8,25 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.throttle import (
+    throttle_login,
+    throttle_login_attempt,
+    throttle_register,
+)
 from app.api.deps import (
     current_session,
     get_app_settings,
     get_db,
     get_session_policy,
     get_session_store,
+)
+from app.auth.invites import (
+    InviteError,
+    InviteExhausted,
+    InviteExpired,
+    InviteNotFound,
+    InviteRevoked,
+    redeem_invite,
 )
 from app.auth.models import Role, Session
 from app.auth.policy import SessionLimitExceeded, SessionPolicy
@@ -32,6 +45,9 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     #: 길이 하한만 강제한다. 복잡도 규칙은 오히려 예측 가능한 패턴을 유도한다.
     password: str = Field(min_length=12, max_length=1024)
+    #: 초대 없이는 가입할 수 없다. 이 서버는 제출된 코드를 컨테이너에서
+    #: 실행하므로, 누가 쓰는지 모르는 상태로 열어 둘 수 없다.
+    invite_code: str = Field(min_length=1, max_length=256)
 
 
 class LoginRequest(BaseModel):
@@ -45,12 +61,27 @@ class UserResponse(BaseModel):
     role: str
 
 
-@router.post("/register", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(throttle_register)],
+)
 async def register(
     payload: RegisterRequest, db: AsyncSession = Depends(get_db)
 ) -> UserResponse:
     try:
-        user = await register_user(db, payload.email, payload.password)
+        invite = await redeem_invite(db, payload.invite_code)
+    except InviteError as error:
+        # 왜 안 되는지는 알려준다(만료/소진/회수). 코드를 아는 사람에게만
+        # 의미가 있는 정보이고, 모르면 대처할 방법이 없다.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=_invite_message(error)
+        ) from None
+
+    try:
+        user = await register_user(
+            db, payload.email, payload.password, invite_code_id=invite.id
+        )
     except EmailAlreadyRegistered:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -59,7 +90,7 @@ async def register(
     return UserResponse(id=user.id, email=user.email, role=user.role)
 
 
-@router.post("/login")
+@router.post("/login", dependencies=[Depends(throttle_login)])
 async def login(
     payload: LoginRequest,
     response: Response,
@@ -68,6 +99,9 @@ async def login(
     policy: SessionPolicy = Depends(get_session_policy),
     settings: Settings = Depends(get_app_settings),
 ) -> UserResponse:
+    # 계정별 시도 제한. IP 기준만으로는 무차별 대입을 못 막는다.
+    throttle_login_attempt(payload.email)
+
     user = await authenticate(db, payload.email, payload.password)
     if user is None:
         raise HTTPException(
@@ -140,3 +174,16 @@ def _set_session_cookie(
         max_age=int(policy.idle_timeout.total_seconds()),
         path="/",
     )
+
+
+def _invite_message(error: InviteError) -> str:
+    """초대 실패 사유를 사용자 문구로 옮긴다."""
+    if isinstance(error, InviteExpired):
+        return "초대 코드가 만료되었습니다. 새 코드를 요청해 주세요."
+    if isinstance(error, InviteExhausted):
+        return "이미 사용된 초대 코드입니다."
+    if isinstance(error, InviteRevoked):
+        return "회수된 초대 코드입니다."
+    if isinstance(error, InviteNotFound):
+        return "초대 코드가 올바르지 않습니다."
+    return "초대 코드를 확인할 수 없습니다."

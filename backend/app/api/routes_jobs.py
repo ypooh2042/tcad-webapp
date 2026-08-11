@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.throttle import throttle_submit
 from app.api.deps import (
     current_session,
     get_app_settings,
@@ -49,7 +50,11 @@ class ArtifactResponse(BaseModel):
     size_bytes: int
 
 
-@router.post("/projects/{project_id}/jobs", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/projects/{project_id}/jobs",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(throttle_submit)],
+)
 async def submit(
     project_id: int,
     session: Session = Depends(current_session),

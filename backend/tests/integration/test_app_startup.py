@@ -18,6 +18,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.core.config import Settings
 from app.main import create_app
+from tests.helpers import register
 
 pytestmark = pytest.mark.integration
 
@@ -80,9 +81,8 @@ class TestRealStackFlow:
     """가입 → 로그인 → 프로젝트 → 리비전 → 잡 제출을 실제 스택 위에서 한 번."""
 
     async def test_full_submission_flow(self, client) -> None:
-        registered = await client.post(
-            "/api/auth/register",
-            json={"email": "startup@example.com", "password": PASSWORD},
+        registered = await register(
+            client, client.app.state.sessionmaker, "startup@example.com", PASSWORD
         )
         assert registered.status_code == 201, registered.text
 
@@ -107,9 +107,8 @@ class TestRealStackFlow:
 
     async def test_session_survives_in_redis_not_memory(self, client) -> None:
         """세션이 프로세스 메모리에 있으면 워커·다중 프로세스에서 공유되지 않는다."""
-        await client.post(
-            "/api/auth/register",
-            json={"email": "redis@example.com", "password": PASSWORD},
+        await register(
+            client, client.app.state.sessionmaker, "redis@example.com", PASSWORD
         )
         await client.post(
             "/api/auth/login",

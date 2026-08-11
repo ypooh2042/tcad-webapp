@@ -7,6 +7,7 @@ export function LoginPage() {
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [inviteCode, setInviteCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -17,7 +18,7 @@ export function LoginPage() {
     try {
       await (mode === 'login'
         ? login(email, password)
-        : register(email, password))
+        : register(email, password, inviteCode))
     } catch (caught) {
       // 503 은 동시 접속 정원(10명)이 찼다는 뜻이다. 자격 증명 문제로
       // 오해하지 않게 그대로 보여 준다.
@@ -57,6 +58,23 @@ export function LoginPage() {
           value={password}
           onChange={(event) => setPassword(event.target.value)}
         />
+
+        {mode === 'register' && (
+          <>
+            <label htmlFor="invite">초대 코드</label>
+            <input
+              id="invite"
+              type="text"
+              required
+              autoComplete="off"
+              value={inviteCode}
+              onChange={(event) => setInviteCode(event.target.value)}
+            />
+            <p className="muted hint">
+              관리자에게 받은 코드가 필요합니다.
+            </p>
+          </>
+        )}
 
         {error && <p role="alert" className="error">{error}</p>}
 
