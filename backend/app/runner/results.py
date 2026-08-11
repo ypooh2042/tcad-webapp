@@ -51,10 +51,40 @@ def extract_errors(log: str) -> tuple[str, ...]:
     )
 
 
-def collect_structure_files(workdir: Path) -> tuple[Path, ...]:
+#: 소스에서 구조 저장 명령을 찾는 패턴.
+#:
+#: SUPREM 은 커맨드와 파라미터를 고유 접두사로 해석한다. `structure` 의 최단
+#: 고유 접두사는 `stru` 다 — `str` 까지는 `stress` 와 겹친다. 파라미터도
+#: `out`, `outf`, `outfile` 이 모두 같은 것을 가리킨다. 해석은 대소문자를
+#: 구분하므로 소문자만 본다.
+_STRUCTURE_OUT_RE = re.compile(
+    r"^\s*stru\w*\s+(?:[^\n#]*?\s)?out\w*\s*=\s*(\S+)", re.MULTILINE
+)
+
+
+def collect_structure_files(workdir: Path, source: str = "") -> tuple[Path, ...]:
     """생성된 `.str` 파일을 공정 단계 순서로 모은다.
 
-    CMOS 예제처럼 `structure out=` 을 여러 번 쓰면 단계별 파일이 순서대로
-    쌓인다. 이름순이 아니라 생성 순서여야 공정 흐름과 일치한다.
+    순서는 **소스에 적힌 `structure out=` 등장 순서**를 따른다. 그것이 사용자가
+    의도한 공정 흐름이기 때문이다.
+
+    파일시스템 타임스탬프로 정렬하면 안 된다. 리눅스는 inode 시각을 타이머 틱
+    단위로 캐시된 시계에서 가져오므로, 같은 틱(수 ms) 안에 쓰인 파일들은
+    `st_mtime_ns` 까지 완전히 동일한 값을 받는다. 실제로 1초 안에 끝나는
+    시뮬레이션에서 두 파일의 mtime_ns 가 정확히 같았고, 안정 정렬이 glob
+    순서(대체로 이름순)를 그대로 남겨 공정 순서가 뒤집혔다.
+
+    소스에 언급되지 않은 파일(사용자가 셸로 직접 만든 경우 등)은 뒤에 이름순으로
+    붙인다. 버리지 않는 이유는 산출물 유실이 순서 오류보다 나쁘기 때문이다.
     """
-    return tuple(sorted(workdir.glob("*.str"), key=lambda p: p.stat().st_mtime))
+    present = {path.name: path for path in workdir.glob("*.str")}
+
+    ordered: list[Path] = []
+    for match in _STRUCTURE_OUT_RE.finditer(source):
+        name = Path(match.group(1)).name
+        path = present.pop(name, None)
+        if path is not None:
+            ordered.append(path)
+
+    ordered.extend(sorted(present.values(), key=lambda p: p.name))
+    return tuple(ordered)

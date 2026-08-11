@@ -81,7 +81,7 @@ def run_simulation(
         exit_code=exit_code,
         log=log,
         timed_out=timed_out,
-        structure_files=collect_structure_files(workdir),
+        structure_files=collect_structure_files(workdir, source),
         errors=extract_errors(log),
     )
 
