@@ -12,6 +12,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../../api/client'
 import { docs } from '../../api/endpoints'
 import type { DocsSearchHit, DocsSection } from '../../api/types'
+import { ParameterTable } from './ParameterTable'
+
+type Tab = 'manual' | 'parameters'
 
 /** 매뉴얼은 고정폭으로 조판돼 있어 그대로 두면 줄이 어색하게 끊긴다. */
 const SUBSECTION_ORDER = [
@@ -43,6 +46,7 @@ export function DocsPanel({ command, onClose }: Props) {
   const [query, setQuery] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
   const [pinned, setPinned] = useState(false)
+  const [tab, setTab] = useState<Tab>('manual')
 
   const load = useCallback((id: string) => {
     docs
@@ -121,6 +125,33 @@ export function DocsPanel({ command, onClose }: Props) {
         </button>
       </header>
 
+      <div className="tabs" role="tablist">
+        {/* 매뉴얼은 "무엇을 하는가", 파라미터는 "무엇을 받는가"다. 출처도
+            다르다 — 전자는 PDF, 후자는 suprem.key. */}
+        <button
+          role="tab"
+          aria-selected={tab === 'manual'}
+          className={tab === 'manual' ? 'tab active' : 'tab'}
+          onClick={() => setTab('manual')}
+        >
+          매뉴얼
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'parameters'}
+          className={tab === 'parameters' ? 'tab active' : 'tab'}
+          onClick={() => setTab('parameters')}
+        >
+          파라미터
+        </button>
+      </div>
+
+      {tab === 'parameters' && (
+        <ParameterTable command={pinned ? (section?.command ?? null) : command} />
+      )}
+
+      {tab === 'manual' && (
+      <>
       <form onSubmit={runSearch} className="docs-search">
         <input
           type="search"
@@ -168,6 +199,8 @@ export function DocsPanel({ command, onClose }: Props) {
         <p className="muted">
           편집기에서 커맨드에 커서를 두면 그 문서가 여기 나옵니다.
         </p>
+      )}
+      </>
       )}
     </aside>
   )

@@ -17,6 +17,11 @@ const { docs } = vi.hoisted(() => ({
 }))
 vi.mock('../../api/endpoints', () => ({ docs }))
 
+const { catalog } = vi.hoisted(() => ({
+  catalog: { command: vi.fn(), parameters: vi.fn(), words: vi.fn() },
+}))
+vi.mock('../../api/catalog', () => ({ catalog }))
+
 function section(overrides = {}) {
   return {
     id: 'implant',
@@ -42,6 +47,7 @@ beforeEach(() => {
   docs.forCommand.mockResolvedValue(section())
   docs.section.mockResolvedValue(section())
   docs.search.mockResolvedValue({ query: '', hits: [] })
+  catalog.command.mockResolvedValue(null)
 })
 
 describe('커서 따라가기', () => {
@@ -193,5 +199,56 @@ describe('닫기', () => {
     await userEvent.click(screen.getByRole('button', { name: '닫기' }))
 
     expect(onClose).toHaveBeenCalled()
+  })
+})
+
+
+describe('탭', () => {
+  it('매뉴얼 탭이 기본이다', async () => {
+    render(<DocsPanel command="implant" onClose={vi.fn()} />)
+
+    expect(screen.getByRole('tab', { name: '매뉴얼' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(screen.getByLabelText('매뉴얼 검색')).toBeInTheDocument()
+  })
+
+  it('파라미터 탭으로 바꾸면 카탈로그를 읽는다', async () => {
+    // 매뉴얼은 "무엇을 하는가"(PDF), 파라미터는 "무엇을 받는가"(suprem.key)다.
+    catalog.command.mockResolvedValue({
+      name: 'implant',
+      source_name: 'implant',
+      description: null,
+      parameters: [
+        {
+          name: 'dose',
+          type: 'float',
+          source_name: 'dose',
+          truncated: false,
+          default: null,
+          units: '주입량',
+          description: null,
+          error: null,
+          message: null,
+          group: null,
+          group_message: null,
+          unreachable: false,
+        },
+      ],
+    })
+    render(<DocsPanel command="implant" onClose={vi.fn()} />)
+
+    await userEvent.click(screen.getByRole('tab', { name: '파라미터' }))
+
+    expect(await screen.findByText('dose')).toBeInTheDocument()
+    expect(screen.queryByLabelText('매뉴얼 검색')).not.toBeInTheDocument()
+  })
+
+  it('파라미터 탭도 커서를 따라간다', async () => {
+    render(<DocsPanel command="implant" onClose={vi.fn()} />)
+    await userEvent.click(screen.getByRole('tab', { name: '파라미터' }))
+
+    await waitFor(() => expect(catalog.command).toHaveBeenCalledWith('implant'))
   })
 })

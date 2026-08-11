@@ -237,3 +237,32 @@ select {
   word-break: break-word;
   color: var(--text);
 }
+
+.docs .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); }
+.docs .tabs .tab { padding: 6px 10px; font-size: 13px; }
+
+.params { border-collapse: collapse; font-size: 12px; width: 100%; }
+.params th, .params td {
+  padding: 6px 8px 6px 0;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+}
+.params th { color: var(--muted); font-weight: 500; }
+.params code { font: 12px/1.4 ui-monospace, monospace; color: var(--text); }
+/* 지정할 수 없는 파라미터. 목록에는 남기되 쓸 수 없다는 것이 보여야 한다. */
+.params tr.unreachable { opacity: 0.55; }
+.params .constraint { margin-top: 3px; color: var(--muted); font-size: 11px; }
+
+.badge {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  vertical-align: middle;
+  cursor: help;
+}
+.badge.warn { background: #4a3a1a; color: #ff9f43; }
+.badge.error { background: #4a1f1f; color: var(--error); }
+.badge.group { background: var(--border); color: var(--muted); }
