@@ -31,3 +31,7 @@ markers = ["integration: 실제 컨테이너나 외부 서비스를 쓰는 통�
 
 [tool.coverage.run]
 source = ["app"]
+# SQLAlchemy 의 async 브리지가 greenlet 으로 동기 작업을 돌린다. 이 설정이
+# 없으면 greenlet 전환 이후의 프레임이 추적되지 않아, 실제로 실행된 코드가
+# 미커버로 잘못 보고된다.
+concurrency = ["greenlet", "thread"]
