@@ -110,3 +110,50 @@ input:focus { outline: none; border-color: var(--accent); }
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ── 결과 시각화 ─────────────────────────────────────────── */
+
+.result { display: flex; flex-direction: column; gap: 10px; }
+
+.scrubber, .controls { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.scrubber input[type="range"] { flex: 1; accent-color: var(--accent); }
+.scrubber label, .controls label { color: var(--muted); white-space: nowrap; }
+
+select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+/* 세로/가로 비율은 캔버스 안에서 유지한다. 여기서 늘리면 접합 깊이가
+   실제와 달라 보인다. */
+.surface {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  cursor: crosshair;
+  display: block;
+}
+
+.chart { margin: 0; }
+.chart svg { width: 100%; height: auto; display: block; }
+.chart .grid { stroke: var(--border); stroke-width: 1; }
+.chart .tick, .chart .axis-label { fill: var(--muted); font-size: 10px; }
+/* 표면(깊이 0). 증착층은 이 선 왼쪽에 그려진다. */
+.chart .surface-line { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+
+.chart figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.legend { display: flex; gap: 10px; }
+.legend span { display: flex; align-items: center; gap: 4px; }
+.legend i { width: 10px; height: 3px; border-radius: 2px; }

@@ -1,4 +1,5 @@
 import { useJob } from './useJob'
+import { ResultView } from '../../plot/ResultView'
 import type { JobStatus } from '../../api/types'
 
 const STATUS_LABEL: Record<JobStatus, string> = {
@@ -32,17 +33,7 @@ export function JobPanel({ jobId }: { jobId: number | null }) {
       </div>
 
       {job?.artifacts.length ? (
-        <ul className="artifacts">
-          {job.artifacts.map((artifact) => (
-            <li key={artifact.sequence}>
-              <span className="seq">{artifact.sequence}</span>
-              {artifact.filename}
-              <span className="muted">
-                {(artifact.size_bytes / 1024).toFixed(1)} KB
-              </span>
-            </li>
-          ))}
-        </ul>
+        <ResultView jobId={jobId} artifacts={job.artifacts} />
       ) : null}
 
       {/* 로그에는 사용자가 쓴 코드가 그대로 들어 있다. textContent 로만 넣는다. */}

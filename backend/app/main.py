@@ -12,7 +12,13 @@ from fastapi import FastAPI
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api import routes_auth, routes_catalog, routes_jobs, routes_projects
+from app.api import (
+    routes_auth,
+    routes_catalog,
+    routes_jobs,
+    routes_plot,
+    routes_projects,
+)
 from app.auth.policy import SessionPolicy
 from app.auth.redis_store import RedisSessionStore
 from app.core.config import Settings, get_settings
@@ -47,6 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes_projects.router, prefix="/api")
     app.include_router(routes_jobs.router, prefix="/api")
     app.include_router(routes_catalog.router, prefix="/api")
+    app.include_router(routes_plot.router, prefix="/api")
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:

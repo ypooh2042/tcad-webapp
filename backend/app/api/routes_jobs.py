@@ -10,10 +10,17 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import current_session, get_app_settings, get_db, get_queue
+from app.api.deps import (
+    current_session,
+    get_app_settings,
+    get_db,
+    get_queue,
+    owned_artifact,
+    owned_job,
+)
 from app.auth.models import Session
 from app.core.config import Settings
-from app.db.models import Artifact, Job, JobStatus
+from app.db.models import Artifact, Job
 from app.jobs.queue import JobQueue
 from app.projects.service import (
     ProjectNotFound,
@@ -89,11 +96,9 @@ async def submit(
 
 @router.get("/jobs/{job_id}")
 async def detail(
-    job_id: int,
-    session: Session = Depends(current_session),
+    job: Job = Depends(owned_job),
     db: AsyncSession = Depends(get_db),
 ) -> JobDetailResponse:
-    job = await _owned_job_or_404(db, job_id, session)
     artifacts = (
         await db.execute(
             select(Artifact)
@@ -119,23 +124,9 @@ async def detail(
 
 @router.get("/jobs/{job_id}/artifacts/{sequence}")
 async def artifact_content(
-    job_id: int,
-    sequence: int,
-    session: Session = Depends(current_session),
-    db: AsyncSession = Depends(get_db),
+    artifact: Artifact = Depends(owned_artifact),
 ) -> dict[str, str]:
-    """`.str` 파일 원문. 파싱은 별도 엔드포인트에서 한다."""
-    job = await _owned_job_or_404(db, job_id, session)
-    artifact = await db.scalar(
-        select(Artifact).where(
-            Artifact.job_id == job.id, Artifact.sequence == sequence
-        )
-    )
-    if artifact is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="산출물을 찾을 수 없습니다"
-        )
-
+    """`.str` 파일 원문. 그림용 변환은 routes_plot 이 한다."""
     path = Path(artifact.path)
     if not path.exists():
         raise HTTPException(
@@ -178,21 +169,6 @@ async def index(
         for j in jobs
     ]
 
-
-async def _owned_job_or_404(
-    db: AsyncSession, job_id: int, session: Session
-) -> Job:
-    """소유 확인. 남의 잡은 "없음"과 같은 404 로 응답한다.
-
-    잡 로그에는 사용자가 쓴 코드와 실행 결과가 그대로 들어 있다. 남의 것을
-    읽히면 안 되고, 존재 여부조차 알려주면 안 된다.
-    """
-    job = await db.get(Job, job_id)
-    if job is None or job.owner_id != int(session.user_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="잡을 찾을 수 없습니다"
-        )
-    return job
 
 
 JobDetailResponse.model_rebuild()

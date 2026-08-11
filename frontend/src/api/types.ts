@@ -44,3 +44,39 @@ export interface JobDetail extends Job {
 export function isFinished(status: JobStatus): boolean {
   return status !== 'queued' && status !== 'running'
 }
+
+export interface ProfilePoint {
+  depth: number
+  value: number
+  material: string
+}
+
+export interface ProfileResponse {
+  quantity: string
+  /** 2D 에서 어디를 잘랐는지. 1D 면 null. */
+  cut_x: number | null
+  points: ProfilePoint[]
+}
+
+export interface StructureSummary {
+  filename: string
+  dimension: number
+  quantities: string[]
+  materials: string[]
+  bounds: { x_min: number; x_max: number; y_min: number; y_max: number }
+  node_count: number
+  element_count: number
+  warnings: string[]
+}
+
+export interface SurfaceResponse {
+  quantity: string
+  x: number[]
+  y: number[]
+  triangles: [number, number, number][]
+  /** 삼각형별 정점 3개의 값. 계면 정점은 물질마다 값이 다르므로 공유하지 않는다. */
+  values: [number, number, number][]
+  materials: string[]
+  value_min: number
+  value_max: number
+}

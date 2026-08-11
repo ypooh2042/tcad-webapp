@@ -12,14 +12,42 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-#: 시뮬레이터가 커맨드 오류를 알릴 때 쓰는 문구들. 종료 코드로는 안 잡힌다.
+#: 시뮬레이터가 실패를 알릴 때 쓰는 문구들. 종료 코드로는 안 잡힌다.
+#:
+#: 목록은 suprem 바이너리의 문자열 테이블에서 뽑았다(`strings -n 6 suprem`).
+#: 추측으로 채우면 반드시 빠뜨리는 것이 생기고, 빠뜨린 문구 하나가 "아무것도
+#: 만들지 못한 실행"을 성공으로 기록한다. 실제로 메시 관련 문구들이 빠져 있어
+#: No mesh defined! 가 난 잡이 SUCCEEDED 로 남고 사용자는 빈 그래프만 봤다.
 _ERROR_PATTERNS = (
+    # 커맨드 해석 실패
     re.compile(r"^errors detected on command input", re.IGNORECASE),
     re.compile(r"^parameter .* does not exist", re.IGNORECASE),
     re.compile(r"^ambiguous parameter", re.IGNORECASE),
+    re.compile(r"^the command is ambiguous", re.IGNORECASE),
     re.compile(r"^unknown command", re.IGNORECASE),
-    re.compile(r"not found$"),  # 셸 fall-through: 오타가 셸로 넘어간 경우
+    re.compile(r"^no command defined for name", re.IGNORECASE),
+    re.compile(r"^illegal input", re.IGNORECASE),
+    re.compile(r"^bad expression:", re.IGNORECASE),
+    re.compile(r"^no character string given for", re.IGNORECASE),
+    # 메시·구조를 못 만든 경우. 이후 모든 커맨드가 빈 구조 위에서 돌아
+    # 산출물은 생기지만 내용이 없다.
+    re.compile(r"^no mesh defined", re.IGNORECASE),
+    re.compile(r"^user mesh data not given", re.IGNORECASE),
+    re.compile(r"^no value specified for", re.IGNORECASE),
+    re.compile(r"^no material specified for region", re.IGNORECASE),
+    re.compile(r"^no region yet", re.IGNORECASE),
+    re.compile(r"^no orientation given", re.IGNORECASE),
+    re.compile(r"^no such . tag:", re.IGNORECASE),
+    # 셸 fall-through: 인식하지 못한 첫 단어가 /bin/bash 로 넘어간 경우.
+    #
+    # 메시지 본문("command not found")은 로케일에 따라 번역되므로 문구로 찾으면
+    # 한국어 환경에서 통째로 놓친다. 번역되지 않는 `/bin/bash:` 접두사로 찾는다.
+    re.compile(r"^/bin/(?:ba)?sh: "),
 )
+
+#: 오류처럼 보이지만 정상인 문구. `^no ` 를 넓게 잡으면 여기에 걸려 성공한
+#: 실행이 실패로 뒤집힌다.
+_NOT_ERRORS = (re.compile(r"^no error in ", re.IGNORECASE),)
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,9 +73,11 @@ class SimulationResult:
 def extract_errors(log: str) -> tuple[str, ...]:
     """로그(stdout+stderr)에서 오류 줄만 골라낸다."""
     return tuple(
-        line.strip()
+        stripped
         for line in log.splitlines()
-        if any(pattern.search(line.strip()) for pattern in _ERROR_PATTERNS)
+        if (stripped := line.strip())
+        and not any(safe.search(stripped) for safe in _NOT_ERRORS)
+        and any(pattern.search(stripped) for pattern in _ERROR_PATTERNS)
     )
 
 

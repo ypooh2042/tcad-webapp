@@ -4,8 +4,11 @@ import type {
   Artifact,
   Job,
   JobDetail,
+  ProfileResponse,
   Project,
   Revision,
+  StructureSummary,
+  SurfaceResponse,
   User,
 } from './types'
 
@@ -55,4 +58,37 @@ export const jobs = {
     ),
 }
 
-export type { Artifact, Job, JobDetail, Project, Revision, User }
+/** 그림용으로 서버가 풀어 준 구조 데이터. */
+export const plot = {
+  summary: (jobId: number, sequence: number) =>
+    request<StructureSummary>(
+      `/api/jobs/${jobId}/artifacts/${sequence}/structure`,
+    ),
+
+  /** 1D 는 x 를 주지 않는다(깊이가 곧 x 축). 2D 는 자를 가로 위치가 필요하다. */
+  profile: (jobId: number, sequence: number, quantity: string, x?: number) => {
+    const params = new URLSearchParams({ quantity })
+    if (x !== undefined) params.set('x', String(x))
+    return request<ProfileResponse>(
+      `/api/jobs/${jobId}/artifacts/${sequence}/profile?${params}`,
+    )
+  },
+
+  surface: (jobId: number, sequence: number, quantity: string) =>
+    request<SurfaceResponse>(
+      `/api/jobs/${jobId}/artifacts/${sequence}/surface` +
+        `?quantity=${encodeURIComponent(quantity)}`,
+    ),
+}
+
+export type {
+  Artifact,
+  Job,
+  JobDetail,
+  ProfileResponse,
+  Project,
+  Revision,
+  StructureSummary,
+  SurfaceResponse,
+  User,
+}

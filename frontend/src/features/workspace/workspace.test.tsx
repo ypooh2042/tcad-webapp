@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspacePage } from './WorkspacePage'
 import { AuthProvider } from '../auth/AuthContext'
 
-const { auth, projects, jobs } = vi.hoisted(() => ({
+const { auth, projects, jobs, plot } = vi.hoisted(() => ({
   auth: { me: vi.fn(), login: vi.fn(), register: vi.fn(), logout: vi.fn() },
   projects: {
     list: vi.fn(),
@@ -21,9 +21,10 @@ const { auth, projects, jobs } = vi.hoisted(() => ({
     jobs: vi.fn(),
   },
   jobs: { get: vi.fn(), artifact: vi.fn() },
+  plot: { summary: vi.fn(), profile: vi.fn(), surface: vi.fn() },
 }))
 
-vi.mock('../../api/endpoints', () => ({ auth, projects, jobs }))
+vi.mock('../../api/endpoints', () => ({ auth, projects, jobs, plot }))
 
 // Monaco 는 jsdom 에서 뜨지 않는다. 편집 동작 자체는 E2E 의 몫이고, 여기서는
 // 저장·실행 흐름만 본다.
@@ -52,6 +53,21 @@ beforeEach(() => {
   projects.list.mockResolvedValue([PROJECT])
   projects.saveSource.mockResolvedValue({ id: 1, revision: 1 })
   projects.submit.mockResolvedValue({ id: 42, status: 'queued', source_revision_id: 1 })
+  plot.summary.mockResolvedValue({
+    filename: 'result.str',
+    dimension: 1,
+    quantities: ['chem_boron'],
+    materials: ['silicon'],
+    bounds: { x_min: 0, x_max: 2, y_min: 0, y_max: 0 },
+    node_count: 43,
+    element_count: 42,
+    warnings: [],
+  })
+  plot.profile.mockResolvedValue({
+    quantity: 'chem_boron',
+    cut_x: null,
+    points: [{ depth: 0, value: 1e18, material: 'silicon' }],
+  })
   jobs.get.mockResolvedValue({
     id: 42,
     status: 'succeeded',

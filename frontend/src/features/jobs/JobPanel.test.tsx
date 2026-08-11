@@ -3,8 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { JobPanel } from './JobPanel'
 import type { JobDetail } from '../../api/types'
 
-const { get } = vi.hoisted(() => ({ get: vi.fn() }))
-vi.mock('../../api/endpoints', () => ({ jobs: { get } }))
+const { get, plot } = vi.hoisted(() => ({
+  get: vi.fn(),
+  plot: { summary: vi.fn(), profile: vi.fn(), surface: vi.fn() },
+}))
+vi.mock('../../api/endpoints', () => ({ jobs: { get }, plot }))
 
 function detail(overrides: Partial<JobDetail> = {}): JobDetail {
   return {
@@ -21,6 +24,22 @@ function detail(overrides: Partial<JobDetail> = {}): JobDetail {
 beforeEach(() => {
   get.mockReset()
   get.mockResolvedValue(detail())
+  plot.summary.mockResolvedValue({
+    filename: 'a.str',
+    dimension: 1,
+    quantities: ['chem_boron'],
+    materials: ['silicon'],
+    bounds: { x_min: 0, x_max: 2, y_min: 0, y_max: 0 },
+    node_count: 43,
+    element_count: 42,
+    warnings: [],
+  })
+  plot.profile.mockResolvedValue({
+    quantity: 'chem_boron',
+    cut_x: null,
+    points: [{ depth: 0, value: 1e18, material: 'silicon' }],
+  })
+  plot.surface.mockResolvedValue(null)
 })
 
 describe('실행 전', () => {
@@ -62,8 +81,8 @@ describe('결과', () => {
     expect(await screen.findByText(/Mesh statistics/)).toBeInTheDocument()
   })
 
-  it('산출물을 생성 순서대로 보여준다', async () => {
-    // 이름순이 아니라 이 순서여야 공정 흐름과 일치한다.
+  it('공정 단계를 생성 순서대로 훑을 수 있다', async () => {
+    // 이름순으로 정렬하면 a_final 이 먼저 와서 공정 흐름이 뒤집힌다.
     get.mockResolvedValue(
       detail({
         artifacts: [
@@ -75,11 +94,24 @@ describe('결과', () => {
 
     render(<JobPanel jobId={42} />)
 
-    const items = await screen.findAllByRole('listitem')
-    expect(items.map((item) => item.textContent)).toEqual([
-      expect.stringContaining('after_implant.str'),
-      expect.stringContaining('a_final.str'),
-    ])
+    // 첫 단계가 먼저 보인다.
+    expect(await screen.findByText(/after_implant.str/)).toBeInTheDocument()
+    const slider = screen.getByLabelText('공정 단계')
+    expect(slider).toHaveAttribute('max', '1')
+  })
+
+  it('산출물이 하나여도 파일 이름을 보여준다', async () => {
+    // 지금 무엇을 보고 있는지 알 수 있는 유일한 단서다.
+    get.mockResolvedValue(
+      detail({
+        artifacts: [{ sequence: 1, filename: 'only.str', size_bytes: 10 }],
+      }),
+    )
+
+    render(<JobPanel jobId={42} />)
+
+    expect(await screen.findByText(/only.str/)).toBeInTheDocument()
+    expect(screen.queryByLabelText('공정 단계')).not.toBeInTheDocument()
   })
 
   it('출력이 없으면 그렇다고 말한다', async () => {

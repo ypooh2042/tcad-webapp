@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,9 @@ from app.auth.policy import SessionPolicy
 from app.auth.store import SessionStore
 from app.core.config import Settings
 from app.jobs.queue import JobQueue
+
+if TYPE_CHECKING:
+    from app.db.models import Artifact, Job
 
 
 async def get_db(request: Request) -> AsyncIterator[AsyncSession]:
@@ -83,3 +87,46 @@ async def require_admin(session: Session = Depends(current_session)) -> Session:
             status_code=status.HTTP_403_FORBIDDEN, detail="권한이 없습니다"
         )
     return session
+
+
+async def owned_job(
+    job_id: int,
+    session: Session = Depends(current_session),
+    db: AsyncSession = Depends(get_db),
+) -> "Job":
+    """소유 확인을 마친 잡.
+
+    남의 잡은 "없음"과 **같은** 404 로 응답한다. 403 으로 구분해 답하면 id 를
+    훑어 다른 사용자의 잡이 존재하는지 알아낼 수 있고, 잡 로그에는 사용자가 쓴
+    코드와 실행 결과가 그대로 들어 있다.
+    """
+    from app.db.models import Job
+
+    job = await db.get(Job, job_id)
+    if job is None or job.owner_id != int(session.user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="잡을 찾을 수 없습니다"
+        )
+    return job
+
+
+async def owned_artifact(
+    sequence: int,
+    job: "Job" = Depends(owned_job),
+    db: AsyncSession = Depends(get_db),
+) -> "Artifact":
+    """소유 확인을 마친 산출물."""
+    from sqlalchemy import select
+
+    from app.db.models import Artifact
+
+    artifact = await db.scalar(
+        select(Artifact).where(
+            Artifact.job_id == job.id, Artifact.sequence == sequence
+        )
+    )
+    if artifact is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="산출물을 찾을 수 없습니다"
+        )
+    return artifact
