@@ -1,0 +1,12 @@
+[project]
+name = "tcad-webapp-backend"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = ["integration: 실제 컨테이너를 띄우는 통합 테스트"]
+
+[tool.coverage.run]
+source = ["app"]

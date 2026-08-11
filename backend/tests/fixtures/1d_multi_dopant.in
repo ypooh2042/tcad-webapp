@@ -1,0 +1,12 @@
+option quiet
+mode one.dim
+line x loc=0 spacing=0.02 tag=top
+line x loc=0.5 spacing=0.02
+line x loc=2.0 spacing=0.25 tag=bottom
+region silicon xlo=top xhi=bottom
+bound exposed xlo=top xhi=top
+init boron conc=1.0e14
+implant phosphorus dose=1e14 energy=50 pearson
+implant antimony dose=1e14 energy=100 pearson
+diffuse time=10 temp=1000
+structure out=multi.str

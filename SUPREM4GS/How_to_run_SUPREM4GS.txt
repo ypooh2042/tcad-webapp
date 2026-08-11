@@ -1,0 +1,4 @@
+To run SUPREM4GS, follow these steps:
+	1. Launch the SUPREM4GS program using ./suprem4gs.
+	2. Navigate to the target folder using the cd command.
+	3. The source code is in the form of a *.in file. Running source *.in will start the simulation, and the results will be saved as a *.str file.

@@ -1,0 +1,74 @@
+# ─────────────────────────────────────────────────────────────
+# 시크릿 — public 레포 전환 예정이므로 최우선 차단
+# 주의: `*.key` 같은 넓은 패턴은 쓰지 말 것.
+#       SUPREM4GS/data/suprem.key 는 시뮬레이터 문법 정의 파일로 반드시 커밋돼야 함.
+# ─────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.p12
+id_rsa
+id_ed25519
+credentials.json
+
+# ─────────────────────────────────────────────────────────────
+# 라이선스 출처가 다른 바이너리
+# postmini 은 Copyright (C) 2002 Hewlett-Packard Company 로,
+# SUPREM4GS(오픈소스, github.com/rafael1193/suprem4gs)와 출처가 다름.
+# 웹앱 실행 경로에서도 사용하지 않고 로컬 검증용으로만 쓰므로 커밋 제외.
+# ─────────────────────────────────────────────────────────────
+SUPREM4GS/postmini
+
+# ─────────────────────────────────────────────────────────────
+# 시뮬레이션 산출물 (런타임 생성물)
+# 단, backend/tests/fixtures 아래 골든 파일은 테스트에 필요하므로 예외.
+# ─────────────────────────────────────────────────────────────
+SUPREM4GS/examples/**/*.str
+SUPREM4GS/*.B_CHEM
+SUPREM4GS/*.NET_DOPING
+SUPREM4GS/*.VACANCIES
+SUPREM4GS/*.INTERSTITIALS
+SUPREM4GS/*.ITRAPS
+SUPREM4GS/*.POTENTIAL
+var/
+data/jobs/
+!backend/tests/fixtures/**
+
+# ─────────────────────────────────────────────────────────────
+# Python
+# ─────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ─────────────────────────────────────────────────────────────
+# Node / 프론트엔드
+# ─────────────────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+.vite/
+coverage/
+playwright-report/
+test-results/
+
+# ─────────────────────────────────────────────────────────────
+# 기타
+# ─────────────────────────────────────────────────────────────
+.DS_Store
+*.log
+.idea/
+.vscode/
+
+# 생성물 (suprem.key 에서 재생성 가능)
+tools/catalog/catalog.json
+tools/catalog/monaco-suprem.*

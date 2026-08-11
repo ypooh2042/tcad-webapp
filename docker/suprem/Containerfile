@@ -1,0 +1,52 @@
+# SUPREM4GS 실행 샌드박스.
+#
+# ─────────────────────────────────────────────────────────────────────────
+#  이 컨테이너는 "신뢰할 수 없는 코드를 돌리는 곳"이 아니라
+#  "적대적인 코드가 반드시 돌아온다고 가정하는 곳"이다.
+#
+#  SUPREM4GS 인터프리터는 인식하지 못한 첫 단어를 /bin/bash 로 넘긴다.
+#  즉 사용자가 제출하는 .in 파일은 그 자체로 임의 셸 스크립트다.
+#  실측 확인: .in 에 `id` 한 줄만 넣고 돌리면 호스트 유저의 uid/gid 와 소속
+#  그룹(sudo 포함)이 그대로 출력된다.
+#
+#  따라서 아래 설정은 성능이나 편의를 위해 완화해서는 안 된다.
+#  실행 측 제약(--network none, --cap-drop ALL 등)은 app/runner/sandbox.py 참조.
+# ─────────────────────────────────────────────────────────────────────────
+
+FROM debian:bookworm-slim
+
+# suprem 은 x86-64 동적 링크 실행파일이고 의존성은 libc.so.6 / libm.so.6 뿐이다
+# (ldd 로 확인). 베이스 이미지에 이미 있으므로 추가 패키지 설치가 필요 없다.
+# 패키지를 안 깔면 공격 표면도 그만큼 줄어든다.
+
+RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin suprem
+
+# 바이너리와 물성 데이터는 root 소유 + 쓰기 불가.
+# 실행 유저(suprem)가 자기 실행 환경을 고쳐 쓰지 못하게 한다.
+COPY SUPREM4GS/suprem   /opt/suprem4gs/suprem
+COPY SUPREM4GS/data/    /opt/suprem4gs/data/
+
+RUN chown -R root:root /opt/suprem4gs \
+ && chmod 0555 /opt/suprem4gs/suprem \
+ && chmod -R a-w /opt/suprem4gs
+
+# suprem4gs 래퍼 스크립트는 SUPREM4_HOME="$(pwd)" 로 잡기 때문에 실행 위치에
+# 종속적이고, 결과 파일도 cwd 에 떨어져 동시 실행 시 서로 덮어쓴다.
+# 래퍼를 쓰지 않고 아래 4개 변수를 절대경로로 직접 지정해 그 문제를 없앤다.
+# (SUPREM4GS 폴더 밖에서 실행해 정상 동작하는 것을 실측 확인)
+#
+# SUP4MANDIR 이 가리키는 help/ 는 이 배포판에 존재하지 않는다. `man` 커맨드가
+# 동작하지 않을 뿐 시뮬레이션에는 영향이 없다(실행으로 확인). 문서 기능은
+# 매뉴얼 PDF 에서 따로 만든다.
+ENV SUP4KEYFILE=/opt/suprem4gs/data/suprem.uk \
+    SUP4MODELRC=/opt/suprem4gs/data/modelrc \
+    SUP4IMPDATA=/opt/suprem4gs/data/sup4gs.imp \
+    SUP4MANDIR=/opt/suprem4gs/help
+
+USER suprem
+
+# 잡별 스크래치 디렉토리가 여기에 rw 로 마운트된다. 컨테이너 안에서 쓰기가
+# 허용되는 유일한 경로다.
+WORKDIR /work
+
+ENTRYPOINT ["/opt/suprem4gs/suprem"]
