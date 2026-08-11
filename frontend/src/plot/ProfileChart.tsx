@@ -14,7 +14,7 @@
  */
 import { useMemo } from 'react'
 import type { ProfilePoint } from '../api/types'
-import { logTicks, toLogDomain } from './scale'
+import { linearTicks, logTicks, toLogDomain } from './scale'
 import { splitByMaterial } from './segments'
 
 const WIDTH = 640
@@ -36,6 +36,13 @@ function colorOf(material: string): string {
 function formatValue(value: number): string {
   const exponent = Math.round(Math.log10(value))
   return `1e${exponent}`
+}
+
+/** 깊이 눈금 라벨. 간격에 맞춰 자릿수를 정한다 — 0.5um 간격에 "0.500" 은
+ *  군더더기고, 0.02um 간격에 "0.0" 은 전부 같은 값으로 보인다. */
+function formatDepth(value: number, step: number): string {
+  const decimals = Math.max(0, Math.ceil(-Math.log10(step)))
+  return value.toFixed(decimals)
 }
 
 interface Props {
@@ -77,6 +84,7 @@ export function ProfileChart({ points, quantity }: Props) {
       plotHeight,
       segments: splitByMaterial(points),
       ticks: logTicks(domain.min, domain.max),
+      depthTicks: linearTicks(depthMin, depthMax),
       hasNegative: points.some((point) => point.value < 0),
     }
   }, [points])
@@ -113,6 +121,36 @@ export function ProfileChart({ points, quantity }: Props) {
           </g>
         ))}
 
+        {/* 깊이 눈금. 이게 없으면 접합 깊이를 읽을 수 없다 — 도핑 프로파일에서
+            가장 먼저 보는 숫자다. */}
+        {chart.depthTicks.map((tick, index) => {
+          const step =
+            chart.depthTicks.length > 1
+              ? Math.abs(
+                  (chart.depthTicks[1] ?? 0) - (chart.depthTicks[0] ?? 0),
+                )
+              : 1
+          return (
+            <g key={`depth-${index}`}>
+              <line
+                x1={chart.xOf(tick)}
+                x2={chart.xOf(tick)}
+                y1={MARGIN.top + chart.plotHeight}
+                y2={MARGIN.top + chart.plotHeight + 4}
+                className="grid"
+              />
+              <text
+                x={chart.xOf(tick)}
+                y={MARGIN.top + chart.plotHeight + 16}
+                className="tick"
+                textAnchor="middle"
+              >
+                {formatDepth(tick, step)}
+              </text>
+            </g>
+          )
+        })}
+
         {/* 표면(깊이 0). 증착층이 있으면 이 선 왼쪽에 그려진다. */}
         {chart.depthMin < 0 && (
           <line
@@ -140,7 +178,7 @@ export function ProfileChart({ points, quantity }: Props) {
 
         <text
           x={MARGIN.left + (WIDTH - MARGIN.left - MARGIN.right) / 2}
-          y={HEIGHT - 10}
+          y={HEIGHT - 6}
           className="axis-label"
           textAnchor="middle"
         >

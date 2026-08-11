@@ -8,7 +8,7 @@
  * 없다. 그렇다고 버리면 접합 위치가 그림에서 사라진다.
  */
 import { describe, expect, it } from 'vitest'
-import { colorFor, logTicks, toLogDomain } from './scale'
+import { colorFor, linearTicks, logTicks, toLogDomain } from './scale'
 
 describe('로그 축 정의역', () => {
   it('양수만 있으면 최소·최대를 그대로 쓴다', () => {
@@ -94,5 +94,62 @@ describe('색 매핑', () => {
 
   it('정의역이 한 점이어도 색이 나온다', () => {
     expect(colorFor(1e15, 1e15, 1e15)).toMatch(/^#|rgb/)
+  })
+})
+
+describe('선형 눈금 (깊이 축)', () => {
+  it('둥근 값을 고른다', () => {
+    // 0.317 같은 값이 축에 찍히면 읽을 수 없다.
+    const ticks = linearTicks(0, 2)
+
+    expect(ticks.every((t) => Number.isFinite(t))).toBe(true)
+    expect(ticks).toContain(0)
+    expect(ticks).toContain(1)
+    expect(ticks).toContain(2)
+  })
+
+  it('정의역 안에만 놓는다', () => {
+    const ticks = linearTicks(0.3, 1.7)
+
+    expect(Math.min(...ticks)).toBeGreaterThanOrEqual(0.3)
+    expect(Math.max(...ticks)).toBeLessThanOrEqual(1.7)
+  })
+
+  it('증착층 구간에는 눈금을 억지로 넣지 않는다', () => {
+    // 산화막 0.075um 은 전체 범위(-0.075~2)의 3.6% 다. 둥근 간격(0.5)으로는
+    // 음수 쪽에 놓을 자리가 없고, 억지로 -0.075 를 찍으면 다른 눈금과 간격이
+    // 어긋나 오히려 읽기 어려워진다. 증착층의 위치는 표면선(0)이 알려준다.
+    const ticks = linearTicks(-0.075, 2)
+
+    expect(ticks[0]).toBe(0)
+    expect(ticks.every((t) => t >= -0.075 && t <= 2)).toBe(true)
+  })
+
+  it('음수 구간이 넓으면 음수 눈금을 준다', () => {
+    // 두꺼운 층을 올린 경우다. 이때는 자리가 있다.
+    const ticks = linearTicks(-1, 2)
+
+    expect(ticks.some((t) => t < 0)).toBe(true)
+  })
+
+  it('표면(0)을 반드시 포함한다', () => {
+    // 0 은 기판 표면이다. 다른 어떤 눈금보다 중요하다.
+    expect(linearTicks(-0.075, 2)).toContain(0)
+  })
+
+  it('눈금이 폭주하지 않는다', () => {
+    expect(linearTicks(0, 1000).length).toBeLessThanOrEqual(12)
+  })
+
+  it('아주 좁은 범위도 눈금을 준다', () => {
+    expect(linearTicks(0, 0.01).length).toBeGreaterThan(1)
+  })
+
+  it('폭이 0이면 그 값 하나를 준다', () => {
+    expect(linearTicks(1, 1)).toEqual([1])
+  })
+
+  it('뒤집힌 범위는 빈 배열이다', () => {
+    expect(linearTicks(2, 1)).toEqual([])
   })
 })

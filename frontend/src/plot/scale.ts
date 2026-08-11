@@ -106,3 +106,41 @@ export function colorFor(value: number, min: number, max: number): string {
 
   return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`
 }
+
+/** 눈금 사이 간격으로 쓸 "읽기 좋은" 배수. */
+const NICE_STEPS = [1, 2, 2.5, 5, 10]
+
+/**
+ * 선형 축(깊이)의 눈금.
+ *
+ * 데이터 범위를 그대로 나누면 0.31666… 같은 값이 축에 찍혀 읽을 수 없다.
+ * 1·2·2.5·5·10 의 10의 거듭제곱 배수 중에서 고른다.
+ *
+ * **0은 반드시 넣는다.** 기판 표면이라 다른 어떤 눈금보다 중요하다 — 증착층은
+ * 음수 쪽에 그려지므로, 0이 어디인지 모르면 산화막 두께를 읽을 수 없다.
+ */
+export function linearTicks(min: number, max: number, target = 6): number[] {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max < min) return []
+  if (max === min) return [min]
+
+  const rough = (max - min) / target
+  const magnitude = 10 ** Math.floor(Math.log10(rough))
+  const step =
+    (NICE_STEPS.find((candidate) => candidate * magnitude >= rough) ?? 10) *
+    magnitude
+
+  const ticks: number[] = []
+  const first = Math.ceil(min / step) * step
+  for (let value = first; value <= max + step / 1000; value += step) {
+    // 부동소수 누적 오차로 0이 3.9e-17 처럼 나오면 라벨이 "0.00" 대신
+    // 이상하게 찍힌다. 간격 기준으로 반올림한다.
+    ticks.push(Math.abs(value) < step / 1000 ? 0 : value)
+  }
+
+  if (min <= 0 && 0 <= max && !ticks.includes(0)) {
+    ticks.push(0)
+    ticks.sort((a, b) => a - b)
+  }
+
+  return ticks
+}

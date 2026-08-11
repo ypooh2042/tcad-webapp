@@ -88,7 +88,14 @@ test('시뮬레이션이 실제로 돌고 결과가 그려진다', async ({ page
   await expect(page.locator('.panel').getByText('result.str')).toBeVisible()
 
   // 깊이 프로파일이 그려져야 한다. 서버가 .str 을 풀어 보낸 것이다.
-  await expect(page.getByRole('img', { name: /깊이 프로파일/ })).toBeVisible()
+  const chart = page.getByRole('img', { name: /깊이 프로파일/ })
+  await expect(chart).toBeVisible()
+
+  // 축에 숫자가 있어야 읽을 수 있다. 처음 배포했을 때 가로축에 제목만 있고
+  // 눈금 값이 없어서 접합 깊이를 읽을 방법이 없었다.
+  const ticks = await chart.locator('text.tick').allTextContents()
+  expect(ticks.some((t) => /^\d/.test(t))).toBe(true)   // 깊이 (0.0, 0.5 …)
+  expect(ticks.some((t) => /^1e/.test(t))).toBe(true)    // 농도 (1e15 …)
 })
 
 test('기본 예제가 손대지 않고 그대로 돌아간다', async ({ page }) => {

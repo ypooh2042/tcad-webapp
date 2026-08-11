@@ -61,6 +61,41 @@ describe('축', () => {
     expect(shallow![0]).toBeLessThan(deep![0])
   })
 
+  it('깊이 눈금 숫자를 붙인다', () => {
+    // 이게 없으면 접합 깊이를 읽을 수 없다 — 도핑 프로파일에서 가장 먼저
+    // 보는 숫자다. 처음 배포했을 때 축 제목만 있고 숫자가 없었다.
+    render(
+      <ProfileChart points={[point(0, 1e18), point(2, 1e15)]} quantity="q" />,
+    )
+
+    expect(screen.getByText('0.0')).toBeInTheDocument()
+    expect(screen.getByText('2.0')).toBeInTheDocument()
+  })
+
+  it('깊이 눈금 자릿수를 간격에 맞춘다', () => {
+    // 0.02um 간격에 "0.0" 만 찍으면 눈금이 전부 같은 값으로 보인다.
+    render(
+      <ProfileChart
+        points={[point(0, 1e18), point(0.1, 1e15)]}
+        quantity="q"
+      />,
+    )
+
+    expect(screen.getByText('0.02')).toBeInTheDocument()
+  })
+
+  it('표면(0) 눈금은 증착층이 있어도 나온다', () => {
+    // 0 은 기판 표면이다. 산화막 두께를 가늠하는 기준이 된다.
+    render(
+      <ProfileChart
+        points={[point(-0.075, 2e15, 'oxide'), point(2, 1e15)]}
+        quantity="q"
+      />,
+    )
+
+    expect(screen.getByText('0.0')).toBeInTheDocument()
+  })
+
   it('10의 거듭제곱 눈금을 붙인다', () => {
     render(
       <ProfileChart points={[point(0, 1e15), point(1, 1e18)]} quantity="q" />,
