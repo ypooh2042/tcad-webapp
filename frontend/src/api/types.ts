@@ -80,3 +80,21 @@ export interface SurfaceResponse {
   value_min: number
   value_max: number
 }
+
+export interface IssuedInvite {
+  id: number
+  /** 평문 코드. **이 응답에서만** 볼 수 있고 다시 조회할 수 없다. */
+  code: string
+  expires_at: string
+  max_uses: number
+}
+
+export interface InviteSummary {
+  id: number
+  expires_at: string
+  max_uses: number
+  used_count: number
+  revoked: boolean
+  /** 지금 쓸 수 있는지. 만료·소진·회수를 서버가 합쳐서 판단해 준다. */
+  usable: boolean
+}

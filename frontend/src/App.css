@@ -159,3 +159,48 @@ select {
 .legend i { width: 10px; height: 3px; border-radius: 2px; }
 
 .auth .hint { margin: 2px 0 0; font-size: 12px; }
+
+/* ── 관리자 ──────────────────────────────────────────────── */
+
+.admin {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.admin header { display: flex; align-items: center; gap: 12px; }
+.admin h2 { margin: 0; font-size: 15px; }
+
+.admin .issue { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.admin .issue label { font-size: 12px; color: var(--muted); }
+.admin .issue input { width: 72px; }
+
+/* 평문 코드는 여기서만 볼 수 있다. 눈에 띄어야 한다. */
+.issued {
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.issued .warn { margin: 0; color: var(--accent); font-size: 13px; }
+.issued .code-row { display: flex; align-items: center; gap: 8px; }
+.issued code {
+  flex: 1;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 13px/1.4 ui-monospace, monospace;
+  word-break: break-all;
+  user-select: all;
+}
+.issued p.muted { margin: 0; font-size: 12px; }
+
+.invites { border-collapse: collapse; font-size: 13px; }
+.invites th, .invites td { padding: 6px 12px 6px 0; text-align: left; }
+.invites th { color: var(--muted); font-weight: 500; font-size: 12px; }
+.invites tr.spent { color: var(--muted); }

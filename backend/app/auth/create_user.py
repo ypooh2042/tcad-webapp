@@ -22,12 +22,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from pydantic import BaseModel, EmailStr, ValidationError
 
 from app.auth.models import Role
+from app.auth.passwords import MIN_ADMIN_PASSWORD_LENGTH
 from app.auth.service import EmailAlreadyRegistered, register_user
 from app.core.config import get_settings
 
-#: routes_auth 의 RegisterRequest 와 같은 하한. 두 경로가 어긋나면 CLI 로만
-#: 약한 비밀번호를 심을 수 있게 된다.
-_MIN_PASSWORD_LENGTH = 12
+#: CLI 는 관리자를 만드는 통로다. 일반 가입(6자)보다 높은 기준을 쓴다.
+_MIN_ADMIN_PASSWORD_LENGTH = MIN_ADMIN_PASSWORD_LENGTH
 
 
 class _EmailCheck(BaseModel):
@@ -56,8 +56,10 @@ def validate_email(email: str) -> str:
 
 def _read_password() -> str:
     password = getpass.getpass("비밀번호: ")
-    if len(password) < _MIN_PASSWORD_LENGTH:
-        raise SystemExit(f"비밀번호는 {_MIN_PASSWORD_LENGTH}자 이상이어야 합니다")
+    if len(password) < _MIN_ADMIN_PASSWORD_LENGTH:
+        raise SystemExit(
+            f"비밀번호는 {_MIN_ADMIN_PASSWORD_LENGTH}자 이상이어야 합니다"
+        )
     if password != getpass.getpass("비밀번호 확인: "):
         raise SystemExit("비밀번호가 일치하지 않습니다")
     return password

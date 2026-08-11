@@ -38,7 +38,12 @@ services:
       # 개발 전용 비밀번호. 운영 값은 .env 로 주입하며 절대 커밋하지 않는다.
       POSTGRES_PASSWORD: tcad-dev-only
     volumes:
-      - tcad-pgdata:/var/lib/postgresql/data
+      # 이름에 -dev 를 붙인다. 운영 컨테이너와 같은 볼륨을 쓰면 두 postmaster 가
+      # 같은 데이터 디렉토리를 잡는다. 컨테이너마다 PID 네임스페이스가 달라
+      # postmaster.pid 잠금이 서로를 보지 못해 둘 다 뜨고, 데이터가 깨진다.
+      # 실제로 겪었다 — 재시작할 때 "could not locate a valid checkpoint record"
+      # 로 개발 DB 를 잃었다.
+      - tcad-pgdata-dev:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tcad"]
       interval: 5s
@@ -46,4 +51,4 @@ services:
       retries: 5
 
 volumes:
-  tcad-pgdata:
+  tcad-pgdata-dev:

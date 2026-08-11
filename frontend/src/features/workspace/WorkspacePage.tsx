@@ -10,6 +10,7 @@ import { ApiError } from '../../api/client'
 import { projects as projectApi } from '../../api/endpoints'
 import type { Project } from '../../api/types'
 import { useAuth } from '../auth/AuthContext'
+import { AdminPanel } from '../admin/AdminPanel'
 import { SupremEditor } from '../editor/SupremEditor'
 import { JobPanel } from '../jobs/JobPanel'
 
@@ -34,6 +35,7 @@ export function WorkspacePage() {
   const [jobId, setJobId] = useState<number | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
+  const [showAdmin, setShowAdmin] = useState(false)
 
   const report = useCallback(
     (error: unknown) => {
@@ -118,6 +120,12 @@ export function WorkspacePage() {
         </nav>
         <div className="spacer" />
         <span className="muted">{user?.email}</span>
+        {/* 관리자에게만 보인다. 일반 사용자가 눌러 봐야 서버가 403 을 준다. */}
+        {user?.role === 'admin' && (
+          <button className="link" onClick={() => setShowAdmin(true)}>
+            관리자
+          </button>
+        )}
         <button className="link" onClick={() => void logout()}>
           로그아웃
         </button>
@@ -132,6 +140,8 @@ export function WorkspacePage() {
         </button>
         {message && <span className="message">{message}</span>}
       </div>
+
+      {showAdmin && <AdminPanel onClose={() => setShowAdmin(false)} />}
 
       <main>
         <section className="editor">

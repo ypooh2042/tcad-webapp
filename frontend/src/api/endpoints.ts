@@ -3,6 +3,8 @@ import { request } from './client'
 import type {
   Artifact,
   Job,
+  IssuedInvite,
+  InviteSummary,
   JobDetail,
   ProfileResponse,
   Project,
@@ -60,6 +62,20 @@ export const jobs = {
     ),
 }
 
+/** 관리자 전용. 일반 사용자가 부르면 403 이 온다. */
+export const admin = {
+  issueInvite: (maxUses: number, validDays: number) =>
+    request<IssuedInvite>('/api/admin/invites', {
+      method: 'POST',
+      body: { max_uses: maxUses, valid_days: validDays },
+    }),
+
+  listInvites: () => request<InviteSummary[]>('/api/admin/invites'),
+
+  revokeInvite: (inviteId: number) =>
+    request<null>(`/api/admin/invites/${inviteId}`, { method: 'DELETE' }),
+}
+
 /** 그림용으로 서버가 풀어 준 구조 데이터. */
 export const plot = {
   summary: (jobId: number, sequence: number) =>
@@ -86,6 +102,8 @@ export const plot = {
 export type {
   Artifact,
   Job,
+  IssuedInvite,
+  InviteSummary,
   JobDetail,
   ProfileResponse,
   Project,

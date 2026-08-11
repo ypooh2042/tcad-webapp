@@ -141,9 +141,11 @@ describe('로그인', () => {
   })
 
   it('비밀번호에 최소 길이를 요구한다', async () => {
+    // 일반 사용자는 6자다. 관리자는 CLI 로만 만들고 12자를 요구한다 —
+    // 초대 발급 권한과 정원 면제를 가진 계정이라 기준이 다르다.
     renderWithAuth(<LoginPage />)
 
-    expect(screen.getByLabelText('비밀번호')).toHaveAttribute('minLength', '12')
+    expect(screen.getByLabelText('비밀번호')).toHaveAttribute('minLength', '6')
   })
 })
 

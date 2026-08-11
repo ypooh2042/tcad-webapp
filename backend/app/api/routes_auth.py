@@ -30,6 +30,7 @@ from app.auth.invites import (
     redeem_invite,
 )
 from app.auth.models import Role, Session
+from app.auth.passwords import MIN_PASSWORD_LENGTH
 from app.auth.policy import SessionLimitExceeded, SessionPolicy
 from app.auth.service import EmailAlreadyRegistered, authenticate, register_user
 from app.auth.store import SessionStore
@@ -45,7 +46,7 @@ _INVALID_CREDENTIALS = "이메일 또는 비밀번호가 올바르지 않습니�
 class RegisterRequest(BaseModel):
     email: EmailStr
     #: 길이 하한만 강제한다. 복잡도 규칙은 오히려 예측 가능한 패턴을 유도한다.
-    password: str = Field(min_length=12, max_length=1024)
+    password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=1024)
     #: 초대 없이는 가입할 수 없다. 이 서버는 제출된 코드를 컨테이너에서
     #: 실행하므로, 누가 쓰는지 모르는 상태로 열어 둘 수 없다.
     invite_code: str = Field(min_length=1, max_length=256)

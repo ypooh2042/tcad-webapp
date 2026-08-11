@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspacePage } from './WorkspacePage'
 import { AuthProvider } from '../auth/AuthContext'
 
-const { auth, projects, jobs, plot } = vi.hoisted(() => ({
+const { auth, projects, jobs, plot, admin } = vi.hoisted(() => ({
   auth: { me: vi.fn(), login: vi.fn(), register: vi.fn(), logout: vi.fn() },
   projects: {
     list: vi.fn(),
@@ -22,9 +22,10 @@ const { auth, projects, jobs, plot } = vi.hoisted(() => ({
   },
   jobs: { get: vi.fn(), artifact: vi.fn() },
   plot: { summary: vi.fn(), profile: vi.fn(), surface: vi.fn() },
+  admin: { issueInvite: vi.fn(), listInvites: vi.fn(), revokeInvite: vi.fn() },
 }))
 
-vi.mock('../../api/endpoints', () => ({ auth, projects, jobs, plot }))
+vi.mock('../../api/endpoints', () => ({ auth, projects, jobs, plot, admin }))
 
 // Monaco 는 jsdom 에서 뜨지 않는다. 편집 동작 자체는 E2E 의 몫이고, 여기서는
 // 저장·실행 흐름만 본다.
@@ -50,6 +51,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   auth.me.mockResolvedValue({ id: 1, email: 'a@example.com', role: 'user' })
   auth.logout.mockResolvedValue(null)
+  admin.listInvites.mockResolvedValue([])
   projects.list.mockResolvedValue([PROJECT])
   projects.saveSource.mockResolvedValue({ id: 1, revision: 1 })
   projects.submit.mockResolvedValue({ id: 42, status: 'queued', source_revision_id: 1 })
@@ -190,5 +192,43 @@ describe('오류', () => {
     await userEvent.click(screen.getByRole('button', { name: '실행' }))
 
     expect(await screen.findByText(/저장된 소스가 없습니다/)).toBeInTheDocument()
+  })
+})
+
+
+describe('관리자 화면', () => {
+  it('일반 사용자에게는 버튼이 없다', async () => {
+    renderWorkspace()
+    await screen.findByRole('button', { name: 'cmos' })
+
+    expect(screen.queryByRole('button', { name: '관리자' })).not.toBeInTheDocument()
+  })
+
+  it('관리자에게만 보인다', async () => {
+    auth.me.mockResolvedValue({ id: 1, email: 'a@example.com', role: 'admin' })
+    renderWorkspace()
+
+    expect(
+      await screen.findByRole('button', { name: '관리자' }),
+    ).toBeInTheDocument()
+  })
+
+  it('열면 초대 발급 화면이 나온다', async () => {
+    auth.me.mockResolvedValue({ id: 1, email: 'a@example.com', role: 'admin' })
+    renderWorkspace()
+
+    await userEvent.click(await screen.findByRole('button', { name: '관리자' }))
+
+    expect(screen.getByRole('button', { name: '발급' })).toBeInTheDocument()
+  })
+
+  it('닫으면 사라진다', async () => {
+    auth.me.mockResolvedValue({ id: 1, email: 'a@example.com', role: 'admin' })
+    renderWorkspace()
+    await userEvent.click(await screen.findByRole('button', { name: '관리자' }))
+
+    await userEvent.click(screen.getByRole('button', { name: '닫기' }))
+
+    expect(screen.queryByRole('button', { name: '발급' })).not.toBeInTheDocument()
   })
 })
