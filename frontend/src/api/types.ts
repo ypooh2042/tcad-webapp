@@ -98,3 +98,29 @@ export interface InviteSummary {
   /** 지금 쓸 수 있는지. 만료·소진·회수를 서버가 합쳐서 판단해 준다. */
   usable: boolean
 }
+
+export interface DocsSectionSummary {
+  id: string
+  kind: string
+  title: string
+  command: string | null
+  page_start: string
+}
+
+export interface DocsSection extends DocsSectionSummary {
+  aliases: string[]
+  page_end: string
+  pdf_page_start: number
+  pdf_page_end: number
+  /** SYNOPSIS / DESCRIPTION / EXAMPLES ... */
+  subsections: Record<string, string>
+  key_parameters: string[]
+}
+
+export interface DocsSearchHit {
+  id: string
+  title: string
+  command: string | null
+  kind: string
+  snippet: string
+}

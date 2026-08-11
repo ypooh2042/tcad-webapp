@@ -2,6 +2,9 @@
 import { request } from './client'
 import type {
   Artifact,
+  DocsSearchHit,
+  DocsSection,
+  DocsSectionSummary,
   Job,
   IssuedInvite,
   InviteSummary,
@@ -62,6 +65,26 @@ export const jobs = {
     ),
 }
 
+/** 매뉴얼. 카탈로그와 마찬가지로 인증이 필요 없다. */
+export const docs = {
+  sections: (kind?: string) =>
+    request<DocsSectionSummary[]>(
+      `/api/docs/sections${kind ? `?kind=${encodeURIComponent(kind)}` : ''}`,
+    ),
+
+  section: (id: string) =>
+    request<DocsSection>(`/api/docs/sections/${encodeURIComponent(id)}`),
+
+  /** 커서 아래 커맨드의 문서. 접두사를 서버가 해석한다. */
+  forCommand: (token: string) =>
+    request<DocsSection>(`/api/docs/for-command/${encodeURIComponent(token)}`),
+
+  search: (query: string) =>
+    request<{ query: string; hits: DocsSearchHit[] }>(
+      `/api/docs/search?q=${encodeURIComponent(query)}`,
+    ),
+}
+
 /** 관리자 전용. 일반 사용자가 부르면 403 이 온다. */
 export const admin = {
   issueInvite: (maxUses: number, validDays: number) =>
@@ -101,6 +124,9 @@ export const plot = {
 
 export type {
   Artifact,
+  DocsSearchHit,
+  DocsSection,
+  DocsSectionSummary,
   Job,
   IssuedInvite,
   InviteSummary,

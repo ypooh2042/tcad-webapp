@@ -11,7 +11,7 @@
  *   - `movie="..."` 처럼 따옴표 문자열이 여러 줄에 걸치기도 한다
  */
 import { describe, expect, it } from 'vitest'
-import { analyzeLine } from './context'
+import { analyzeLine, commandOnLine } from './context'
 
 /** `|` 로 커서 위치를 표시한다. 테스트가 눈으로 읽힌다. */
 function at(marked: string) {
@@ -153,5 +153,41 @@ describe('변수 보간', () => {
       kind: 'parameter',
       prefix: 'tem',
     })
+  })
+})
+
+describe('줄의 커맨드', () => {
+  it('커맨드 이름을 뽑는다', () => {
+    expect(commandOnLine('structure outfile=a.str')).toBe('structure')
+  })
+
+  it('파라미터만 있는 자리에서도 그 줄의 커맨드를 준다', () => {
+    // 매뉴얼 패널은 커서가 어느 낱말 위인지와 무관하게 따라가야 한다.
+    expect(commandOnLine('implant boron dose=3e14 energy=70')).toBe('implant')
+  })
+
+  it('접두사를 풀지 않는다', () => {
+    // 서버가 시뮬레이터와 같은 규칙으로 해석해야 한다.
+    expect(commandOnLine('stru out=a.str')).toBe('stru')
+  })
+
+  it('% 접두사를 벗긴다', () => {
+    expect(commandOnLine('%diffuse time=30')).toBe('diffuse')
+  })
+
+  it('앞쪽 공백을 무시한다', () => {
+    expect(commandOnLine('    deposit oxide')).toBe('deposit')
+  })
+
+  it('주석 줄에는 커맨드가 없다', () => {
+    expect(commandOnLine('# implant boron')).toBeNull()
+  })
+
+  it('빈 줄에는 커맨드가 없다', () => {
+    expect(commandOnLine('   ')).toBeNull()
+  })
+
+  it('숫자로 시작하는 줄은 커맨드가 아니다', () => {
+    expect(commandOnLine('123 abc')).toBeNull()
   })
 })

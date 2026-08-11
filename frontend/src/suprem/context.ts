@@ -86,3 +86,21 @@ export function analyzeLine(line: string, column: number): CompletionContext {
 
   return { kind: 'parameter', command, prefix: current }
 }
+
+/**
+ * 한 줄이 어떤 커맨드인지.
+ *
+ * 커서가 커맨드 위에 있든 파라미터 위에 있든 그 줄의 커맨드를 돌려준다 —
+ * 매뉴얼 패널은 "지금 무엇을 쓰고 있는가"를 따라가야 하지 커서가 정확히 어느
+ * 낱말 위인지는 상관없다.
+ *
+ * 접두사는 풀지 않는다. `stru` 를 그대로 넘겨야 서버가 시뮬레이터와 같은
+ * 규칙으로 해석한다.
+ */
+export function commandOnLine(line: string): string | null {
+  // 주석과 빈 줄에는 커맨드가 없다. 커맨드 앞의 % 는 투명하다.
+  const match = /^\s*%?\s*([A-Za-z][\w.]*)/.exec(line)
+  if (!match) return null
+  if (/^\s*#/.test(line)) return null
+  return match[1] ?? null
+}

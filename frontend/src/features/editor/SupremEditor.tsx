@@ -19,6 +19,7 @@ import {
   languageConfiguration,
   monarchTokens,
 } from '../../suprem/language'
+import { commandOnLine } from '../../suprem/context'
 import { registerSupremProviders } from '../../suprem/providers'
 
 let registered = false
@@ -37,11 +38,21 @@ interface Props {
   value: string
   onChange: (value: string) => void
   onSave: () => void
+  /** 커서가 놓인 줄의 커맨드. 매뉴얼 패널이 이걸 따라간다. */
+  onCommandChange?: (command: string | null) => void
 }
 
-export function SupremEditor({ value, onChange, onSave }: Props) {
+export function SupremEditor({
+  value,
+  onChange,
+  onSave,
+  onCommandChange,
+}: Props) {
+  // ref 로 최신 핸들러를 부른다. 등록 시점의 낡은 클로저가 계속 불리면 안 된다.
   const saveRef = useRef(onSave)
   saveRef.current = onSave
+  const commandRef = useRef(onCommandChange)
+  commandRef.current = onCommandChange
 
   const handleMount = useCallback((editor: Parameters<
     NonNullable<React.ComponentProps<typeof Editor>['onMount']>
@@ -51,6 +62,18 @@ export function SupremEditor({ value, onChange, onSave }: Props) {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () =>
       saveRef.current(),
     )
+
+    const report = () => {
+      const position = editor.getPosition()
+      const line = position
+        ? (editor.getModel()?.getLineContent(position.lineNumber) ?? '')
+        : ''
+      commandRef.current?.(commandOnLine(line))
+    }
+    editor.onDidChangeCursorPosition(report)
+    // 편집 중에도 갱신한다. 커맨드 이름을 다 치는 순간 문서가 떠야 한다.
+    editor.onDidChangeModelContent(report)
+    report()
   }, [])
 
   return (

@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspacePage } from './WorkspacePage'
 import { AuthProvider } from '../auth/AuthContext'
 
-const { auth, projects, jobs, plot, admin } = vi.hoisted(() => ({
+const { auth, projects, jobs, plot, admin, docs } = vi.hoisted(() => ({
   auth: { me: vi.fn(), login: vi.fn(), register: vi.fn(), logout: vi.fn() },
   projects: {
     list: vi.fn(),
@@ -23,9 +23,10 @@ const { auth, projects, jobs, plot, admin } = vi.hoisted(() => ({
   jobs: { get: vi.fn(), artifact: vi.fn() },
   plot: { summary: vi.fn(), profile: vi.fn(), surface: vi.fn() },
   admin: { issueInvite: vi.fn(), listInvites: vi.fn(), revokeInvite: vi.fn() },
+  docs: { sections: vi.fn(), section: vi.fn(), forCommand: vi.fn(), search: vi.fn() },
 }))
 
-vi.mock('../../api/endpoints', () => ({ auth, projects, jobs, plot, admin }))
+vi.mock('../../api/endpoints', () => ({ auth, projects, jobs, plot, admin, docs }))
 
 // Monaco 는 jsdom 에서 뜨지 않는다. 편집 동작 자체는 E2E 의 몫이고, 여기서는
 // 저장·실행 흐름만 본다.
@@ -52,6 +53,8 @@ beforeEach(() => {
   auth.me.mockResolvedValue({ id: 1, email: 'a@example.com', role: 'user' })
   auth.logout.mockResolvedValue(null)
   admin.listInvites.mockResolvedValue([])
+  docs.forCommand.mockRejectedValue(new Error('없음'))
+  docs.search.mockResolvedValue({ query: '', hits: [] })
   projects.list.mockResolvedValue([PROJECT])
   projects.saveSource.mockResolvedValue({ id: 1, revision: 1 })
   projects.submit.mockResolvedValue({ id: 42, status: 'queued', source_revision_id: 1 })
@@ -230,5 +233,19 @@ describe('관리자 화면', () => {
     await userEvent.click(screen.getByRole('button', { name: '닫기' }))
 
     expect(screen.queryByRole('button', { name: '발급' })).not.toBeInTheDocument()
+  })
+})
+
+
+describe('매뉴얼 패널', () => {
+  it('버튼으로 열고 닫는다', async () => {
+    renderWorkspace()
+    await screen.findByRole('button', { name: 'cmos' })
+
+    await userEvent.click(screen.getByRole('button', { name: '매뉴얼' }))
+    expect(screen.getByLabelText('매뉴얼 검색')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: '매뉴얼 닫기' }))
+    expect(screen.queryByLabelText('매뉴얼 검색')).not.toBeInTheDocument()
   })
 })

@@ -11,6 +11,7 @@ import { projects as projectApi } from '../../api/endpoints'
 import type { Project } from '../../api/types'
 import { useAuth } from '../auth/AuthContext'
 import { AdminPanel } from '../admin/AdminPanel'
+import { DocsPanel } from '../docs/DocsPanel'
 import { SupremEditor } from '../editor/SupremEditor'
 import { JobPanel } from '../jobs/JobPanel'
 
@@ -36,6 +37,8 @@ export function WorkspacePage() {
   const [message, setMessage] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
+  const [showDocs, setShowDocs] = useState(false)
+  const [cursorCommand, setCursorCommand] = useState<string | null>(null)
 
   const report = useCallback(
     (error: unknown) => {
@@ -138,12 +141,15 @@ export function WorkspacePage() {
         <button className="primary" onClick={() => void run()} disabled={!active}>
           실행
         </button>
+        <button onClick={() => setShowDocs((open) => !open)}>
+          {showDocs ? '매뉴얼 닫기' : '매뉴얼'}
+        </button>
         {message && <span className="message">{message}</span>}
       </div>
 
       {showAdmin && <AdminPanel onClose={() => setShowAdmin(false)} />}
 
-      <main>
+      <main className={showDocs ? "with-docs" : ""}>
         <section className="editor">
           <SupremEditor
             value={source}
@@ -152,8 +158,12 @@ export function WorkspacePage() {
               setDirty(true)
             }}
             onSave={() => void save()}
+            onCommandChange={setCursorCommand}
           />
         </section>
+        {showDocs && (
+          <DocsPanel command={cursorCommand} onClose={() => setShowDocs(false)} />
+        )}
         <aside>
           <JobPanel jobId={jobId} />
         </aside>

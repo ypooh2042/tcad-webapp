@@ -204,3 +204,36 @@ select {
 .invites th, .invites td { padding: 6px 12px 6px 0; text-align: left; }
 .invites th { color: var(--muted); font-weight: 500; font-size: 12px; }
 .invites tr.spent { color: var(--muted); }
+
+/* ── 매뉴얼 ──────────────────────────────────────────────── */
+
+.workspace main.with-docs { grid-template-columns: 1fr 360px 400px; }
+
+.docs {
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.docs header { display: flex; align-items: center; gap: 10px; }
+.docs h2 { margin: 0; font-size: 15px; }
+.docs h3 { margin: 0 0 2px; font-size: 14px; }
+.docs h4 { margin: 12px 0 4px; font-size: 12px; color: var(--accent); letter-spacing: 0.04em; }
+
+.docs-search { display: flex; gap: 6px; }
+.docs-search input { flex: 1; }
+
+.docs-hits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.docs-hits li p { margin: 2px 0 0; font-size: 12px; }
+
+/* 매뉴얼은 고정폭으로 조판돼 있다. SYNOPSIS 의 정렬이 의미를 가진다. */
+.docs pre {
+  margin: 0;
+  font: 12px/1.5 ui-monospace, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
