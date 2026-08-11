@@ -59,7 +59,7 @@ def run_simulation(
     """
     limits = limits or SandboxLimits()
     workdir.mkdir(parents=True, exist_ok=True)
-    (workdir / SOURCE_FILENAME).write_text(source)
+    source = _write_source(workdir, source)
 
     argv = build_sandbox_argv(image=image, host_workdir=workdir, limits=limits)
     limit_bytes = limits.max_output_mb * 1_048_576
@@ -123,6 +123,36 @@ def run_simulation(
         structure_files=structure_files,
         errors=tuple(errors),
     )
+
+
+def normalise_source(source: str) -> str:
+    """시뮬레이터에 넘길 수 있는 형태로 다듬는다.
+
+    **마지막 줄에 개행이 없으면 그 줄이 실행되지 않는다.** 실측으로 확인했다 —
+    CMOS 예제를 끝 개행 없이 돌리면 마지막 `structure out=` 이 빠져 산출물이
+    14개만 나오고, 이어서 러너가 보내는 `quit` 이 미완성 줄에 붙어
+    "illegal input" 이 난다. 개행을 넣으면 15개가 나오고 오류도 없다.
+
+    브라우저 편집기에서 마지막 줄 끝에 Enter 를 치지 않는 것은 아주 흔하다.
+    사용자 탓으로 둘 수 없다.
+
+    줄바꿈도 LF 로 맞춘다. 레포의 예제 파일들이 CRLF 라 붙여 넣으면 그대로
+    들어온다.
+    """
+    text = source.replace("\r\n", "\n").replace("\r", "\n")
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text
+
+
+def _write_source(workdir: Path, source: str) -> str:
+    """job.in 을 쓰고, 실제로 실행될 내용을 돌려준다.
+
+    돌려준 값은 산출물 순서를 정하는 데도 쓰이므로 파일과 같아야 한다.
+    """
+    text = normalise_source(source)
+    (workdir / SOURCE_FILENAME).write_text(text)
+    return text
 
 
 def _truncate_log(log: str) -> str:
