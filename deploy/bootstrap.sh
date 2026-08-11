@@ -4,10 +4,17 @@
 #
 #   ./deploy/bootstrap.sh
 #
-# 이 스크립트가 하지 **않는** 것 — 손으로 해야 한다:
+# **이 스크립트는 sudo 를 쓰지 않는다.**
+#
+# 권한이 필요한 일은 두 가지뿐이고, 그것만 미리 손으로 해 두면 나머지는 전부
+# 사용자 권한으로 돌아간다. 스크립트 안에서 sudo 를 부르면 비대화형 환경
+# (CI, 편집기 터미널, 원격 실행)에서 비밀번호 프롬프트에 걸려 멈춘다.
+#
+# 이 스크립트가 하지 **않는** 것:
 #   - DNS A 레코드 (tcad.ypooh2062.link → 이 서버 공인 IP)
-#   - nginx 설정 배치와 인증서 발급 (아래 안내가 출력된다)
-#   - 첫 관리자 계정 생성 (아래 안내가 출력된다)
+#   - 설치 경로 생성과 linger (아래에서 필요한 명령을 알려준다)
+#   - nginx 설정 배치와 인증서 발급 (끝에 안내가 출력된다)
+#   - 첫 관리자 계정 생성 (끝에 안내가 출력된다)
 #
 # 비밀번호를 물어보지 않는다. DB 비밀번호는 여기서 만들어 api.env 에 넣는다.
 
@@ -19,9 +26,21 @@ ENV_FILE="$HOME/.config/tcad/api.env"
 
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$1"; }
 
-log "설치 경로 준비: $TARGET"
-sudo mkdir -p "$TARGET"
-sudo chown "$USER:$USER" "$TARGET"
+log "설치 경로 확인: $TARGET"
+if [[ ! -d "$TARGET" || ! -w "$TARGET" ]]; then
+    cat >&2 <<PREREQ
+
+설치 경로가 없거나 쓸 수 없습니다: $TARGET
+
+터미널에서 아래 한 줄을 먼저 실행한 뒤 이 스크립트를 다시 돌리세요.
+(nginx 가 정적 파일을 읽어야 하므로 홈 디렉토리가 아니라 /srv 를 씁니다.
+ 홈은 보통 750 이라 nginx 사용자가 통과하지 못합니다.)
+
+    sudo mkdir -p "$TARGET" && sudo chown "\$USER:\$USER" "$TARGET"
+
+PREREQ
+    exit 1
+fi
 mkdir -p "$TARGET"/{backend,frontend,var/jobs,docker}
 
 log "PostgreSQL·Redis 확인"
@@ -62,6 +81,7 @@ python3 -m venv "$TARGET/backend/.venv"
 
 log "레포 동기화"
 rsync -a --delete --exclude '.venv' --exclude '__pycache__' \
+    --exclude 'var' \
     "$REPO_ROOT/backend/" "$TARGET/backend/"
 rsync -a --delete "$REPO_ROOT/SUPREM4GS/" "$TARGET/SUPREM4GS/"
 rsync -a --delete "$REPO_ROOT/docker/" "$TARGET/docker/"
@@ -75,8 +95,25 @@ log "systemd 사용자 유닛 설치"
 mkdir -p "$HOME/.config/systemd/user"
 cp "$REPO_ROOT"/deploy/systemd/tcad-*.service "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
-# 로그아웃해도 계속 돌게 한다. 없으면 SSH 를 끊는 순간 멈춘다.
-sudo loginctl enable-linger "$USER"
+
+# 로그아웃해도 서비스가 계속 돌게 한다. 이것만은 권한이 필요하다.
+# 안 되어 있어도 지금 당장은 돌아가므로 실패로 처리하지 않고 알려만 준다 —
+# SSH 를 끊는 순간 멈추는 것을 나중에 겪는 편이 더 나쁘다.
+if [[ "$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null)" != "yes" ]]; then
+    LINGER_NEEDED=1
+else
+    LINGER_NEEDED=0
+fi
+
+if [[ "${LINGER_NEEDED:-0}" == "1" ]]; then
+    cat <<'LINGER'
+
+⚠ linger 가 꺼져 있습니다. 이대로 두면 로그아웃하는 순간 서비스가 멈춥니다.
+
+    sudo loginctl enable-linger "$USER"
+
+LINGER
+fi
 
 cat <<'NEXT'
 

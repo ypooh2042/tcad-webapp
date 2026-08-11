@@ -5,7 +5,10 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
-    "pydantic>=2.8",
+    # EmailStr 이 email-validator 를 필요로 한다. 빼먹으면 앱이 임포트 단계에서
+    # 죽는다 — 개발 환경에는 어쩌다 들어와 있어서 드러나지 않고, 새로 설치한
+    # 서버에서만 터진다(실제로 배포 리허설에서 겪었다).
+    "pydantic[email]>=2.8",
     "pydantic-settings>=2.4",
     "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.29",
@@ -13,6 +16,14 @@ dependencies = [
     "redis>=5.0",
     "argon2-cffi>=23.1",
 ]
+
+# 패키지를 **명시한다.** 자동 탐색에 맡기면 setuptools 가 최상위 디렉토리를
+# 전부 패키지 후보로 보고, alembic(마이그레이션 스크립트)과 var(런타임 산출물)
+# 까지 끌어들여 "Multiple top-level packages discovered" 로 설치가 실패한다.
+# 실제로 alembic 을 추가한 시점부터 `pip install -e .` 가 깨져 있었다 —
+# 개발 환경은 그 전에 설치해 둔 상태라 드러나지 않았고, 새로 배포할 때 터졌다.
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [project.optional-dependencies]
 dev = [

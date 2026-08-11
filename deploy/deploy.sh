@@ -36,6 +36,7 @@ log "프론트엔드 빌드"
 log "백엔드 동기화"
 rsync -a --delete \
     --exclude '.venv' --exclude '__pycache__' --exclude '.pytest_cache' \
+    --exclude 'var' \
     "$REPO_ROOT/backend/" "$TARGET/backend/"
 
 log "시뮬레이터 동기화"
