@@ -1,0 +1,49 @@
+# 개발용 보조 서비스 (Redis, PostgreSQL).
+#
+# 루트리스 Podman 을 쓴다:
+#   podman-compose -f compose.dev.yml up -d
+#   podman-compose -f compose.dev.yml down
+#
+# 시뮬레이션 샌드박스는 여기에 없다. 잡마다 컨테이너를 새로 띄우고 즉시 버리는
+# 구조라 워커가 직접 관리한다(backend/app/runner/sandbox.py 참조).
+#
+# 포트는 호스트 기본값(6379/5432)과 겹치지 않게 어긋내 두었다. 이 홈서버에는
+# 다른 서비스가 같이 돌고 있어 충돌 시 원인을 찾기 번거롭다.
+#
+# 127.0.0.1 에 묶는 것이 중요하다. 그냥 "6380:6379" 로 쓰면 모든 인터페이스에
+# 공개되어, 같은 네트워크의 기기가 인증 없는 Redis 와 개발 비밀번호를 아는
+# Postgres 에 그대로 접근할 수 있다.
+
+services:
+  redis:
+    image: docker.io/library/redis:7-alpine
+    ports:
+      - "127.0.0.1:6380:6379"
+    # 세션은 Redis 가 TTL 로 관리한다. 재시작 시 전원 로그아웃되는 것이
+    # 맞는 동작이라 영속화하지 않는다.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: docker.io/library/postgres:16-alpine
+    ports:
+      - "127.0.0.1:5433:5432"
+    environment:
+      POSTGRES_USER: tcad
+      POSTGRES_DB: tcad
+      # 개발 전용 비밀번호. 운영 값은 .env 로 주입하며 절대 커밋하지 않는다.
+      POSTGRES_PASSWORD: tcad-dev-only
+    volumes:
+      - tcad-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tcad"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  tcad-pgdata:
