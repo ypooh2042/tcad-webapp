@@ -20,11 +20,30 @@ TARGET="${TCAD_TARGET:-/srv/tcad}"
 
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$1"; }
 
+# systemctl --user 는 사용자 D-Bus 세션을 찾아야 한다. 로그인 셸이 아닌 곳
+# (편집기 터미널, cron, 원격 실행)에서는 XDG_RUNTIME_DIR 이 비어 있어서
+# "Failed to connect to bus" 로 죽는다. 실제로 그렇게 죽었다.
+# 소켓은 linger 가 켜져 있으면 항상 있으므로 직접 채워 준다.
+ensure_user_bus() {
+    if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    fi
+    if [[ ! -d "$XDG_RUNTIME_DIR" ]]; then
+        echo "사용자 런타임 디렉토리가 없습니다: $XDG_RUNTIME_DIR" >&2
+        echo "  로그인 세션에서 실행하거나 linger 를 켜세요:" >&2
+        echo "    sudo loginctl enable-linger \"\$USER\"" >&2
+        exit 1
+    fi
+}
+
+
 if [[ ! -d "$TARGET" ]]; then
     echo "설치 경로가 없습니다: $TARGET" >&2
     echo "먼저 deploy/bootstrap.sh 를 실행하세요." >&2
     exit 1
 fi
+
+ensure_user_bus
 
 log "테스트"
 # 깨진 것을 배포하지 않는다. 여기서 멈추는 편이 롤백보다 싸다.

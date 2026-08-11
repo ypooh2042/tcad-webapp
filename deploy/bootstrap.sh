@@ -26,6 +26,23 @@ ENV_FILE="$HOME/.config/tcad/api.env"
 
 log() { printf '\n\033[1;34m==>\033[0m %s\n' "$1"; }
 
+# systemctl --user 는 사용자 D-Bus 세션을 찾아야 한다. 로그인 셸이 아닌 곳
+# (편집기 터미널, cron, 원격 실행)에서는 XDG_RUNTIME_DIR 이 비어 있어서
+# "Failed to connect to bus" 로 죽는다. 실제로 그렇게 죽었다.
+# 소켓은 linger 가 켜져 있으면 항상 있으므로 직접 채워 준다.
+ensure_user_bus() {
+    if [[ -z "${XDG_RUNTIME_DIR:-}" ]]; then
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    fi
+    if [[ ! -d "$XDG_RUNTIME_DIR" ]]; then
+        echo "사용자 런타임 디렉토리가 없습니다: $XDG_RUNTIME_DIR" >&2
+        echo "  로그인 세션에서 실행하거나 linger 를 켜세요:" >&2
+        echo "    sudo loginctl enable-linger \"\$USER\"" >&2
+        exit 1
+    fi
+}
+
+
 log "설치 경로 확인: $TARGET"
 if [[ ! -d "$TARGET" || ! -w "$TARGET" ]]; then
     cat >&2 <<PREREQ
@@ -46,13 +63,32 @@ mkdir -p "$TARGET"/{backend,frontend,var/jobs,docker}
 log "PostgreSQL·Redis 확인"
 # 이 서버에는 다른 서비스도 돈다. 기존 인스턴스를 쓸지 새로 띄울지는 상황에
 # 따라 다르므로 여기서는 확인만 하고 안내한다.
-if ! command -v psql > /dev/null && ! podman ps --format '{{.Names}}' | grep -q postgres; then
-    echo "  PostgreSQL 이 보이지 않습니다. 컨테이너로 띄우려면:" >&2
+#
+# **볼륨 이름을 개발용과 반드시 다르게 한다.** compose.dev.yml 이 쓰는
+# tcad-pgdata 를 그대로 쓰면 두 postmaster 가 같은 데이터 디렉토리를 잡는다.
+# 컨테이너마다 PID 네임스페이스가 달라 postmaster.pid 잠금이 서로를 못 보고,
+# 둘 다 뜬 채로 크래시 복구를 돌린다 — 실제로 그렇게 띄웠다가 급히 내렸다.
+if ! ss -tln 2>/dev/null | grep -q '127.0.0.1:5432'; then
+    echo "  5432 에 PostgreSQL 이 없습니다. 컨테이너로 띄우려면:" >&2
     echo "    podman run -d --name tcad-postgres --restart=always \\" >&2
     echo "      -p 127.0.0.1:5432:5432 -e POSTGRES_USER=tcad -e POSTGRES_DB=tcad \\" >&2
-    echo "      -e POSTGRES_PASSWORD=<비밀번호> -v tcad-pgdata:/var/lib/postgresql/data \\" >&2
+    echo "      -e POSTGRES_PASSWORD=<api.env 의 비밀번호> \\" >&2
+    echo "      -v tcad-pgdata-prod:/var/lib/postgresql/data \\" >&2
     echo "      docker.io/library/postgres:16-alpine" >&2
+    echo "  (POSTGRES_PASSWORD 는 볼륨이 **비어 있을 때만** 적용된다. 이미 쓰던" >&2
+    echo "   볼륨을 재사용하면 옛 비밀번호가 그대로다.)" >&2
 fi
+
+if ! ss -tln 2>/dev/null | grep -q '127.0.0.1:6379'; then
+    echo "  6379 에 Redis 가 없습니다. 컨테이너로 띄우려면:" >&2
+    echo "    podman run -d --name tcad-redis --restart=always \\" >&2
+    echo "      -p 127.0.0.1:6379:6379 docker.io/library/redis:7-alpine \\" >&2
+    echo "      redis-server --save '' --appendonly no" >&2
+fi
+
+# 재부팅 후에도 컨테이너가 살아나게 한다. --restart=always 만으로는 부팅 시
+# 다시 뜨지 않는다(루트리스 podman 은 데몬이 없다).
+systemctl --user enable podman-restart.service > /dev/null 2>&1 || true
 
 log "환경 파일 생성: $ENV_FILE"
 if [[ -f "$ENV_FILE" ]]; then
@@ -92,6 +128,7 @@ podman build -t tcad/suprem:latest \
     -f "$TARGET/docker/suprem/Containerfile" "$TARGET"
 
 log "systemd 사용자 유닛 설치"
+ensure_user_bus
 mkdir -p "$HOME/.config/systemd/user"
 cp "$REPO_ROOT"/deploy/systemd/tcad-*.service "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
