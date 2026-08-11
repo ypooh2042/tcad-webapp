@@ -17,6 +17,7 @@ from app.auth.models import Session
 from app.auth.policy import SessionPolicy
 from app.auth.store import SessionStore
 from app.core.config import Settings
+from app.jobs.queue import JobQueue
 
 
 async def get_db(request: Request) -> AsyncIterator[AsyncSession]:
@@ -31,6 +32,10 @@ def get_session_store(request: Request) -> SessionStore:
 
 def get_session_policy(request: Request) -> SessionPolicy:
     return request.app.state.session_policy
+
+
+def get_queue(request: Request) -> "JobQueue":
+    return request.app.state.queue
 
 
 def get_app_settings(request: Request) -> Settings:

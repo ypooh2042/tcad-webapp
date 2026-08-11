@@ -12,10 +12,11 @@ from fastapi import FastAPI
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api import routes_auth
+from app.api import routes_auth, routes_jobs, routes_projects
 from app.auth.policy import SessionPolicy
 from app.auth.redis_store import RedisSessionStore
 from app.core.config import Settings, get_settings
+from app.jobs.queue import JobQueue
 
 
 @asynccontextmanager
@@ -26,6 +27,9 @@ async def lifespan(app: FastAPI):
 
     app.state.sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     app.state.session_store = RedisSessionStore(redis)
+    app.state.queue = JobQueue(
+        app.state.sessionmaker, max_concurrent=settings.max_concurrent_jobs
+    )
 
     try:
         yield
@@ -40,6 +44,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.session_policy = SessionPolicy()
 
     app.include_router(routes_auth.router, prefix="/api")
+    app.include_router(routes_projects.router, prefix="/api")
+    app.include_router(routes_jobs.router, prefix="/api")
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:
