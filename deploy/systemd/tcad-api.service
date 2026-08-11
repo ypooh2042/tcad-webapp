@@ -1,0 +1,53 @@
+# TCAD API 서버 (systemd **사용자** 유닛)
+#
+# 시스템 유닛이 아니라 사용자 유닛인 이유:
+# 시뮬레이션은 루트리스 Podman 으로 돈다. 시스템 유닛에서 다른 사용자로
+# 루트리스 컨테이너를 띄우려면 XDG_RUNTIME_DIR 과 subuid/subgid, D-Bus 세션을
+# 직접 맞춰 줘야 하고 실패하면 원인을 찾기 어렵다. 사용자 유닛은 이미 그
+# 환경 안에서 돌기 때문에 그 문제가 없다. 덤으로 이 파일에 계정 이름을 적을
+# 필요가 없어 공개 레포에 올려도 된다.
+#
+# 설치:
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/systemd/tcad-*.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now tcad-api tcad-worker
+#
+#   # 로그아웃해도 계속 돌게 한다. 이게 없으면 SSH 를 끊는 순간 멈춘다.
+#   sudo loginctl enable-linger "$USER"
+
+[Unit]
+Description=TCAD API (FastAPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=/srv/tcad/backend
+
+# 비밀은 여기에 적지 않는다 — 이 파일은 레포에 올라간다.
+# ~/.config/tcad/api.env 를 0600 으로 두고 아래를 담는다:
+#   TCAD_DATABASE_URL=postgresql+asyncpg://tcad:<비밀번호>@127.0.0.1:5432/tcad
+#   TCAD_REDIS_URL=redis://127.0.0.1:6379/0
+#   TCAD_JOBS_ROOT=/srv/tcad/var/jobs
+#   TCAD_SESSION_COOKIE_SECURE=true
+EnvironmentFile=%h/.config/tcad/api.env
+
+# --proxy-headers 와 --forwarded-allow-ips 는 **함께** 있어야 한다.
+#
+# 앱의 빈도 제한은 request.client.host 를 키로 쓴다. 이 옵션이 없으면 모든
+# 요청이 nginx 주소(127.0.0.1)로 보여 모든 사용자가 한 바구니를 공유한다.
+# 반대로 allow-ips 를 넓게 열면 아무나 X-Forwarded-For 를 위조해 한도를
+# 무한히 우회한다. 그래서 로컬 nginx 만 신뢰한다.
+ExecStart=/srv/tcad/backend/.venv/bin/python -m uvicorn app.main:app \
+    --host 127.0.0.1 --port 8000 \
+    --proxy-headers --forwarded-allow-ips=127.0.0.1
+
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

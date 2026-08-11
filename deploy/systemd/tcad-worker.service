@@ -1,0 +1,33 @@
+# TCAD 시뮬레이션 워커 (systemd **사용자** 유닛)
+#
+# API 와 분리한 이유: 시뮬레이션은 CPU 를 오래 붙잡는다. 웹 프로세스에 얹으면
+# 잡 하나가 도는 동안 상태 조회조차 느려진다. 나눠 두면 워커만 따로 재시작하거나
+# 멈춰 세울 수도 있다.
+#
+# 동시 실행 상한을 지키는 주체는 이 프로세스가 아니라 DB 다(JobQueue.claim_next).
+# 그래서 워커를 여러 대 띄워도 전체 동시 실행 수는 설정값을 넘지 않는다.
+
+[Unit]
+Description=TCAD simulation worker
+After=network-online.target tcad-api.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=/srv/tcad/backend
+EnvironmentFile=%h/.config/tcad/api.env
+
+ExecStart=/srv/tcad/backend/.venv/bin/python -m app.jobs.main
+
+Restart=on-failure
+RestartSec=5s
+
+# 돌고 있던 시뮬레이션이 끝난 뒤 내려가게 한다. 곧바로 죽이면 그 잡이 RUNNING
+# 으로 남아 다음 기동 때 되돌리기를 기다려야 한다(app/jobs/main.py 참조).
+KillSignal=SIGTERM
+TimeoutStopSec=650
+
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
