@@ -72,3 +72,5 @@ test-results/
 # 생성물 (suprem.key 에서 재생성 가능)
 tools/catalog/catalog.json
 tools/catalog/monaco-suprem.*
+
+tools/docs/out/
