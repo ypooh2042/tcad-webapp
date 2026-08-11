@@ -19,6 +19,8 @@ import sys
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from pydantic import BaseModel, EmailStr, ValidationError
+
 from app.auth.models import Role
 from app.auth.service import EmailAlreadyRegistered, register_user
 from app.core.config import get_settings
@@ -26,6 +28,30 @@ from app.core.config import get_settings
 #: routes_auth 의 RegisterRequest 와 같은 하한. 두 경로가 어긋나면 CLI 로만
 #: 약한 비밀번호를 심을 수 있게 된다.
 _MIN_PASSWORD_LENGTH = 12
+
+
+class _EmailCheck(BaseModel):
+    """API 와 **같은** 검증기. 따로 만들면 두 경로가 어긋난다."""
+
+    email: EmailStr
+
+
+def validate_email(email: str) -> str:
+    """API 가 받아들일 주소인지 확인한다.
+
+    CLI 와 API 의 기준이 다르면 로그인할 수 없는 계정이 만들어진다. 실제로
+    겪었다 — CLI 로 admin@tcad.local 을 만들었더니 계정은 생겼는데 로그인이
+    422 로 거절됐다(.local 은 예약 도메인이다). 첫 관리자를 그렇게 만들면
+    초대를 발급할 방법이 없어 서비스 전체가 막힌다.
+
+    Raises:
+        SystemExit: 쓸 수 없는 주소일 때.
+    """
+    try:
+        return str(_EmailCheck(email=email).email)
+    except ValidationError as error:
+        reason = error.errors()[0].get("msg", "형식이 올바르지 않습니다")
+        raise SystemExit(f"쓸 수 없는 이메일입니다: {email}\n  {reason}") from None
 
 
 def _read_password() -> str:
@@ -63,12 +89,17 @@ def main(argv: list[str] | None = None) -> None:
     )
     arguments = parser.parse_args(argv)
 
+    # 이메일을 **가장 먼저** 확인한다. TTY 검사를 앞에 두면, 주소가 잘못됐을
+    # 때 "대화형 터미널에서 실행해 주세요"라는 엉뚱한 메시지만 보게 된다.
+    # 비밀번호를 다 치고 나서 거절당하지 않게 하는 효과도 있다.
+    email = validate_email(arguments.email)
+
     if not sys.stdin.isatty():
         # 파이프로 비밀번호를 넣으면 확인 절차가 무의미해진다.
         raise SystemExit("대화형 터미널에서 실행해 주세요")
 
     role = Role.ADMIN if arguments.admin else Role.USER
-    asyncio.run(_create(arguments.email, _read_password(), role))
+    asyncio.run(_create(email, _read_password(), role))
 
 
 if __name__ == "__main__":
