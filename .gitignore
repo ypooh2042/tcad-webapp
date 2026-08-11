@@ -74,3 +74,10 @@ tools/catalog/catalog.json
 tools/catalog/monaco-suprem.*
 
 tools/docs/out/
+
+# ─────────────────────────────────────────────────────────────
+# Playwright
+# ─────────────────────────────────────────────────────────────
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/

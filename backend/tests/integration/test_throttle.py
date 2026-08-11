@@ -210,3 +210,52 @@ class TestForwardedHeaders:
                 host = "10.0.0.5"
 
         assert throttle.client_key(FakeRequest()) == "10.0.0.5"
+
+
+class TestSuccessfulSignupsAreNotCounted:
+    """성공한 가입은 한도에 쌓이지 않는다.
+
+    한도의 목적은 초대 코드를 찍어보는 것을 막는 데 있다. 성공한 가입은 유효한
+    코드를 하나 소진했으므로 초대 자체(max_uses)가 이미 상한이다. 성공까지 세면
+    연구실 사람들이 첫날 같이 가입할 때 막힌다 — E2E 에서 실제로 걸렸다.
+    """
+
+    async def test_a_labful_of_people_can_all_sign_up(self, client, app) -> None:
+        statuses = []
+        for i in range(8):
+            code = await fresh_invite_code(app.state.sessionmaker)
+            response = await client.post(
+                "/api/auth/register",
+                json={
+                    "email": f"newbie{i}@example.com",
+                    "password": PASSWORD,
+                    "invite_code": code,
+                },
+            )
+            statuses.append(response.status_code)
+
+        assert statuses == [201] * 8
+
+    async def test_failures_still_accumulate(self, client, app) -> None:
+        for _ in range(5):
+            await client.post(
+                "/api/auth/register",
+                json={
+                    "email": "guess@example.com",
+                    "password": PASSWORD,
+                    "invite_code": "찍어보기",
+                },
+            )
+
+        # 실패로 한도가 찼으므로 유효한 코드를 들고 와도 잠시 막힌다.
+        code = await fresh_invite_code(app.state.sessionmaker)
+        response = await client.post(
+            "/api/auth/register",
+            json={
+                "email": "legit@example.com",
+                "password": PASSWORD,
+                "invite_code": code,
+            },
+        )
+
+        assert response.status_code == 429

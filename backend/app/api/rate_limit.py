@@ -39,16 +39,25 @@ class RateLimiter:
 
     def allow(self, key: str) -> bool:
         """한 번 시도한 것으로 치고 통과 여부를 돌려준다."""
+        if self.blocked(key):
+            return False
+        self.record(key)
+        return True
+
+    def blocked(self, key: str) -> bool:
+        """한도에 걸렸는지만 본다. 횟수를 늘리지 않는다.
+
+        "실패만 센다" 같은 정책을 만들려면 확인과 기록을 나눌 수 있어야 한다.
+        """
+        return len(self._prune(key, self._now())) >= self.limit
+
+    def record(self, key: str) -> None:
+        """한 번 썼다고 기록한다."""
         now = self._now()
         hits = self._prune(key, now)
-
-        if len(hits) >= self.limit:
-            return False
-
         hits.append(now)
         self._hits[key] = hits
         self._collect_garbage(now)
-        return True
 
     def retry_after(self, key: str) -> float:
         """언제 다시 시도할 수 있는지(초). 통과 가능하면 0.

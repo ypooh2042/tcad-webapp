@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.throttle import (
+    record_invite_failure,
     throttle_login,
     throttle_login_attempt,
     throttle_register,
@@ -67,11 +68,16 @@ class UserResponse(BaseModel):
     dependencies=[Depends(throttle_register)],
 )
 async def register(
-    payload: RegisterRequest, db: AsyncSession = Depends(get_db)
+    request: Request,
+    payload: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
 ) -> UserResponse:
     try:
         invite = await redeem_invite(db, payload.invite_code)
     except InviteError as error:
+        # 실패만 빈도 제한에 쌓는다. 성공한 가입은 유효한 코드를 소진했으므로
+        # 초대 자체가 이미 상한 역할을 한다.
+        record_invite_failure(request)
         # 왜 안 되는지는 알려준다(만료/소진/회수). 코드를 아는 사람에게만
         # 의미가 있는 정보이고, 모르면 대처할 방법이 없다.
         raise HTTPException(

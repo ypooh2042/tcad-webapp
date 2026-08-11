@@ -9,7 +9,7 @@ export default defineConfig({
     // 요청하게 되어 세션 쿠키가 그대로 실린다. CORS 설정을 열 필요가 없다.
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: process.env.TCAD_API_URL ?? 'http://127.0.0.1:8000',
         changeOrigin: false,
       },
     },
@@ -17,6 +17,9 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // e2e 는 Playwright 가 돌린다. vitest 가 주워 가면 브라우저 API 를 못 찾아
+    // 실패한다.
+    exclude: ['node_modules/**', 'e2e/**', 'dist/**'],
     setupFiles: ['./src/test/setup.ts'],
     coverage: {
       provider: 'v8',

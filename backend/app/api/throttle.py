@@ -26,8 +26,15 @@ _login_by_ip = RateLimiter(limit=60, window_seconds=60)
 #: 15분에 10번이면 사람은 절대 부딪히지 않고 자동화는 확실히 걸린다.
 _login_by_account = RateLimiter(limit=10, window_seconds=900)
 
-#: 가입. 초대 코드를 무한히 넣어보지 못하게 한다.
-_register = RateLimiter(limit=5, window_seconds=300)
+#: 가입 **실패**. 성공한 가입은 세지 않는다.
+#:
+#: 한도의 목적은 초대 코드를 찍어보는 것을 막는 데 있다. 성공한 가입은 유효한
+#: 코드를 하나 소진했으므로 초대 자체(max_uses)가 이미 상한이다. 성공까지
+#: 세면 연구실 사람들이 첫날 같이 가입할 때 막힌다 — E2E 에서 실제로 걸렸다.
+_register_failures = RateLimiter(limit=5, window_seconds=300)
+
+#: 가입 요청 전체. 위가 실패만 세므로, 폭주 자체는 여기서 막는다.
+_register_flood = RateLimiter(limit=60, window_seconds=60)
 
 #: 잡 제출. 큐가 동시 실행을 4개로 묶지만, 큐 자체는 무한히 길어질 수 있다.
 _submit = RateLimiter(limit=30, window_seconds=60)
@@ -87,7 +94,24 @@ def throttle_login_attempt(email: str) -> None:
 
 
 async def throttle_register(request: Request) -> None:
-    _enforce(_register, request, "가입")
+    """가입 요청 빈도. 실패 횟수가 한도를 넘었으면 더 받지 않는다."""
+    _enforce(_register_flood, request, "가입")
+
+    key = client_key(request)
+    if not _register_failures.blocked(key):
+        return
+
+    wait = int(_register_failures.retry_after(key)) + 1
+    raise HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=f"가입 시도가 너무 잦습니다. {wait}초 후 다시 시도해 주세요.",
+        headers={"Retry-After": str(wait)},
+    )
+
+
+def record_invite_failure(request: Request) -> None:
+    """초대 코드가 틀렸을 때 부른다. 이것만 한도에 쌓인다."""
+    _register_failures.record(client_key(request))
 
 
 async def throttle_submit(request: Request) -> None:
@@ -96,5 +120,11 @@ async def throttle_submit(request: Request) -> None:
 
 def reset() -> None:
     """테스트에서 한도를 초기화한다. 프로세스 전역 상태라 격리가 필요하다."""
-    for limiter in (_login_by_ip, _login_by_account, _register, _submit):
+    for limiter in (
+        _login_by_ip,
+        _login_by_account,
+        _register_failures,
+        _register_flood,
+        _submit,
+    ):
         limiter._hits.clear()
