@@ -91,6 +91,23 @@ test('시뮬레이션이 실제로 돌고 결과가 그려진다', async ({ page
   await expect(page.getByRole('img', { name: /깊이 프로파일/ })).toBeVisible()
 })
 
+test('기본 예제가 손대지 않고 그대로 돌아간다', async ({ page }) => {
+  test.slow()
+
+  // **편집기를 건드리지 않는다.** 처음 들어온 사람이 가장 먼저 누르는 것이
+  // 실행 버튼이다. 그때 실패하면 이 도구를 쓸 수 있다는 믿음이 먼저 깨진다.
+  //
+  // 다른 테스트는 fixtures 의 소스를 붙여 넣기 때문에 앱의 기본값이 깨져도
+  // 통과한다. 실제로 그렇게 배포됐다 — `mode one.dim` 이 빠져 있어
+  // "No mesh defined!" 가 났다.
+  await createProject(page, 'starter')
+
+  await page.getByRole('button', { name: '실행' }).click()
+
+  await expect(page.getByText('성공')).toBeVisible({ timeout: 120_000 })
+  await expect(page.getByRole('img', { name: /깊이 프로파일/ })).toBeVisible()
+})
+
 test('메시가 없는 소스는 실패로 보고된다', async ({ page }) => {
   test.slow()
 

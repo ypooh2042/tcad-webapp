@@ -15,7 +15,14 @@ import { DocsPanel } from '../docs/DocsPanel'
 import { SupremEditor } from '../editor/SupremEditor'
 import { JobPanel } from '../jobs/JobPanel'
 
+//: 새 프로젝트를 열면 이 소스가 들어 있다. **반드시 그대로 실행되어야 한다** —
+//: 처음 들어온 사람이 가장 먼저 누르는 것이 실행 버튼이다.
+//:
+//: `mode one.dim` 이 없으면 SUPREM 은 2D 로 해석해서 y 격자와 ylo/yhi 를
+//: 요구하고 "No mesh defined!" 로 끝난다. 실제로 그 상태로 배포했었다.
 const STARTER_SOURCE = `# 1차원 보론 확산 예제
+mode one.dim
+
 line x loc = 0    spacing = 0.02 tag = top
 line x loc = 2.0  spacing = 0.25 tag = bottom
 region silicon xlo = top xhi = bottom
