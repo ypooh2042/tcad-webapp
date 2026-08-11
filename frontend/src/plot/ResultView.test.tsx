@@ -225,3 +225,71 @@ describe('단계 비교', () => {
     )
   })
 })
+
+describe('물리량 함께 보기', () => {
+  it('현재 물리량은 목록에서 뺀다', async () => {
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await userEvent.click(await screen.findByText(/함께 보기/))
+
+    expect(screen.getByLabelText('net_doping')).toBeInTheDocument()
+    expect(screen.queryByLabelText('chem_boron')).not.toBeInTheDocument()
+  })
+
+  it('고른 물리량을 같은 단계·같은 컷에서 읽는다', async () => {
+    // 조건이 다르면 겹쳐 봐야 의미가 없다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await userEvent.click(await screen.findByText(/함께 보기/))
+    plot.profile.mockClear()
+
+    await userEvent.click(screen.getByLabelText('net_doping'))
+
+    await waitFor(() =>
+      expect(plot.profile).toHaveBeenCalledWith(1, 1, 'net_doping', undefined),
+    )
+  })
+
+  it('범례에 함께 보는 물리량을 적는다', async () => {
+    const { container } = render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await userEvent.click(await screen.findByText(/함께 보기/))
+
+    await userEvent.click(screen.getByLabelText('net_doping'))
+
+    await waitFor(() =>
+      expect(container.querySelector('.legend')).toHaveTextContent('net_doping'),
+    )
+  })
+
+  it('해제하면 사라진다', async () => {
+    const { container } = render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await userEvent.click(await screen.findByText(/함께 보기/))
+    await userEvent.click(screen.getByLabelText('net_doping'))
+    await waitFor(() =>
+      expect(container.querySelector('.legend')).toHaveTextContent('net_doping'),
+    )
+
+    await userEvent.click(screen.getByLabelText('net_doping'))
+
+    await waitFor(() =>
+      expect(container.querySelector('.legend')).not.toHaveTextContent('net_doping'),
+    )
+  })
+
+  it('고른 개수를 알려준다', async () => {
+    // 접어 두면 무엇을 골랐는지 보이지 않는다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await userEvent.click(await screen.findByText(/함께 보기/))
+
+    await userEvent.click(screen.getByLabelText('net_doping'))
+
+    expect(await screen.findByText(/함께 보기 \(1\)/)).toBeInTheDocument()
+  })
+
+  it('물리량이 하나뿐이면 선택이 없다', async () => {
+    plot.summary.mockResolvedValue(summary({ quantities: ['chem_boron'] }))
+
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await screen.findByLabelText('물리량')
+
+    expect(screen.queryByText(/함께 보기/)).not.toBeInTheDocument()
+  })
+})

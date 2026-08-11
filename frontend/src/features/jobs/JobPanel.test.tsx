@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { JobPanel } from './JobPanel'
 import type { JobDetail } from '../../api/types'
@@ -126,5 +127,48 @@ describe('결과', () => {
     render(<JobPanel jobId={42} />)
 
     expect(await screen.findByText(/연결이 불안정/)).toBeInTheDocument()
+  })
+})
+
+describe('로그 공간', () => {
+  const withArtifacts = () =>
+    detail({ log: '실행 로그', artifacts: [{ sequence: 1, filename: 'a.str', size_bytes: 10 }] })
+
+  it('결과가 있으면 로그만 보기 버튼이 있다', async () => {
+    get.mockResolvedValue(withArtifacts())
+
+    render(<JobPanel jobId={42} />)
+
+    expect(await screen.findByRole('button', { name: '로그만 보기' })).toBeInTheDocument()
+  })
+
+  it('로그만 보기로 바꾸면 결과가 자리를 비켜준다', async () => {
+    // 실패한 잡에서는 로그가 전부다. 차트가 자리를 차지하면 읽을 수 없다.
+    get.mockResolvedValue(withArtifacts())
+    render(<JobPanel jobId={42} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: '로그만 보기' }))
+
+    expect(screen.queryByLabelText('물리량')).not.toBeInTheDocument()
+    expect(screen.getByText('실행 로그')).toBeInTheDocument()
+  })
+
+  it('되돌릴 수 있다', async () => {
+    get.mockResolvedValue(withArtifacts())
+    render(<JobPanel jobId={42} />)
+    await userEvent.click(await screen.findByRole('button', { name: '로그만 보기' }))
+
+    await userEvent.click(screen.getByRole('button', { name: '결과 보기' }))
+
+    expect(await screen.findByRole('button', { name: '로그만 보기' })).toBeInTheDocument()
+  })
+
+  it('결과가 없으면 버튼도 없다', async () => {
+    get.mockResolvedValue(detail({ log: '실패 로그', artifacts: [] }))
+
+    render(<JobPanel jobId={42} />)
+    await screen.findByText('실패 로그')
+
+    expect(screen.queryByRole('button', { name: '로그만 보기' })).not.toBeInTheDocument()
   })
 })
