@@ -128,7 +128,7 @@ test('메시가 없는 소스는 실패로 보고된다', async ({ page }) => {
   await expect(page.getByText('실패')).toBeVisible({ timeout: 120_000 })
 })
 
-test('물리량을 바꾸면 다른 프로파일이 나온다', async ({ page }) => {
+test('물리량을 추가하면 함께 그려진다', async ({ page }) => {
   test.slow()
 
   await createProject(page, 'quantity')
@@ -138,7 +138,7 @@ test('물리량을 바꾸면 다른 프로파일이 나온다', async ({ page })
 
   // net_doping 은 저장 컬럼이 아니라 계산값이다. 보론만 있으므로 전부 음수라,
   // 절댓값으로 그리지 않으면 그래프가 통째로 빈다.
-  await page.getByLabel('물리량').selectOption('net_doping')
+  await page.getByLabel('net_doping').check()
 
   await expect(page.getByText(/점선 = 음수/)).toBeVisible()
 })

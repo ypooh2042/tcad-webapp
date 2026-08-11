@@ -4,6 +4,11 @@
  * 산출물 하나가 공정 한 단계다. `structure out=` 이 나온 순서대로 저장되어
  * 있으므로, 순번을 훑으면 공정이 진행되는 모습을 그대로 볼 수 있다. 이름순으로
  * 정렬하면 그 순서가 깨진다 — 그래서 서버가 준 sequence 를 그대로 쓴다.
+ *
+ * 물리량은 **체크박스로 여러 개** 고른다. 콤보박스로 하나만 고르게 하면 겹쳐
+ * 보기가 부가 기능처럼 되는데, 실제로는 비교가 기본 사용법이다 — chem 과
+ * active 를 나란히 봐야 얼마나 활성화됐는지 알고, net_doping 을 겹쳐야 접합이
+ * 어디인지 보인다.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../api/client'
@@ -11,15 +16,24 @@ import { plot } from '../api/endpoints'
 import type {
   Artifact,
   ProfilePoint,
-  ProfileResponse,
   StructureSummary,
   SurfaceResponse,
 } from '../api/types'
 import { ProfileChart, type Series } from './ProfileChart'
 import { SurfaceView } from './SurfaceView'
 
-//: 겹쳐 그릴 선의 색. 기준선(파랑)과 단계 비교(주황)와 겹치지 않게 고른다.
-const EXTRA_COLORS = ['#a55eea', '#4ade80', '#ffd93d', '#ff6b6b']
+/** 물리량별 선 색. 재질은 배경 띠가 맡으므로 선 색은 전부 물리량 몫이다. */
+const SERIES_COLORS = [
+  '#4a9eff',
+  '#a55eea',
+  '#4ade80',
+  '#ffd93d',
+  '#ff6b6b',
+  '#22d3ee',
+]
+
+/** 단계 비교선. 물리량 색과 겹치지 않게 따로 둔다. */
+const COMPARE_COLOR = '#ff9f43'
 
 interface Props {
   jobId: number
@@ -29,19 +43,13 @@ interface Props {
 export function ResultView({ jobId, artifacts }: Props) {
   const [step, setStep] = useState(0)
   const [summary, setSummary] = useState<StructureSummary | null>(null)
-  const [quantity, setQuantity] = useState<string | null>(null)
-  const [profile, setProfile] = useState<ProfileResponse | null>(null)
+  const [selected, setSelected] = useState<string[]>([])
+  const [series, setSeries] = useState<Series[]>([])
   const [surface, setSurface] = useState<SurfaceResponse | null>(null)
   const [cutX, setCutX] = useState<number | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  //: 겹쳐 볼 다른 공정 단계. 확산이 프로파일을 얼마나 넓혔는지 같은 것은
-  //: 두 그림을 번갈아 봐서는 알 수 없다.
   const [compareTo, setCompareTo] = useState<number | null>(null)
-  const [stepOverlay, setStepOverlay] = useState<Series[]>([])
-  //: 함께 볼 다른 물리량. chem 과 active 를 겹치면 얼마나 활성화됐는지,
-  //: net_doping 을 겹치면 접합이 어디인지 한눈에 보인다.
-  const [extraQuantities, setExtraQuantities] = useState<string[]>([])
-  const [quantityOverlay, setQuantityOverlay] = useState<Series[]>([])
+  const [stepSeries, setStepSeries] = useState<Series[]>([])
+  const [error, setError] = useState<string | null>(null)
 
   const current = artifacts[Math.min(step, artifacts.length - 1)]
   const sequence = current?.sequence ?? null
@@ -62,11 +70,12 @@ export function ResultView({ jobId, artifacts }: Props) {
       .then((next) => {
         if (cancelled) return
         setSummary(next)
-        setQuantity((previous) =>
-          previous && next.quantities.includes(previous)
-            ? previous
-            : (next.quantities[0] ?? null),
-        )
+        setSelected((previous) => {
+          // 이 단계에 없는 물리량은 떨어뜨린다. 하나도 안 남으면 첫 번째를
+          // 골라 준다 — 빈 차트로 시작하면 무엇을 해야 할지 알기 어렵다.
+          const kept = previous.filter((name) => next.quantities.includes(name))
+          return kept.length ? kept : next.quantities.slice(0, 1)
+        })
         // 2D 는 가로 한가운데를 기본 컷으로 잡는다.
         setCutX((previous) =>
           next.dimension === 2
@@ -81,27 +90,49 @@ export function ResultView({ jobId, artifacts }: Props) {
     }
   }, [jobId, sequence, report])
 
+  // 고른 물리량을 모두 읽는다. 같은 단계·같은 컷이어야 비교가 의미를 가진다.
   useEffect(() => {
-    if (sequence === null || !summary || !quantity) return
+    if (sequence === null || !summary || selected.length === 0) {
+      setSeries([])
+      return
+    }
     if (summary.dimension === 2 && cutX === null) return
     let cancelled = false
 
-    plot
-      .profile(
-        jobId,
-        sequence,
-        quantity,
-        summary.dimension === 2 ? cutX! : undefined,
+    Promise.all(
+      selected.map((name) =>
+        plot
+          .profile(
+            jobId,
+            sequence,
+            name,
+            summary.dimension === 2 ? cutX! : undefined,
+          )
+          .then((next) => ({ name, points: next.points }))
+          .catch(() => null),
+      ),
+    ).then((results) => {
+      if (cancelled) return
+      setSeries(
+        results
+          .filter((r): r is { name: string; points: ProfilePoint[] } => Boolean(r))
+          .map((r, index) => ({
+            label: r.name,
+            points: r.points,
+            color: SERIES_COLORS[index % SERIES_COLORS.length]!,
+          })),
       )
-      .then((next) => !cancelled && setProfile(next))
-      .catch(report)
+    })
 
     return () => {
       cancelled = true
     }
-  }, [jobId, sequence, summary, quantity, cutX, report])
+  }, [jobId, sequence, summary, selected, cutX])
 
+  // 단면은 컷 위치와 무관하다. cutX 를 의존성에 넣으면 컷을 옮길 때마다
+  // 수천 개 삼각형을 다시 받는다.
   useEffect(() => {
+    const quantity = selected[0]
     if (sequence === null || !summary || !quantity) return
     if (summary.dimension !== 2) {
       setSurface(null)
@@ -109,8 +140,6 @@ export function ResultView({ jobId, artifacts }: Props) {
     }
     let cancelled = false
 
-    // 단면은 컷 위치와 무관하다. cutX 를 의존성에 넣으면 컷을 옮길 때마다
-    // 수천 개 삼각형을 다시 받는다.
     plot
       .surface(jobId, sequence, quantity)
       .then((next) => !cancelled && setSurface(next))
@@ -119,13 +148,14 @@ export function ResultView({ jobId, artifacts }: Props) {
     return () => {
       cancelled = true
     }
-  }, [jobId, sequence, summary, quantity, report])
+  }, [jobId, sequence, summary, selected, report])
 
-  // 비교 대상 단계의 프로파일을 따로 읽는다. 같은 물리량·같은 컷 위치여야
-  // 비교가 의미를 가진다.
+  // 비교 단계는 첫 번째 물리량만 겹친다. 물리량마다 두 단계를 그리면 선이
+  // 배가 되어 무엇이 무엇인지 알 수 없다.
   useEffect(() => {
+    const quantity = selected[0]
     if (compareTo === null || !summary || !quantity) {
-      setStepOverlay([])
+      setStepSeries([])
       return
     }
     let cancelled = false
@@ -142,57 +172,30 @@ export function ResultView({ jobId, artifacts }: Props) {
         const name =
           artifacts.find((a) => a.sequence === compareTo)?.filename ??
           `#${compareTo}`
-        setStepOverlay([{ label: name, points: next.points, color: '#ff9f43' }])
+        setStepSeries([
+          {
+            label: `${quantity} @ ${name}`,
+            points: next.points,
+            color: COMPARE_COLOR,
+            muted: true,
+          },
+        ])
       })
-      .catch(() => !cancelled && setStepOverlay([]))
+      .catch(() => !cancelled && setStepSeries([]))
 
     return () => {
       cancelled = true
     }
-  }, [jobId, compareTo, quantity, summary, cutX, artifacts])
-
-  // 함께 고른 물리량들을 같은 단계·같은 컷에서 읽는다.
-  useEffect(() => {
-    if (sequence === null || !summary || extraQuantities.length === 0) {
-      setQuantityOverlay([])
-      return
-    }
-    let cancelled = false
-
-    Promise.all(
-      extraQuantities.map((name) =>
-        plot
-          .profile(
-            jobId,
-            sequence,
-            name,
-            summary.dimension === 2 ? (cutX ?? undefined) : undefined,
-          )
-          .then((next) => ({ name, points: next.points }))
-          .catch(() => null),
-      ),
-    ).then((results) => {
-      if (cancelled) return
-      setQuantityOverlay(
-        results
-          .filter((r): r is { name: string; points: ProfilePoint[] } =>
-            Boolean(r),
-          )
-          .map((r, index) => ({
-            label: r.name,
-            points: r.points,
-            color: EXTRA_COLORS[index % EXTRA_COLORS.length]!,
-          })),
-      )
-    })
-
-    return () => {
-      cancelled = true
-    }
-  }, [jobId, sequence, summary, extraQuantities, cutX])
+  }, [jobId, compareTo, selected, summary, cutX, artifacts])
 
   if (artifacts.length === 0) {
     return <p className="muted">저장된 구조가 없습니다. `structure out=` 을 넣어 보세요.</p>
+  }
+
+  function toggle(name: string, on: boolean) {
+    setSelected((current) =>
+      on ? [...current, name] : current.filter((item) => item !== name),
+    )
   }
 
   return (
@@ -220,47 +223,24 @@ export function ResultView({ jobId, artifacts }: Props) {
         </span>
       </div>
 
+      <fieldset className="quantities">
+        <legend>물리량</legend>
+        {summary?.quantities.map((name) => (
+          <label key={name}>
+            <input
+              type="checkbox"
+              checked={selected.includes(name)}
+              onChange={(event) => toggle(name, event.target.checked)}
+            />
+            {name}
+          </label>
+        ))}
+      </fieldset>
+
       <div className="controls">
-        <label htmlFor="quantity">물리량</label>
-        <select
-          id="quantity"
-          value={quantity ?? ''}
-          onChange={(event) => setQuantity(event.target.value)}
-        >
-          {summary?.quantities.map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
-        {(summary?.quantities.length ?? 0) > 1 && (
-          <details className="extra-quantities">
-            <summary>함께 보기{extraQuantities.length ? ` (${extraQuantities.length})` : ''}</summary>
-            <div>
-              {summary?.quantities
-                .filter((name) => name !== quantity)
-                .map((name) => (
-                  <label key={name}>
-                    <input
-                      type="checkbox"
-                      checked={extraQuantities.includes(name)}
-                      onChange={(event) =>
-                        setExtraQuantities((current) =>
-                          event.target.checked
-                            ? [...current, name]
-                            : current.filter((item) => item !== name),
-                        )
-                      }
-                    />
-                    {name}
-                  </label>
-                ))}
-            </div>
-          </details>
-        )}
         {artifacts.length > 1 && (
           <>
-            <label htmlFor="compare">비교</label>
+            <label htmlFor="compare">단계 비교</label>
             <select
               id="compare"
               value={compareTo ?? ''}
@@ -300,15 +280,15 @@ export function ResultView({ jobId, artifacts }: Props) {
       )}
 
       {summary?.dimension === 2 && cutX !== null && (
-        <p className="muted">단면을 클릭하면 그 위치의 깊이 프로파일을 봅니다 (x = {cutX.toFixed(3)} µm)</p>
+        <p className="muted">
+          단면을 클릭하면 그 위치의 깊이 프로파일을 봅니다 (x = {cutX.toFixed(3)} µm)
+        </p>
       )}
 
-      {profile && quantity && (
-        <ProfileChart
-          points={profile.points}
-          quantity={quantity}
-          overlays={[...quantityOverlay, ...stepOverlay]}
-        />
+      {selected.length === 0 ? (
+        <p className="muted">물리량을 하나 이상 골라 주세요.</p>
+      ) : (
+        <ProfileChart series={[...series, ...stepSeries]} />
       )}
     </div>
   )

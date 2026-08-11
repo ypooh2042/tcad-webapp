@@ -4,8 +4,15 @@
  * 세로축이 농도(로그), 가로축이 깊이다. 반도체 관례대로 깊이는 왼쪽이 표면이고
  * 오른쪽으로 갈수록 깊어진다. 증착층은 깊이가 음수라 표면보다 왼쪽에 놓인다.
  *
- * 선은 물질이 바뀌는 곳에서 끊는다. 이어 그리면 계면에서 수직으로 뚝 떨어지는
- * 가짜 선이 생겨, 물질 경계가 농도 급락처럼 보인다.
+ * **두 축을 두 채널로 나눈다.**
+ *     선 색   = 물리량 (무엇을 그리나)
+ *     배경 띠 = 재질   (어디에 있나)
+ *
+ * 재질을 선 색으로 나타내면 물리량에 쓸 색이 남지 않는다. 여러 물리량을 겹쳐
+ * 보는 순간 어느 색이 무엇인지 알 수 없게 된다.
+ *
+ * 선은 재질이 바뀌는 곳에서 여전히 끊는다. 계면에서 값이 실제로 불연속이기
+ * 때문이다 — 이어 그리면 물질 경계가 농도 급락처럼 보인다.
  *
  * **부호 있는 값은 절댓값을 올린다.** net_doping 은 억셉터가 우세한 구간에서
  * 음수인데, 로그 축에 못 올린다고 버리면 p 형 기판에서는 그래프가 통째로
@@ -15,22 +22,24 @@
 import { useMemo } from 'react'
 import type { ProfilePoint } from '../api/types'
 import { linearTicks, logTicks, toLogDomain } from './scale'
-import { splitByMaterial } from './segments'
+import { materialBands, splitByMaterial } from './segments'
 
 const WIDTH = 640
 const HEIGHT = 380
 const MARGIN = { top: 16, right: 16, bottom: 44, left: 68 }
 
-const MATERIAL_COLORS: Record<string, string> = {
-  silicon: '#4a9eff',
-  oxide: '#ff9f43',
-  nitride: '#a55eea',
-  poly: '#4ade80',
-  aluminum: '#c8d0dc',
+/** 재질 배경 띠 색. 선을 가리지 않도록 어둡고 낮은 채도로 둔다. */
+const MATERIAL_FILLS: Record<string, string> = {
+  silicon: '#1d2a3a',
+  oxide: '#332a1a',
+  nitride: '#2a1f38',
+  poly: '#1f3326',
+  aluminum: '#2e3238',
+  gaas: '#33202a',
 }
 
-function colorOf(material: string): string {
-  return MATERIAL_COLORS[material] ?? '#8b929e'
+function fillOf(material: string): string {
+  return MATERIAL_FILLS[material] ?? '#262a31'
 }
 
 function formatValue(value: number): string {
@@ -46,34 +55,23 @@ function formatDepth(value: number, step: number): string {
 }
 
 export interface Series {
-  /** 범례에 쓸 이름. 무엇과 무엇을 비교 중인지 알려면 필요하다. */
+  /** 범례에 쓸 이름. 보통 물리량 이름이다. */
   label: string
   points: ProfilePoint[]
   color: string
+  /** 다른 공정 단계를 겹친 것인지. 흐리게 그려 기준선과 구분한다. */
+  muted?: boolean
 }
 
 interface Props {
-  points: ProfilePoint[]
-  quantity: string
-  /**
-   * 함께 그릴 다른 프로파일.
-   *
-   * 공정 단계 비교(주입 전/후)나 물리량 비교(chem vs active)에 쓴다. 겹쳐 두면
-   * 확산이 프로파일을 얼마나 넓혔는지 한눈에 보인다 — 두 그림을 번갈아 보면서는
-   * 알 수 없다.
-   *
-   * 재질 구분은 하지 않는다. 겹쳐 보기의 관심은 "무엇이 달라졌나"이지 층 구조가
-   * 아니고, 선마다 재질별로 또 나누면 색이 뒤엉킨다.
-   */
-  overlays?: Series[]
+  series: Series[]
 }
 
-export function ProfileChart({ points, quantity, overlays = [] }: Props) {
+export function ProfileChart({ series }: Props) {
   const chart = useMemo(() => {
-    const overlayPoints = overlays.flatMap((series) => series.points)
-    // 축은 겹친 것까지 모두 담아야 한다. 기준선만 보고 잡으면 비교 대상이
-    // 화면 밖으로 나간다.
-    const all = [...points, ...overlayPoints]
+    const all = series.flatMap((one) => one.points)
+    // 축은 그리는 모든 선을 담아야 한다. 하나만 보고 잡으면 나머지가 화면
+    // 밖으로 나간다.
     const domain = toLogDomain(all.map((point) => Math.abs(point.value)))
     const depths = all.map((point) => point.depth)
     const depthMin = Math.min(...depths, 0)
@@ -103,24 +101,44 @@ export function ProfileChart({ points, quantity, overlays = [] }: Props) {
       xOf,
       yOf,
       plotHeight,
-      segments: splitByMaterial(points),
+      // 재질은 어느 선에서 읽어도 같다(같은 메시다). 첫 번째 것으로 띠를 만든다.
+      bands: materialBands(series[0]?.points ?? []),
       ticks: logTicks(domain.min, domain.max),
       depthTicks: linearTicks(depthMin, depthMax),
       hasNegative: all.some((point) => point.value < 0),
     }
-  }, [points, overlays])
+  }, [series])
 
-  if (points.length === 0) {
+  if (series.every((one) => one.points.length === 0)) {
     return <p className="muted">그릴 데이터가 없습니다.</p>
   }
+
+  const depthStep =
+    chart.depthTicks.length > 1
+      ? Math.abs((chart.depthTicks[1] ?? 0) - (chart.depthTicks[0] ?? 0))
+      : 1
 
   return (
     <figure className="chart">
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         role="img"
-        aria-label={`${quantity} 깊이 프로파일`}
+        aria-label={`${series.map((one) => one.label).join(', ')} 깊이 프로파일`}
       >
+        {/* 재질 띠를 가장 먼저 그려 모든 것의 뒤에 둔다. */}
+        {chart.bands.map((band, index) => (
+          <rect
+            key={`${band.material}-${index}`}
+            x={chart.xOf(band.from)}
+            y={MARGIN.top}
+            width={Math.max(0, chart.xOf(band.to) - chart.xOf(band.from))}
+            height={chart.plotHeight}
+            fill={fillOf(band.material)}
+          >
+            <title>{band.material}</title>
+          </rect>
+        ))}
+
         {chart.ticks.map((tick) => (
           <g key={tick}>
             <line
@@ -144,33 +162,25 @@ export function ProfileChart({ points, quantity, overlays = [] }: Props) {
 
         {/* 깊이 눈금. 이게 없으면 접합 깊이를 읽을 수 없다 — 도핑 프로파일에서
             가장 먼저 보는 숫자다. */}
-        {chart.depthTicks.map((tick, index) => {
-          const step =
-            chart.depthTicks.length > 1
-              ? Math.abs(
-                  (chart.depthTicks[1] ?? 0) - (chart.depthTicks[0] ?? 0),
-                )
-              : 1
-          return (
-            <g key={`depth-${index}`}>
-              <line
-                x1={chart.xOf(tick)}
-                x2={chart.xOf(tick)}
-                y1={MARGIN.top + chart.plotHeight}
-                y2={MARGIN.top + chart.plotHeight + 4}
-                className="grid"
-              />
-              <text
-                x={chart.xOf(tick)}
-                y={MARGIN.top + chart.plotHeight + 16}
-                className="tick"
-                textAnchor="middle"
-              >
-                {formatDepth(tick, step)}
-              </text>
-            </g>
-          )
-        })}
+        {chart.depthTicks.map((tick, index) => (
+          <g key={`depth-${index}`}>
+            <line
+              x1={chart.xOf(tick)}
+              x2={chart.xOf(tick)}
+              y1={MARGIN.top + chart.plotHeight}
+              y2={MARGIN.top + chart.plotHeight + 4}
+              className="grid"
+            />
+            <text
+              x={chart.xOf(tick)}
+              y={MARGIN.top + chart.plotHeight + 16}
+              className="tick"
+              textAnchor="middle"
+            >
+              {formatDepth(tick, depthStep)}
+            </text>
+          </g>
+        ))}
 
         {/* 표면(깊이 0). 증착층이 있으면 이 선 왼쪽에 그려진다. */}
         {chart.depthMin < 0 && (
@@ -183,15 +193,15 @@ export function ProfileChart({ points, quantity, overlays = [] }: Props) {
           />
         )}
 
-        {/* 겹친 선을 먼저 그려 기준선이 위에 오게 한다. */}
-        {overlays.map((series) =>
-          splitByMaterial(series.points).map((segment, index) => (
+        {series.map((one) =>
+          splitByMaterial(one.points).map((segment, index) => (
             <polyline
-              key={`${series.label}-${index}`}
+              key={`${one.label}-${index}`}
               fill="none"
-              stroke={series.color}
-              strokeWidth={1.4}
-              strokeOpacity={0.75}
+              stroke={one.color}
+              strokeWidth={one.muted ? 1.4 : 1.8}
+              strokeOpacity={one.muted ? 0.7 : 1}
+              // 음수(억셉터 우세) 구간은 점선. 실선/점선이 바뀌는 자리가 접합이다.
               strokeDasharray={segment.negative ? '5 3' : undefined}
               points={segment.points
                 .map((point) => `${chart.xOf(point.depth)},${chart.yOf(point.value)}`)
@@ -199,20 +209,6 @@ export function ProfileChart({ points, quantity, overlays = [] }: Props) {
             />
           )),
         )}
-
-        {chart.segments.map((segment, index) => (
-          <polyline
-            key={`${segment.material}-${index}`}
-            fill="none"
-            stroke={colorOf(segment.material)}
-            strokeWidth={1.8}
-            // 음수(억셉터 우세) 구간은 점선. 실선/점선이 바뀌는 자리가 접합이다.
-            strokeDasharray={segment.negative ? '5 3' : undefined}
-            points={segment.points
-              .map((point) => `${chart.xOf(point.depth)},${chart.yOf(point.value)}`)
-              .join(' ')}
-          />
-        ))}
 
         <text
           x={MARGIN.left + (WIDTH - MARGIN.left - MARGIN.right) / 2}
@@ -226,27 +222,21 @@ export function ProfileChart({ points, quantity, overlays = [] }: Props) {
 
       <figcaption>
         <span className="legend">
-          {overlays.length === 0 ? (
-            // 겹친 것이 없으면 층 구조를 보여주는 편이 유용하다.
-            [...new Set(chart.segments.map((s) => s.material))].map((material) => (
+          {series.map((one) => (
+            <span key={one.label}>
+              <i style={{ background: one.color }} />
+              {one.label}
+            </span>
+          ))}
+        </span>
+        <span className="legend materials">
+          {[...new Set(chart.bands.map((band) => band.material))].map(
+            (material) => (
               <span key={material}>
-                <i style={{ background: colorOf(material) }} />
+                <i className="band" style={{ background: fillOf(material) }} />
                 {material}
               </span>
-            ))
-          ) : (
-            <>
-              <span>
-                <i style={{ background: colorOf('silicon') }} />
-                {quantity}
-              </span>
-              {overlays.map((series) => (
-                <span key={series.label}>
-                  <i style={{ background: series.color }} />
-                  {series.label}
-                </span>
-              ))}
-            </>
+            ),
           )}
         </span>
         {chart.hasNegative && (

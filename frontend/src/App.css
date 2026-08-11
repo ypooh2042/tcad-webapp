@@ -171,6 +171,9 @@ select {
 .legend { display: flex; gap: 10px; }
 .legend span { display: flex; align-items: center; gap: 4px; }
 .legend i { width: 10px; height: 3px; border-radius: 2px; }
+/* 재질은 배경 띠로 보이므로 범례도 띠 모양이어야 한다. */
+.legend i.band { height: 10px; border-radius: 2px; border: 1px solid var(--border); }
+.legend.materials { color: var(--muted); }
 
 .auth .hint { margin: 2px 0 0; font-size: 12px; }
 
@@ -298,12 +301,16 @@ body.resizing { user-select: none; cursor: col-resize; }
 .log.expanded { flex: 1; max-height: none; }
 
 /* 함께 볼 물리량 고르기. 목록이 길어 항상 펼쳐 두면 조작부가 밀린다. */
-.extra-quantities { font-size: 12px; }
-.extra-quantities summary { cursor: pointer; color: var(--muted); white-space: nowrap; }
-.extra-quantities > div {
+/* 물리량 고르기. 여러 개를 동시에 보는 것이 기본 사용법이라 항상 펼쳐 둔다. */
+.quantities {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px 8px;
+  margin: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 12px;
-  padding: 6px 0 2px;
+  gap: 4px 14px;
+  font-size: 12px;
 }
-.extra-quantities label { display: flex; align-items: center; gap: 4px; color: var(--text); }
+.quantities legend { color: var(--muted); padding: 0 4px; }
+.quantities label { display: flex; align-items: center; gap: 4px; }

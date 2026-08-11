@@ -5,7 +5,7 @@
  * 내용과 방금 돌린 내용이 다를 수 있다. 그 차이를 감추면 사용자는 고친 줄이
  * 반영됐다고 믿는다.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../../api/client'
 import { projects as projectApi } from '../../api/endpoints'
 import type { Project } from '../../api/types'
@@ -45,6 +45,10 @@ export function WorkspacePage() {
   const [jobId, setJobId] = useState<number | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
+  //: 사용자가 편집기를 건드린 횟수. 소스를 읽어오는 동안 타이핑했다면 그
+  //: 결과로 덮어쓰면 안 된다 — 새 프로젝트를 만들고 바로 치기 시작하면
+  //: 뒤늦게 도착한 응답이 방금 친 것을 지운다(E2E 가 잡았다).
+  const edits = useRef(0)
   const [showAdmin, setShowAdmin] = useState(false)
   const [showDocs, setShowDocs] = useState(false)
   const [cursorCommand, setCursorCommand] = useState<string | null>(null)
@@ -93,16 +97,20 @@ export function WorkspacePage() {
     if (!active) return
     let cancelled = false
 
+    const startedAt = edits.current
+    // 요청이 도는 동안 사용자가 쳤으면 그 입력을 살린다.
+    const stale = () => cancelled || edits.current !== startedAt
+
     projectApi
       .latestSource(active.id)
       .then((revision) => {
-        if (cancelled) return
+        if (stale()) return
         setSource(revision.source)
         setDirty(false)
         setMessage(null)
       })
       .catch((error) => {
-        if (cancelled) return
+        if (stale()) return
         if (error instanceof ApiError && error.status === 404) {
           // 아직 한 번도 저장하지 않은 프로젝트다. 예제로 시작하게 둔다.
           setSource(STARTER_SOURCE)
@@ -219,6 +227,7 @@ export function WorkspacePage() {
           <SupremEditor
             value={source}
             onChange={(next) => {
+              edits.current += 1
               setSource(next)
               setDirty(true)
             }}

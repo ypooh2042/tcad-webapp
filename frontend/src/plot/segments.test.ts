@@ -7,7 +7,7 @@
  * 바뀌는 지점인데 농도가 급락한 것처럼 보인다.
  */
 import { describe, expect, it } from 'vitest'
-import { splitByMaterial } from './segments'
+import { materialBands, splitByMaterial } from './segments'
 
 const point = (depth: number, value: number, material: string) => ({
   depth,
@@ -86,5 +86,70 @@ describe('부호', () => {
 
     expect(segments).toHaveLength(1)
     expect(segments[0]!.negative).toBe(true)
+  })
+})
+
+describe('재질 배경 띠', () => {
+  it('재질별 깊이 구간을 만든다', () => {
+    const bands = materialBands([
+      point(-0.075, 1, 'oxide'),
+      point(0, 2, 'oxide'),
+      point(0, 3, 'silicon'),
+      point(2, 4, 'silicon'),
+    ])
+
+    expect(bands).toEqual([
+      { material: 'oxide', from: -0.075, to: 0 },
+      { material: 'silicon', from: 0, to: 2 },
+    ])
+  })
+
+  it('띠 사이에 빈틈을 남기지 않는다', () => {
+    // 계면에서 끊기면 배경에 흰 줄이 생겨 층이 떨어져 보인다.
+    const bands = materialBands([
+      point(0, 1, 'oxide'),
+      point(1, 2, 'oxide'),
+      point(1, 3, 'silicon'),
+      point(3, 4, 'silicon'),
+    ])
+
+    expect(bands[0]!.to).toBe(bands[1]!.from)
+  })
+
+  it('같은 재질이 떨어져 나오면 따로 만든다', () => {
+    // CMOS 게이트 적층: oxide / poly / oxide / silicon.
+    // 구간마다 점이 둘 이상 있어야 폭이 생긴다 — 실제 데이터가 그렇다.
+    const bands = materialBands([
+      point(-0.41, 1, 'oxide'),
+      point(-0.40, 2, 'oxide'),
+      point(-0.40, 3, 'poly'),
+      point(-0.001, 4, 'poly'),
+      point(-0.001, 5, 'oxide'),
+      point(0.042, 6, 'oxide'),
+      point(0.042, 7, 'silicon'),
+      point(3, 8, 'silicon'),
+    ])
+
+    expect(bands.map((b) => b.material)).toEqual([
+      'oxide',
+      'poly',
+      'oxide',
+      'silicon',
+    ])
+  })
+
+  it('폭이 0 인 띠는 버린다', () => {
+    // 계면 점 하나만 있는 재질에서 나온다. 그려 봐야 보이지 않는다.
+    const bands = materialBands([
+      point(0, 1, 'oxide'),
+      point(0, 2, 'poly'),
+      point(2, 3, 'silicon'),
+    ])
+
+    expect(bands.every((b) => b.to > b.from)).toBe(true)
+  })
+
+  it('빈 입력은 빈 결과다', () => {
+    expect(materialBands([])).toEqual([])
   })
 })

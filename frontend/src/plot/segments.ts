@@ -39,3 +39,40 @@ export function splitByMaterial(points: readonly ProfilePoint[]): Segment[] {
 
   return segments
 }
+
+export interface MaterialBand {
+  material: string
+  from: number
+  to: number
+}
+
+/**
+ * 깊이축에서 재질이 차지하는 구간.
+ *
+ * 배경 띠로 그린다. 재질을 선 색으로 나타내면 물리량을 나타낼 색이 남지 않고,
+ * 여러 물리량을 겹쳤을 때 어느 색이 무엇인지 알 수 없게 된다. 층 구조는
+ * "어디에 있나"이고 물리량은 "무엇을 그리나"라 서로 다른 축이다.
+ *
+ * 같은 재질이 떨어져 두 번 나오면(oxide/poly/oxide) 각각 따로 띠가 된다.
+ */
+export function materialBands(points: readonly ProfilePoint[]): MaterialBand[] {
+  const bands: MaterialBand[] = []
+
+  for (const point of points) {
+    const current = bands[bands.length - 1]
+    if (current && current.material === point.material) {
+      current.to = point.depth
+    } else {
+      // 계면에서는 같은 깊이에 두 재질의 점이 있다. 새 띠는 앞 띠가 끝난
+      // 자리에서 시작해야 사이에 빈틈이 생기지 않는다.
+      bands.push({
+        material: point.material,
+        from: current ? current.to : point.depth,
+        to: point.depth,
+      })
+    }
+  }
+
+  // 폭이 0 인 띠는 그릴 것이 없다. 계면 점 하나만 있는 재질에서 나온다.
+  return bands.filter((band) => band.to > band.from)
+}

@@ -326,3 +326,26 @@ describe('프로젝트 전환', () => {
     confirm.mockRestore()
   })
 })
+
+describe('소스 로드와 입력 경합', () => {
+  it('읽어오는 동안 친 내용을 덮어쓰지 않는다', async () => {
+    // 새 프로젝트를 만들고 바로 치기 시작하면, 뒤늦게 도착한 응답이 방금 친
+    // 것을 지운다. E2E 가 이 문제로 실패했다.
+    let resolve: (value: { id: number; revision: number; source: string }) => void =
+      () => {}
+    projects.latestSource.mockReturnValue(
+      new Promise((r) => {
+        resolve = r
+      }),
+    )
+    renderWorkspace()
+    await screen.findByRole('button', { name: 'cmos' })
+
+    await userEvent.type(screen.getByLabelText('소스'), '내가 친 것')
+    resolve({ id: 1, revision: 1, source: '서버가 준 것' })
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('소스')).toHaveDisplayValue(/내가 친 것/),
+    )
+  })
+})

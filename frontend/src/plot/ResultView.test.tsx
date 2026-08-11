@@ -85,22 +85,64 @@ describe('공정 단계', () => {
 })
 
 describe('물리량 선택', () => {
-  it('그릴 수 있는 물리량을 목록으로 준다', async () => {
+  it('체크박스로 모든 물리량을 내놓는다', async () => {
+    // 콤보박스로 하나만 고르게 하면 겹쳐 보기가 부가 기능처럼 된다.
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
 
-    expect(await screen.findByRole('option', { name: 'chem_boron' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'net_doping' })).toBeInTheDocument()
+    expect(await screen.findByLabelText('chem_boron')).toBeInTheDocument()
+    expect(screen.getByLabelText('net_doping')).toBeInTheDocument()
   })
 
-  it('고른 물리량으로 프로파일을 요청한다', async () => {
+  it('첫 물리량을 기본으로 골라 준다', async () => {
+    // 빈 차트로 시작하면 무엇을 해야 할지 알기 어렵다.
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await screen.findByRole('option', { name: 'net_doping' })
 
-    await userEvent.selectOptions(screen.getByLabelText('물리량'), 'net_doping')
+    expect(await screen.findByLabelText('chem_boron')).toBeChecked()
+  })
 
-    await waitFor(() =>
-      expect(plot.profile).toHaveBeenCalledWith(1, 1, 'net_doping', undefined),
-    )
+  it('고른 것을 모두 읽는다', async () => {
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await screen.findByLabelText('net_doping')
+    plot.profile.mockClear()
+
+    await userEvent.click(screen.getByLabelText('net_doping'))
+
+    await waitFor(() => {
+      expect(plot.profile).toHaveBeenCalledWith(1, 1, 'chem_boron', undefined)
+      expect(plot.profile).toHaveBeenCalledWith(1, 1, 'net_doping', undefined)
+    })
+  })
+
+  it('둘 다 범례에 나온다', async () => {
+    const { container } = render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await screen.findByLabelText('net_doping')
+
+    await userEvent.click(screen.getByLabelText('net_doping'))
+
+    await waitFor(() => {
+      const legend = container.querySelector('.legend')
+      expect(legend).toHaveTextContent('chem_boron')
+      expect(legend).toHaveTextContent('net_doping')
+    })
+  })
+
+  it('모두 해제하면 안내한다', async () => {
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await screen.findByLabelText('chem_boron')
+
+    await userEvent.click(screen.getByLabelText('chem_boron'))
+
+    expect(await screen.findByText(/하나 이상 골라/)).toBeInTheDocument()
+  })
+
+  it('이 단계에 없는 물리량은 떨어뜨린다', async () => {
+    // 주입 전 구조에는 arsenic 컬럼이 아예 없다.
+    plot.summary.mockResolvedValue(summary({ quantities: ['chem_boron'] }))
+
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+
+    await screen.findByLabelText('chem_boron')
+    expect(screen.queryByLabelText('net_doping')).not.toBeInTheDocument()
   })
 })
 
@@ -182,13 +224,13 @@ describe('단계 비교', () => {
     render(<ResultView jobId={1} artifacts={[ARTIFACTS[0]!]} />)
     await screen.findByText(/after_implant/)
 
-    expect(screen.queryByLabelText('비교')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('단계 비교')).not.toBeInTheDocument()
   })
 
   it('현재 단계는 비교 대상에서 뺀다', async () => {
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
 
-    const select = await screen.findByLabelText('비교')
+    const select = await screen.findByLabelText('단계 비교')
     const options = within(select).getAllByRole('option').map((o) => o.textContent)
     expect(options).toEqual(['없음', 'after_diffuse.str'])
   })
@@ -196,10 +238,10 @@ describe('단계 비교', () => {
   it('고른 단계의 프로파일을 같은 조건으로 읽는다', async () => {
     // 물리량과 컷 위치가 다르면 비교가 의미를 잃는다.
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await screen.findByLabelText('비교')
+    await screen.findByLabelText('단계 비교')
     plot.profile.mockClear()
 
-    await userEvent.selectOptions(screen.getByLabelText('비교'), '2')
+    await userEvent.selectOptions(screen.getByLabelText('단계 비교'), '2')
 
     await waitFor(() =>
       expect(plot.profile).toHaveBeenCalledWith(1, 2, 'chem_boron', undefined),
@@ -209,14 +251,14 @@ describe('단계 비교', () => {
   it('비교를 끄면 겹친 선이 사라진다', async () => {
     // 같은 이름이 비교 <option> 에도 있으므로 범례 안에서만 찾는다.
     const { container } = render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await userEvent.selectOptions(await screen.findByLabelText('비교'), '2')
+    await userEvent.selectOptions(await screen.findByLabelText('단계 비교'), '2')
     await waitFor(() =>
       expect(container.querySelector('.legend')).toHaveTextContent(
         'after_diffuse.str',
       ),
     )
 
-    await userEvent.selectOptions(screen.getByLabelText('비교'), '')
+    await userEvent.selectOptions(screen.getByLabelText('단계 비교'), '')
 
     await waitFor(() =>
       expect(container.querySelector('.legend')).not.toHaveTextContent(
@@ -226,70 +268,3 @@ describe('단계 비교', () => {
   })
 })
 
-describe('물리량 함께 보기', () => {
-  it('현재 물리량은 목록에서 뺀다', async () => {
-    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await userEvent.click(await screen.findByText(/함께 보기/))
-
-    expect(screen.getByLabelText('net_doping')).toBeInTheDocument()
-    expect(screen.queryByLabelText('chem_boron')).not.toBeInTheDocument()
-  })
-
-  it('고른 물리량을 같은 단계·같은 컷에서 읽는다', async () => {
-    // 조건이 다르면 겹쳐 봐야 의미가 없다.
-    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await userEvent.click(await screen.findByText(/함께 보기/))
-    plot.profile.mockClear()
-
-    await userEvent.click(screen.getByLabelText('net_doping'))
-
-    await waitFor(() =>
-      expect(plot.profile).toHaveBeenCalledWith(1, 1, 'net_doping', undefined),
-    )
-  })
-
-  it('범례에 함께 보는 물리량을 적는다', async () => {
-    const { container } = render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await userEvent.click(await screen.findByText(/함께 보기/))
-
-    await userEvent.click(screen.getByLabelText('net_doping'))
-
-    await waitFor(() =>
-      expect(container.querySelector('.legend')).toHaveTextContent('net_doping'),
-    )
-  })
-
-  it('해제하면 사라진다', async () => {
-    const { container } = render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await userEvent.click(await screen.findByText(/함께 보기/))
-    await userEvent.click(screen.getByLabelText('net_doping'))
-    await waitFor(() =>
-      expect(container.querySelector('.legend')).toHaveTextContent('net_doping'),
-    )
-
-    await userEvent.click(screen.getByLabelText('net_doping'))
-
-    await waitFor(() =>
-      expect(container.querySelector('.legend')).not.toHaveTextContent('net_doping'),
-    )
-  })
-
-  it('고른 개수를 알려준다', async () => {
-    // 접어 두면 무엇을 골랐는지 보이지 않는다.
-    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await userEvent.click(await screen.findByText(/함께 보기/))
-
-    await userEvent.click(screen.getByLabelText('net_doping'))
-
-    expect(await screen.findByText(/함께 보기 \(1\)/)).toBeInTheDocument()
-  })
-
-  it('물리량이 하나뿐이면 선택이 없다', async () => {
-    plot.summary.mockResolvedValue(summary({ quantities: ['chem_boron'] }))
-
-    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await screen.findByLabelText('물리량')
-
-    expect(screen.queryByText(/함께 보기/)).not.toBeInTheDocument()
-  })
-})
