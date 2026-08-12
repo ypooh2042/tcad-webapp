@@ -11,8 +11,32 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 
 from app.docs.manual import Manual, Section, load_manual
+from app.docs.reference import load_reference
 
 router = APIRouter(prefix="/docs", tags=["docs"])
+
+
+class ReferenceCommand(BaseModel):
+    """목록에서 고르는 데 필요한 것만. 산문과 파라미터는 싣지 않는다 —
+    전부 실으면 800KB 라, 패널을 여는 것만으로 그만큼을 받는다."""
+
+    name: str
+    summary: str
+    documented: bool
+    parameter_count: int
+    #: 본문을 읽을 때 쓸 id. 매뉴얼에 설명이 없으면 None.
+    manual_section_id: str | None
+    manual_page: str | None
+
+
+class ReferenceGroup(BaseModel):
+    name: str
+    note: str
+    commands: list[ReferenceCommand]
+
+
+class ReferenceResponse(BaseModel):
+    groups: list[ReferenceGroup]
 
 
 class SectionSummary(BaseModel):
@@ -57,6 +81,41 @@ def _summary(section: Section) -> SectionSummary:
         title=section.title,
         command=section.command,
         page_start=section.page_start,
+    )
+
+
+@router.get("/reference")
+async def reference() -> ReferenceResponse:
+    """커맨드 목록 — 무엇을 찾아야 할지 모를 때 훑어보는 것.
+
+    검색과 역할이 다르다. 검색은 찾을 낱말을 알아야 쓸 수 있는데, 처음 쓰는
+    사람은 그 낱말을 모른다. 무리별로 늘어놓아야 "층을 쌓는 커맨드" 를 눈으로
+    찾을 수 있다.
+
+    분류는 매뉴얼 p.51 이 나눈 것을 그대로 쓴다.
+    """
+    catalogue = load_reference()
+    by_name = {command.name: command for command in catalogue.commands}
+
+    return ReferenceResponse(
+        groups=[
+            ReferenceGroup(
+                name=group.name,
+                note=group.note,
+                commands=[
+                    ReferenceCommand(
+                        name=command.name,
+                        summary=command.summary,
+                        documented=command.documented,
+                        parameter_count=len(command.parameters),
+                        manual_section_id=command.manual_section_id,
+                        manual_page=command.manual_page,
+                    )
+                    for command in (by_name[name] for name in group.commands)
+                ],
+            )
+            for group in catalogue.groups
+        ]
     )
 
 

@@ -11,10 +11,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../../api/client'
 import { docs } from '../../api/endpoints'
-import type { DocsSearchHit, DocsSection } from '../../api/types'
+import type {
+  DocsReferenceCommand,
+  DocsSearchHit,
+  DocsSection,
+} from '../../api/types'
 import { ParameterTable } from './ParameterTable'
+import { ReferenceBrowser } from './ReferenceBrowser'
 
-type Tab = 'manual' | 'parameters'
+type Tab = 'manual' | 'parameters' | 'reference'
 
 /** 매뉴얼은 고정폭으로 조판돼 있어 그대로 두면 줄이 어색하게 끊긴다. */
 const SUBSECTION_ORDER = [
@@ -47,6 +52,9 @@ export function DocsPanel({ command, onClose }: Props) {
   const [notice, setNotice] = useState<string | null>(null)
   const [pinned, setPinned] = useState(false)
   const [tab, setTab] = useState<Tab>('manual')
+  //: 목록에서 고른 커맨드. 매뉴얼 본문이 없는 커맨드도 있어서(suprem.key 에만
+  //  있는 것들) 섹션과 따로 들고 있어야 파라미터를 보여줄 수 있다.
+  const [picked, setPicked] = useState<string | null>(null)
 
   const load = useCallback((id: string) => {
     docs
@@ -89,6 +97,21 @@ export function DocsPanel({ command, onClose }: Props) {
     }
   }, [command, pinned])
 
+  function pick(command: DocsReferenceCommand) {
+    setPicked(command.name)
+    if (command.manual_section_id) {
+      load(command.manual_section_id)
+      setTab('manual')
+      return
+    }
+    // 매뉴얼에 본문이 없다. 매뉴얼 탭으로 보내면 빈 화면만 뜨므로 알려줄 것이
+    // 있는 쪽(파라미터)으로 보낸다.
+    setSection(null)
+    setNotice(`'${command.name}' 은 매뉴얼에 설명이 없습니다. 파라미터만 있습니다.`)
+    setPinned(true)
+    setTab('parameters')
+  }
+
   async function runSearch(event: React.FormEvent) {
     event.preventDefault()
     if (query.trim().length < 2) {
@@ -114,6 +137,7 @@ export function DocsPanel({ command, onClose }: Props) {
             onClick={() => {
               setPinned(false)
               setHits(null)
+              setPicked(null)
             }}
           >
             커서 따라가기
@@ -144,10 +168,28 @@ export function DocsPanel({ command, onClose }: Props) {
         >
           파라미터
         </button>
+        {/* 검색은 찾을 낱말을 알아야 쓴다. 처음 쓰는 사람은 그 낱말을 모르므로
+            훑어볼 목록이 따로 있어야 한다. */}
+        <button
+          role="tab"
+          aria-selected={tab === 'reference'}
+          className={tab === 'reference' ? 'tab active' : 'tab'}
+          onClick={() => setTab('reference')}
+        >
+          목록
+        </button>
       </div>
 
+      {/* 안내는 탭 밖에 둔다. 목록에서 문서 없는 커맨드를 고르면 파라미터 탭으로
+          보내지는데, 안내가 매뉴얼 탭 안에만 있으면 왜 옮겨졌는지 알 수 없다. */}
+      {notice && <p className="muted">{notice}</p>}
+
+      {tab === 'reference' && <ReferenceBrowser onSelect={pick} />}
+
       {tab === 'parameters' && (
-        <ParameterTable command={pinned ? (section?.command ?? null) : command} />
+        <ParameterTable
+          command={pinned ? (picked ?? section?.command ?? null) : command}
+        />
       )}
 
       {tab === 'manual' && (
@@ -162,8 +204,6 @@ export function DocsPanel({ command, onClose }: Props) {
         />
         <button type="submit">찾기</button>
       </form>
-
-      {notice && <p className="muted">{notice}</p>}
 
       {hits && (
         <ul className="docs-hits">

@@ -13,7 +13,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { DocsPanel } from './DocsPanel'
 
 const { docs } = vi.hoisted(() => ({
-  docs: { sections: vi.fn(), section: vi.fn(), forCommand: vi.fn(), search: vi.fn() },
+  docs: {
+    sections: vi.fn(),
+    section: vi.fn(),
+    forCommand: vi.fn(),
+    search: vi.fn(),
+    reference: vi.fn(),
+  },
 }))
 vi.mock('../../api/endpoints', () => ({ docs }))
 
@@ -250,5 +256,88 @@ describe('탭', () => {
     await userEvent.click(screen.getByRole('tab', { name: '파라미터' }))
 
     await waitFor(() => expect(catalog.command).toHaveBeenCalledWith('implant'))
+  })
+})
+
+describe('목록 탭', () => {
+  beforeEach(() => {
+    docs.reference.mockResolvedValue({
+      groups: [
+        {
+          name: '공정 시뮬레이션',
+          note: '실제 공정 단계.',
+          commands: [
+            {
+              name: 'implant',
+              summary: 'Perform ion implantation.',
+              documented: true,
+              parameter_count: 28,
+              manual_section_id: 'implant',
+              manual_page: '67',
+            },
+            {
+              name: 'device',
+              summary: '',
+              documented: false,
+              parameter_count: 7,
+              manual_section_id: null,
+              manual_page: null,
+            },
+          ],
+        },
+      ],
+    })
+  })
+
+  it('무리별로 커맨드를 늘어놓는다', async () => {
+    // 검색은 찾을 낱말을 알아야 쓴다. 모를 때 훑어볼 곳이 있어야 한다.
+    render(<DocsPanel command={null} onClose={vi.fn()} />)
+
+    await userEvent.click(screen.getByRole('tab', { name: '목록' }))
+
+    expect(await screen.findByText('공정 시뮬레이션')).toBeInTheDocument()
+    expect(screen.getByText('Perform ion implantation.')).toBeInTheDocument()
+  })
+
+  it('고르면 본문을 띄운다', async () => {
+    render(<DocsPanel command={null} onClose={vi.fn()} />)
+    await userEvent.click(screen.getByRole('tab', { name: '목록' }))
+    await screen.findByText('Perform ion implantation.')
+
+    await userEvent.click(screen.getByRole('button', { name: /implant/ }))
+
+    await waitFor(() => expect(docs.section).toHaveBeenCalledWith('implant'))
+    expect(await screen.findByText(/이온 주입을 수행한다/)).toBeInTheDocument()
+  })
+
+  it('고른 문서는 커서가 움직여도 유지한다', async () => {
+    // 목록에서 고른 것도 검색으로 고른 것과 같아야 한다 — 읽는 도중 편집기를
+    // 건드리면 사라지는 것이 가장 성가시다.
+    const { rerender } = render(<DocsPanel command={null} onClose={vi.fn()} />)
+    await userEvent.click(screen.getByRole('tab', { name: '목록' }))
+    await screen.findByText('Perform ion implantation.')
+    await userEvent.click(screen.getByRole('button', { name: /implant/ }))
+    await screen.findByText(/이온 주입을 수행한다/)
+
+    rerender(<DocsPanel command="deposit" onClose={vi.fn()} />)
+
+    expect(screen.getByText(/이온 주입을 수행한다/)).toBeInTheDocument()
+  })
+
+  it('문서 없는 커맨드는 파라미터 탭으로 보낸다', async () => {
+    // 본문이 없으니 매뉴얼 탭으로 보내면 빈 화면만 뜬다.
+    render(<DocsPanel command={null} onClose={vi.fn()} />)
+    await userEvent.click(screen.getByRole('tab', { name: '목록' }))
+    await screen.findByText(/매뉴얼 설명 없음/)
+
+    await userEvent.click(screen.getByRole('button', { name: /device/ }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: '파라미터' })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      ),
+    )
+    expect(docs.section).not.toHaveBeenCalled()
   })
 })

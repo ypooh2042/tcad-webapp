@@ -29,7 +29,10 @@ export type JobStatus =
 export interface Job {
   id: number
   status: JobStatus
-  source_revision_id: number
+  /** 예전 프로젝트 모델의 잔재. 파일로 돌린 잡은 비어 있다. */
+  source_revision_id: number | null
+  /** 어느 파일을 돌렸는지(작업공간 기준 경로). */
+  source_path: string | null
 }
 
 export interface Artifact {
@@ -41,6 +44,8 @@ export interface Artifact {
 export interface JobDetail extends Job {
   log: string | null
   exit_code: number | null
+  /** 제출 시각(시간대 포함). 화면은 잡 번호 대신 이걸로 실행을 가리킨다. */
+  created_at: string
   artifacts: Artifact[]
 }
 
@@ -103,6 +108,20 @@ export interface InviteSummary {
   usable: boolean
 }
 
+/** 작업공간 항목. 경로는 루트 기준이다 — 서버 절대경로가 아니다. */
+export interface FileEntry {
+  path: string
+  name: string
+  is_dir: boolean
+  size_bytes: number
+}
+
+export interface FileUsage {
+  used_bytes: number
+  quota_bytes: number
+  remaining_bytes: number
+}
+
 export interface DocsSectionSummary {
   id: string
   kind: string
@@ -119,6 +138,29 @@ export interface DocsSection extends DocsSectionSummary {
   /** SYNOPSIS / DESCRIPTION / EXAMPLES ... */
   subsections: Record<string, string>
   key_parameters: string[]
+}
+
+/** 목록에서 고르는 데 필요한 것만. 산문과 파라미터는 고른 뒤에 따로 읽는다. */
+export interface DocsReferenceCommand {
+  name: string
+  summary: string
+  /** 매뉴얼에 설명이 있는가. suprem.key 에만 있는 커맨드는 false. */
+  documented: boolean
+  parameter_count: number
+  /** 본문을 읽을 때 쓸 id. 설명이 없으면 null. */
+  manual_section_id: string | null
+  manual_page: string | null
+}
+
+export interface DocsReferenceGroup {
+  name: string
+  /** 이 무리가 무엇인지. 이름만으로는 왜 묶였는지 알 수 없다. */
+  note: string
+  commands: DocsReferenceCommand[]
+}
+
+export interface DocsReference {
+  groups: DocsReferenceGroup[]
 }
 
 export interface DocsSearchHit {
