@@ -26,13 +26,18 @@ const ADMIN_URL =
 export interface E2EState {
   databaseName: string
   jobsRoot: string
+  workspacesRoot: string
   api?: ChildProcess
   worker?: ChildProcess
 }
 
 // Playwright 는 setup 과 teardown 사이에 값을 넘겨주지 않는다. 모듈 전역에
 // 둔다(같은 프로세스에서 둘 다 돈다).
-export const state: E2EState = { databaseName: '', jobsRoot: '' }
+export const state: E2EState = {
+  databaseName: '',
+  jobsRoot: '',
+  workspacesRoot: '',
+}
 
 function run(command: string, args: string[], env: NodeJS.ProcessEnv = {}) {
   const result = spawnSync(command, args, {
@@ -87,6 +92,10 @@ export default async function globalSetup() {
   const suffix = Date.now().toString(36)
   state.databaseName = `tcad_e2e_${suffix}`
   state.jobsRoot = mkdtempSync(join(tmpdir(), 'tcad-e2e-jobs-'))
+  // 작업공간도 실행마다 새로 잡는다. 고정 경로를 쓰면 실행마다 DB 가 새로
+  // 만들어져 user id 가 1 부터 다시 시작하는 탓에, 이전 실행이 남긴
+  // user-N 폴더를 그대로 물려받는다(실제로 테스트가 남의 파일을 봤다).
+  state.workspacesRoot = mkdtempSync(join(tmpdir(), 'tcad-e2e-workspaces-'))
 
   sql(`create database "${state.databaseName}"`)
 
@@ -96,6 +105,7 @@ export default async function globalSetup() {
     // 개발용 세션과 섞이지 않도록 별도 Redis DB 를 쓴다.
     TCAD_REDIS_URL: 'redis://localhost:6380/14',
     TCAD_JOBS_ROOT: state.jobsRoot,
+    TCAD_WORKSPACES_ROOT: state.workspacesRoot,
     // 브라우저가 http:// 로 접속하므로 Secure 쿠키는 되돌아오지 않는다.
     TCAD_SESSION_COOKIE_SECURE: 'false',
     // E2E 잡은 작고 빨라야 한다.

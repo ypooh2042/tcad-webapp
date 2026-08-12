@@ -322,3 +322,97 @@ class TestLoadingSource:
             response = await anon.get("/api/projects/1/revisions/latest")
 
         assert response.status_code == 401
+
+
+class TestRename:
+    async def test_changes_the_name(self, alice):
+        project = await _project(alice, "옛 이름")
+
+        response = await alice.patch(
+            f"/api/projects/{project}", json={"name": "새 이름"}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["name"] == "새 이름"
+
+    async def test_shows_up_in_the_list(self, alice):
+        project = await _project(alice, "옛 이름")
+        await alice.patch(f"/api/projects/{project}", json={"name": "새 이름"})
+
+        listed = await alice.get("/api/projects")
+
+        assert [p["name"] for p in listed.json()] == ["새 이름"]
+
+    async def test_rejects_a_name_already_taken(self, alice):
+        await _project(alice, "이미 있음")
+        project = await _project(alice, "고칠 것")
+
+        response = await alice.patch(
+            f"/api/projects/{project}", json={"name": "이미 있음"}
+        )
+
+        assert response.status_code == 409
+
+    async def test_rejects_an_empty_name(self, alice):
+        project = await _project(alice, "p")
+
+        response = await alice.patch(f"/api/projects/{project}", json={"name": ""})
+
+        assert response.status_code == 422
+
+    async def test_hides_other_peoples_projects(self, alice, bob):
+        # 없는 것과 남의 것을 구분해 알리면 id 를 훑어 존재를 알아낼 수 있다.
+        project = await _project(alice, "내 것")
+
+        response = await bob.patch(
+            f"/api/projects/{project}", json={"name": "가로채기"}
+        )
+
+        assert response.status_code == 404
+
+
+class TestDelete:
+    async def test_removes_it(self, alice):
+        project = await _project(alice, "지울 것")
+
+        response = await alice.delete(f"/api/projects/{project}")
+
+        assert response.status_code == 204
+        assert (await alice.get("/api/projects")).json() == []
+
+    async def test_source_is_gone_too(self, alice):
+        project = await _project(alice, "지울 것")
+        await alice.post(
+            f"/api/projects/{project}/revisions", json={"source": SOURCE}
+        )
+
+        await alice.delete(f"/api/projects/{project}")
+
+        response = await alice.get(f"/api/projects/{project}/revisions/latest")
+        assert response.status_code == 404
+
+    async def test_refuses_while_a_job_is_live(self, alice):
+        """워커가 집어간 잡의 행이 사라지면 결과를 쓸 곳이 없어진다."""
+        project = await _project(alice, "돌고 있음")
+        await alice.post(
+            f"/api/projects/{project}/revisions", json={"source": SOURCE}
+        )
+        await alice.post(f"/api/projects/{project}/jobs")
+
+        response = await alice.delete(f"/api/projects/{project}")
+
+        assert response.status_code == 409
+        assert (await alice.get("/api/projects")).json() != []
+
+    async def test_hides_other_peoples_projects(self, alice, bob):
+        project = await _project(alice, "내 것")
+
+        response = await bob.delete(f"/api/projects/{project}")
+
+        assert response.status_code == 404
+        assert (await alice.get("/api/projects")).json() != []
+
+
+async def _project(client, name: str) -> int:
+    response = await client.post("/api/projects", json={"name": name})
+    return response.json()["id"]

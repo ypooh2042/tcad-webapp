@@ -246,6 +246,131 @@ select {
 .docs-hits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .docs-hits li p { margin: 2px 0 0; font-size: 12px; }
 
+/* 커맨드 목록. 무리별로 접었다 펼 수 있어야 53개를 한눈에 훑는다. */
+.reference { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.reference-filter input { width: 100%; box-sizing: border-box; }
+
+.reference details { border-top: 1px solid var(--border); padding-top: 6px; }
+.reference summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+.reference .note { margin: 4px 0 6px; font-size: 11px; }
+
+.reference ul { list-style: none; margin: 0; padding: 0; }
+/* 이름과 파라미터 개수를 한 줄에, 요약을 그 아래에. 요약까지 같은 줄에 넣으면
+   좁은 패널에서 이름이 밀려 스캔이 안 된다. */
+.reference li { display: grid; grid-template-columns: 1fr auto; margin-bottom: 8px; }
+.reference li code { font-size: 12px; }
+.reference li .count { font-size: 11px; font-variant-numeric: tabular-nums; }
+.reference li p { grid-column: 1 / -1; margin: 1px 0 0; font-size: 11px; line-height: 1.4; }
+
+/* 확대 중에는 끌어서 옮길 수 있다. 커서로 알린다. */
+.chart svg.zoomed { cursor: grab; }
+.chart svg.zoomed:active { cursor: grabbing; }
+
+/* 끌 때 눈금·범례 글자가 파랗게 잡히면 지저분하다. SVG 안의 글자는 축 라벨과
+   재질 이름뿐이라 선택할 이유가 없다. */
+.chart svg {
+  -webkit-user-select: none;
+  user-select: none;
+}
+.chart .band-label { pointer-events: none; }
+
+/* ── 파일 브라우저 ───────────────────────────────────────── */
+
+.file-browser {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 55vh;
+  overflow: auto;
+}
+.file-browser header { display: flex; align-items: center; gap: 10px; }
+.file-browser h2 { margin: 0; font-size: 15px; }
+
+.file-tree { list-style: none; margin: 0; padding: 0; }
+.file-tree li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  padding: 2px 0;
+  /* 깊이만큼 들여쓴다. 트리 구조가 눈에 들어와야 한다. */
+  padding-left: calc(var(--depth) * 18px);
+}
+.file-tree li:hover { background: rgba(255, 255, 255, 0.04); }
+/* 끌어서 옮길 수 있다는 신호. 커서가 바뀌지 않으면 될지 안 될지 알 수 없다. */
+.file-tree li { cursor: grab; }
+.file-tree li .name, .file-tree li button { cursor: pointer; }
+/* 여기에 떨어진다는 표시. 없으면 어느 폴더로 들어갈지 짐작해야 한다. */
+.file-tree li.drop-target {
+  background: rgba(74, 158, 255, 0.16);
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+}
+.file-tree .name { text-decoration: none; color: var(--text); }
+.file-tree .size { font-size: 11px; font-variant-numeric: tabular-nums; }
+/* 이름과 조작 버튼 사이를 벌린다. 붙어 있으면 잘못 누른다. */
+.file-tree li .name { flex: 1; text-align: left; }
+
+/* 파일 탭. 이름과 닫기 버튼이 한 덩어리다.
+   **탭 모양은 여기서 준다.** 예전에는 button.tab 이 했는데, 닫기 버튼을 넣으며
+   span 으로 감싸면서 그 선택자가 더 이상 걸리지 않게 됐다 — 그 결과 활성 탭
+   강조가 통째로 사라져 "탭이 안 눌린다"는 제보로 돌아왔다. */
+.workspace header nav .tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px 4px 10px;
+  border-radius: 6px 6px 0 0;
+  border-bottom: 2px solid transparent;
+}
+.workspace header nav .tab:hover { background: rgba(255, 255, 255, 0.04); }
+.workspace header nav .tab.active {
+  border-bottom-color: var(--accent);
+  background: rgba(74, 158, 255, 0.08);
+}
+/* 탭 이름은 링크가 아니다. 밑줄이 있으면 링크처럼 보여 눌러도 되는지 헷갈린다. */
+.workspace header nav .tab button[role="tab"] {
+  text-decoration: none;
+  color: var(--muted);
+}
+.workspace header nav .tab.active button[role="tab"] {
+  color: var(--text);
+  font-weight: 600;
+}
+.workspace header nav .tab .close {
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 4px;
+  text-decoration: none;
+}
+.workspace header nav .tab .close:hover { color: var(--error); }
+
+/* 되돌릴 수 없는 동작. 다른 링크 버튼과 같은 색이면 무심코 누른다. */
+.link.danger { color: #ff6b6b; }
+
+/* 재질 경계선과 띠 이름. 색이 비슷해도 층이 바뀌는 자리가 보여야 한다. */
+.material-edge { stroke: rgba(255, 255, 255, 0.32); stroke-width: 1; stroke-dasharray: 2 2; }
+.band-label { fill: rgba(255, 255, 255, 0.45); font-size: 10px; letter-spacing: 0.04em; }
+
+/* 화면에는 안 보이되 스크린리더에는 읽혀야 하는 레이블. */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* 매뉴얼은 고정폭으로 조판돼 있다. SYNOPSIS 의 정렬이 의미를 가진다. */
 .docs pre {
   margin: 0;

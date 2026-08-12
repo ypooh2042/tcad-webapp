@@ -5,13 +5,13 @@
  * 최신 리비전을 돌리므로, 편집 중인 내용을 저장하지 않고 실행하면 방금 고친
  * 줄이 빠진 결과가 나온다. 사용자는 그걸 알아챌 방법이 없다.
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspacePage } from './WorkspacePage'
 import { AuthProvider } from '../auth/AuthContext'
 
-const { auth, projects, jobs, plot, admin, docs } = vi.hoisted(() => ({
+const { auth, projects, files, jobs, plot, admin, docs } = vi.hoisted(() => ({
   auth: { me: vi.fn(), login: vi.fn(), register: vi.fn(), logout: vi.fn() },
   projects: {
     list: vi.fn(),
@@ -20,14 +20,40 @@ const { auth, projects, jobs, plot, admin, docs } = vi.hoisted(() => ({
     latestSource: vi.fn(),
     submit: vi.fn(),
     jobs: vi.fn(),
+    rename: vi.fn(),
+    remove: vi.fn(),
+  },
+  files: {
+    tree: vi.fn(),
+    usage: vi.fn(),
+    read: vi.fn(),
+    write: vi.fn(),
+    makeFolder: vi.fn(),
+    rename: vi.fn(),
+    remove: vi.fn(),
+    run: vi.fn(),
   },
   jobs: { get: vi.fn(), artifact: vi.fn() },
   plot: { summary: vi.fn(), profile: vi.fn(), surface: vi.fn() },
   admin: { issueInvite: vi.fn(), listInvites: vi.fn(), revokeInvite: vi.fn() },
-  docs: { sections: vi.fn(), section: vi.fn(), forCommand: vi.fn(), search: vi.fn() },
+  docs: {
+    sections: vi.fn(),
+    section: vi.fn(),
+    forCommand: vi.fn(),
+    search: vi.fn(),
+    reference: vi.fn(),
+  },
 }))
 
-vi.mock('../../api/endpoints', () => ({ auth, projects, jobs, plot, admin, docs }))
+vi.mock('../../api/endpoints', () => ({
+  auth,
+  projects,
+  files,
+  jobs,
+  plot,
+  admin,
+  docs,
+}))
 
 // Monaco 는 jsdom 에서 뜨지 않는다. 편집 동작 자체는 E2E 의 몫이고, 여기서는
 // 저장·실행 흐름만 본다.
@@ -56,10 +82,25 @@ beforeEach(() => {
   admin.listInvites.mockResolvedValue([])
   docs.forCommand.mockRejectedValue(new Error('없음'))
   docs.search.mockResolvedValue({ query: '', hits: [] })
+  docs.reference.mockResolvedValue({ groups: [] })
+  files.tree.mockResolvedValue({
+    entries: [
+      { path: 'boron.in', name: 'boron.in', is_dir: false, size_bytes: 10 },
+      { path: 'arsenic.in', name: 'arsenic.in', is_dir: false, size_bytes: 10 },
+    ],
+  })
+  files.usage.mockResolvedValue({
+    used_bytes: 20,
+    quota_bytes: 50 * 1024 * 1024,
+    remaining_bytes: 50 * 1024 * 1024 - 20,
+  })
+  files.read.mockResolvedValue({ path: 'boron.in', content: '저장된 소스\n' })
+  files.write.mockResolvedValue({ path: 'boron.in', content: 'x' })
+  files.run.mockResolvedValue({ id: 42, status: 'queued', source_path: 'boron.in' })
   projects.list.mockResolvedValue([PROJECT])
-  projects.saveSource.mockResolvedValue({ id: 1, revision: 1 })
+  files.write.mockResolvedValue({ id: 1, revision: 1 })
   projects.latestSource.mockResolvedValue({ id: 1, revision: 1, source: '저장된 소스\n' })
-  projects.submit.mockResolvedValue({ id: 42, status: 'queued', source_revision_id: 1 })
+  files.run.mockResolvedValue({ id: 42, status: 'queued', source_revision_id: 1 })
   plot.summary.mockResolvedValue({
     filename: 'result.str',
     dimension: 1,
@@ -85,6 +126,17 @@ beforeEach(() => {
   })
 })
 
+/** 파일 하나를 연 상태까지 만든다. 예전에는 프로젝트가 자동으로 열렸다. */
+async function openFile(name = 'boron.in') {
+  const result = renderWorkspace()
+  await userEvent.click(screen.getByRole('button', { name: '파일 열기' }))
+  const dialog = await screen.findByRole('dialog', { name: '내 파일' })
+  // 앞의 · 는 aria-hidden 이라 접근성 이름에 들어가지 않는다.
+  await userEvent.click(within(dialog).getByRole('button', { name }))
+  await screen.findByRole('tab', { name: name })
+  return result
+}
+
 function renderWorkspace() {
   return render(
     <AuthProvider>
@@ -93,87 +145,186 @@ function renderWorkspace() {
   )
 }
 
-describe('프로젝트', () => {
-  it('내 프로젝트를 보여준다', async () => {
-    renderWorkspace()
-
-    expect(await screen.findByRole('button', { name: 'cmos' })).toBeInTheDocument()
-  })
-
-  it('첫 프로젝트를 자동으로 연다', async () => {
-    renderWorkspace()
-
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: '실행' })).toBeEnabled(),
-    )
-  })
-
-  it('프로젝트가 없으면 저장과 실행을 막는다', async () => {
-    projects.list.mockResolvedValue([])
+describe('파일 열기', () => {
+  it('처음에는 열린 파일이 없다', async () => {
+    // 위쪽 탭은 "내가 연 파일" 목록이다. 작업공간 전체가 아니다.
     renderWorkspace()
 
     await waitFor(() =>
       expect(screen.getByRole('button', { name: '실행' })).toBeDisabled(),
     )
   })
+
+  it('파일 열기로 브라우저를 띄운다', async () => {
+    renderWorkspace()
+
+    await userEvent.click(screen.getByRole('button', { name: '파일 열기' }))
+
+    expect(await screen.findByRole('dialog', { name: '내 파일' })).toBeInTheDocument()
+  })
+
+  it('고른 파일이 탭에 붙는다', async () => {
+    renderWorkspace()
+    await userEvent.click(screen.getByRole('button', { name: '파일 열기' }))
+    await screen.findByRole('dialog', { name: '내 파일' })
+
+    await userEvent.click(await screen.findByRole('button', { name: /boron.in/ }))
+
+    expect(
+      await screen.findByRole('tab', { name: /boron.in/ }),
+    ).toBeInTheDocument()
+  })
+
+  it('연 파일의 내용을 편집기에 채운다', async () => {
+    renderWorkspace()
+    await userEvent.click(screen.getByRole('button', { name: '파일 열기' }))
+    await userEvent.click(await screen.findByRole('button', { name: /boron.in/ }))
+
+    await waitFor(() => expect(files.read).toHaveBeenCalledWith('boron.in'))
+    expect(await screen.findByDisplayValue(/저장된 소스/)).toBeInTheDocument()
+  })
+
+  it('같은 파일을 두 번 열어도 탭은 하나다', async () => {
+    await openFile()
+
+    await userEvent.click(screen.getByRole('button', { name: '파일 열기' }))
+    const dialog = await screen.findByRole('dialog', { name: '내 파일' })
+    await userEvent.click(within(dialog).getByRole('button', { name: 'boron.in' }))
+
+    expect(screen.getAllByRole('tab')).toHaveLength(1)
+  })
+})
+
+describe('탭', () => {
+  it('활성 탭을 눈에 띄게 표시한다', async () => {
+    // 전환은 되는데 표시가 없으면 "안 눌린다"고 느낀다(실제 제보).
+    const { container } = await openFile()
+
+    const tab = container.querySelector('.workspace header nav .tab')!
+    expect(tab.className).toContain('active')
+  })
+
+  it('활성이 아닌 탭에는 표시가 없다', async () => {
+    const { container } = renderWorkspace()
+    for (const name of ['boron.in', 'arsenic.in']) {
+      await userEvent.click(screen.getByRole('button', { name: '파일 열기' }))
+      const dialog = await screen.findByRole('dialog', { name: '내 파일' })
+      await userEvent.click(within(dialog).getByRole('button', { name }))
+      await screen.findByRole('tab', { name })
+    }
+
+    const tabs = [...container.querySelectorAll('.workspace header nav .tab')]
+    expect(tabs.filter((t) => t.className.includes('active'))).toHaveLength(1)
+  })
+
+  it('이름이 겹치면 경로를 붙인다', async () => {
+    // 같은 boron.in 이 둘이면 어느 쪽인지 알 수 없다. 트리에서는 이름이 같아
+    // 구분이 안 되므로 폴더를 펼쳐 순서대로 고른다.
+    files.tree.mockResolvedValue({
+      entries: [
+        { path: 'semi', name: 'semi', is_dir: true, size_bytes: 0 },
+        { path: 'semi/boron.in', name: 'boron.in', is_dir: false, size_bytes: 10 },
+        { path: 'boron.in', name: 'boron.in', is_dir: false, size_bytes: 10 },
+      ],
+    })
+    renderWorkspace()
+
+    // 루트의 boron.in — 접힌 상태에서는 이것 하나만 보인다.
+    await userEvent.click(screen.getByRole('button', { name: '파일 열기' }))
+    let dialog = await screen.findByRole('dialog', { name: '내 파일' })
+    await userEvent.click(within(dialog).getByRole('button', { name: 'boron.in' }))
+    await screen.findByRole('tab', { name: 'boron.in' })
+
+    // semi 를 펼치고 그 안의 boron.in.
+    await userEvent.click(screen.getByRole('button', { name: '파일 열기' }))
+    dialog = await screen.findByRole('dialog', { name: '내 파일' })
+    await userEvent.click(within(dialog).getByRole('button', { name: 'semi' }))
+    // 폴더가 먼저 오므로 semi/boron.in 이 앞이다. 인덱스로 짚으면 순서가
+    // 바뀔 때 조용히 엉뚱한 것을 누르므로, 들여쓰기 깊이로 고른다.
+    const rows = await within(dialog).findAllByRole('button', { name: 'boron.in' })
+    const nested = rows.find(
+      (row) => row.closest('li')!.getAttribute('style')?.includes('--depth: 1'),
+    )!
+    await userEvent.click(nested)
+
+    expect(
+      await screen.findByRole('tab', { name: 'semi/boron.in' }),
+    ).toBeInTheDocument()
+  })
+
+  it('닫기 버튼으로 탭에서 뺀다', async () => {
+    renderWorkspace()
+    await userEvent.click(screen.getByRole('button', { name: '파일 열기' }))
+    await userEvent.click(await screen.findByRole('button', { name: /boron.in/ }))
+    await screen.findByRole('tab')
+
+    await userEvent.click(screen.getByRole('button', { name: /탭 닫기/ }))
+
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+  })
+
+  it('탭을 닫아도 파일은 지우지 않는다', async () => {
+    renderWorkspace()
+    await userEvent.click(screen.getByRole('button', { name: '파일 열기' }))
+    await userEvent.click(await screen.findByRole('button', { name: /boron.in/ }))
+    await screen.findByRole('tab')
+
+    await userEvent.click(screen.getByRole('button', { name: /탭 닫기/ }))
+
+    expect(files.remove).not.toHaveBeenCalled()
+  })
 })
 
 describe('저장', () => {
-  it('편집한 내용을 리비전으로 저장한다', async () => {
-    renderWorkspace()
-    await screen.findByRole('button', { name: 'cmos' })
+  it('연 파일 경로로 저장한다', async () => {
+    await openFile()
 
     await userEvent.clear(screen.getByLabelText('소스'))
     await userEvent.type(screen.getByLabelText('소스'), 'init boron')
     await userEvent.click(screen.getByRole('button', { name: /저장/ }))
 
     await waitFor(() =>
-      expect(projects.saveSource).toHaveBeenCalledWith(7, 'init boron'),
+      expect(files.write).toHaveBeenCalledWith('boron.in', 'init boron'),
     )
   })
 
-  it('저장하면 리비전 번호를 알려준다', async () => {
-    projects.saveSource.mockResolvedValue({ id: 9, revision: 3 })
-    renderWorkspace()
-    await screen.findByRole('button', { name: 'cmos' })
+  it('저장했다고 알린다', async () => {
+    await openFile()
 
     await userEvent.click(screen.getByRole('button', { name: /저장/ }))
 
-    expect(await screen.findByText(/리비전 3 저장됨/)).toBeInTheDocument()
+    expect(await screen.findByText(/저장됨/)).toBeInTheDocument()
   })
 })
 
 describe('실행', () => {
   it('편집한 내용이 있으면 저장하고 나서 실행한다', async () => {
-    renderWorkspace()
-    await screen.findByRole('button', { name: 'cmos' })
+    await openFile()
 
     await userEvent.type(screen.getByLabelText('소스'), 'x')
     await userEvent.click(screen.getByRole('button', { name: '실행' }))
 
-    await waitFor(() => expect(projects.submit).toHaveBeenCalled())
+    await waitFor(() => expect(files.run).toHaveBeenCalled())
     // 저장이 먼저 일어나야 방금 고친 줄이 반영된다.
-    expect(projects.saveSource).toHaveBeenCalled()
-    expect(projects.saveSource.mock.invocationCallOrder[0]).toBeLessThan(
-      projects.submit.mock.invocationCallOrder[0],
+    expect(files.write).toHaveBeenCalled()
+    expect(files.write.mock.invocationCallOrder[0]).toBeLessThan(
+      files.run.mock.invocationCallOrder[0],
     )
   })
 
   it('바뀐 것이 없으면 다시 저장하지 않는다', async () => {
-    renderWorkspace()
-    await screen.findByRole('button', { name: 'cmos' })
+    await openFile()
     await userEvent.click(screen.getByRole('button', { name: /저장/ }))
-    projects.saveSource.mockClear()
+    files.write.mockClear()
 
     await userEvent.click(screen.getByRole('button', { name: '실행' }))
 
-    await waitFor(() => expect(projects.submit).toHaveBeenCalled())
+    await waitFor(() => expect(files.run).toHaveBeenCalled())
     expect(projects.saveSource).not.toHaveBeenCalled()
   })
 
   it('제출한 잡의 결과를 보여준다', async () => {
-    renderWorkspace()
-    await screen.findByRole('button', { name: 'cmos' })
+    await openFile()
 
     await userEvent.click(screen.getByRole('button', { name: '실행' }))
 
@@ -185,14 +336,13 @@ describe('실행', () => {
 describe('오류', () => {
   it('서버 오류 메시지를 그대로 보여준다', async () => {
     const { ApiError } = await import('../../api/client')
-    projects.submit.mockRejectedValue(
+    files.run.mockRejectedValue(
       new ApiError(400, '저장된 소스가 없습니다. 먼저 코드를 저장해 주세요.', null),
     )
-    projects.saveSource.mockRejectedValue(
+    files.write.mockRejectedValue(
       new ApiError(400, '저장된 소스가 없습니다. 먼저 코드를 저장해 주세요.', null),
     )
-    renderWorkspace()
-    await screen.findByRole('button', { name: 'cmos' })
+    await openFile()
 
     await userEvent.click(screen.getByRole('button', { name: '실행' }))
 
@@ -203,8 +353,7 @@ describe('오류', () => {
 
 describe('관리자 화면', () => {
   it('일반 사용자에게는 버튼이 없다', async () => {
-    renderWorkspace()
-    await screen.findByRole('button', { name: 'cmos' })
+    await openFile()
 
     expect(screen.queryByRole('button', { name: '관리자' })).not.toBeInTheDocument()
   })
@@ -241,8 +390,7 @@ describe('관리자 화면', () => {
 
 describe('매뉴얼 패널', () => {
   it('버튼으로 열고 닫는다', async () => {
-    renderWorkspace()
-    await screen.findByRole('button', { name: 'cmos' })
+    await openFile()
 
     await userEvent.click(screen.getByRole('button', { name: '매뉴얼' }))
     expect(screen.getByLabelText('매뉴얼 검색')).toBeInTheDocument()
@@ -253,99 +401,69 @@ describe('매뉴얼 패널', () => {
 })
 
 
-describe('프로젝트 전환', () => {
-  const SECOND = { id: 8, name: 'nmos' }
+describe('탭 전환', () => {
+  /** 파일 둘을 열어 둔 상태. */
+  async function openTwo() {
+    const result = renderWorkspace()
+    for (const name of ['boron.in', 'arsenic.in']) {
+      await userEvent.click(screen.getByRole('button', { name: '파일 열기' }))
+      const dialog = await screen.findByRole('dialog', { name: '내 파일' })
+      await userEvent.click(within(dialog).getByRole('button', { name }))
+      await screen.findByRole('tab', { name })
+    }
+    return result
+  }
 
-  it('연 프로젝트의 저장된 소스를 편집기에 채운다', async () => {
-    renderWorkspace()
+  it('연 파일의 내용을 편집기에 채운다', async () => {
+    await openFile()
 
     expect(await screen.findByDisplayValue(/저장된 소스/)).toBeInTheDocument()
   })
 
-  it('탭을 누르면 그 프로젝트를 읽는다', async () => {
+  it('탭을 누르면 그 파일을 읽는다', async () => {
     // 이게 안 되면 탭만 강조되고 편집기에는 이전 내용이 남는다.
-    projects.list.mockResolvedValue([PROJECT, SECOND])
-    renderWorkspace()
-    await screen.findByRole('button', { name: 'nmos' })
-    projects.latestSource.mockClear()
+    await openTwo()
+    files.read.mockClear()
 
-    await userEvent.click(screen.getByRole('button', { name: 'nmos' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'boron.in' }))
 
-    await waitFor(() => expect(projects.latestSource).toHaveBeenCalledWith(8))
-  })
-
-  it('저장한 적 없는 프로젝트는 예제로 시작한다', async () => {
-    const { ApiError } = await import('../../api/client')
-    projects.latestSource.mockRejectedValue(
-      new ApiError(404, '저장된 소스가 없습니다', null),
-    )
-    renderWorkspace()
-
-    expect(await screen.findByDisplayValue(/mode one.dim/)).toBeInTheDocument()
+    await waitFor(() => expect(files.read).toHaveBeenCalledWith('boron.in'))
   })
 
   it('저장하지 않은 편집이 있으면 먼저 묻는다', async () => {
     // 말없이 덮어쓰면 사용자는 방금 쓴 것을 잃고 이유도 모른다.
-    projects.list.mockResolvedValue([PROJECT, SECOND])
+    await openTwo()
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
-    renderWorkspace()
-    await screen.findByRole('button', { name: 'nmos' })
     await userEvent.type(screen.getByLabelText('소스'), 'x')
-    projects.latestSource.mockClear()
+    files.read.mockClear()
 
-    await userEvent.click(screen.getByRole('button', { name: 'nmos' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'boron.in' }))
 
     expect(confirm).toHaveBeenCalled()
-    expect(projects.latestSource).not.toHaveBeenCalled()
+    expect(files.read).not.toHaveBeenCalled()
     confirm.mockRestore()
   })
 
   it('버리기로 하면 이동한다', async () => {
-    projects.list.mockResolvedValue([PROJECT, SECOND])
+    await openTwo()
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
-    renderWorkspace()
-    await screen.findByRole('button', { name: 'nmos' })
     await userEvent.type(screen.getByLabelText('소스'), 'x')
-    projects.latestSource.mockClear()
+    files.read.mockClear()
 
-    await userEvent.click(screen.getByRole('button', { name: 'nmos' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'boron.in' }))
 
-    await waitFor(() => expect(projects.latestSource).toHaveBeenCalledWith(8))
+    await waitFor(() => expect(files.read).toHaveBeenCalledWith('boron.in'))
     confirm.mockRestore()
   })
 
   it('같은 탭을 다시 눌러도 묻지 않는다', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
-    renderWorkspace()
-    await screen.findByRole('button', { name: 'cmos' })
+    await openFile()
     await userEvent.type(screen.getByLabelText('소스'), 'x')
 
-    await userEvent.click(screen.getByRole('button', { name: 'cmos' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'boron.in' }))
 
     expect(confirm).not.toHaveBeenCalled()
     confirm.mockRestore()
-  })
-})
-
-describe('소스 로드와 입력 경합', () => {
-  it('읽어오는 동안 친 내용을 덮어쓰지 않는다', async () => {
-    // 새 프로젝트를 만들고 바로 치기 시작하면, 뒤늦게 도착한 응답이 방금 친
-    // 것을 지운다. E2E 가 이 문제로 실패했다.
-    let resolve: (value: { id: number; revision: number; source: string }) => void =
-      () => {}
-    projects.latestSource.mockReturnValue(
-      new Promise((r) => {
-        resolve = r
-      }),
-    )
-    renderWorkspace()
-    await screen.findByRole('button', { name: 'cmos' })
-
-    await userEvent.type(screen.getByLabelText('소스'), '내가 친 것')
-    resolve({ id: 1, revision: 1, source: '서버가 준 것' })
-
-    await waitFor(() =>
-      expect(screen.getByLabelText('소스')).toHaveDisplayValue(/내가 친 것/),
-    )
   })
 })

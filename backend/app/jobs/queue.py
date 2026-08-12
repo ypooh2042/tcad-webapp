@@ -28,12 +28,25 @@ class JobQueue:
         self.max_concurrent = max_concurrent
 
     async def enqueue(
-        self, owner_id: int, source_revision_id: int, workdir: str
+        self,
+        owner_id: int,
+        source_revision_id: int | None,
+        workdir: str,
+        *,
+        source_path: str | None = None,
+        source: str | None = None,
     ) -> Job:
+        """잡을 큐에 넣는다.
+
+        `source` 는 **제출 시점의 스냅샷**이다. 경로만 두고 나중에 파일을 다시
+        읽으면, 그 사이 사용자가 고쳤을 때 결과와 입력이 어긋난다.
+        """
         async with self.sessionmaker() as session:
             job = Job(
                 owner_id=owner_id,
                 source_revision_id=source_revision_id,
+                source_path=source_path,
+                source=source,
                 workdir=workdir,
                 status=JobStatus.QUEUED,
             )

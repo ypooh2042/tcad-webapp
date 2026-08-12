@@ -1,14 +1,19 @@
 /**
- * 작업 화면: 프로젝트 목록 + 편집기 + 실행 결과.
+ * 작업 화면: 열어 둔 파일 탭 + 편집기 + 실행 결과.
  *
- * 저장과 실행을 분리한다. 실행은 "저장된 최신 리비전"을 돌리므로, 편집 중인
+ * 위쪽 탭은 **"내가 연 파일"** 이지 작업공간 전체가 아니다. 파일을 만들고
+ * 지우고 이름 바꾸는 일은 파일 브라우저에서 하고, 여기서는 열어 둔 것만
+ * 오간다. 탭을 닫아도 파일은 남는다.
+ *
+ * 저장과 실행을 분리한다. 실행은 서버에 저장된 파일을 돌리므로, 편집 중인
  * 내용과 방금 돌린 내용이 다를 수 있다. 그 차이를 감추면 사용자는 고친 줄이
- * 반영됐다고 믿는다.
+ * 반영됐다고 믿는다 — 그래서 실행 전에 저장한다.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../../api/client'
-import { projects as projectApi } from '../../api/endpoints'
-import type { Project } from '../../api/types'
+import { files as fileApi } from '../../api/endpoints'
+import { FileBrowser } from '../files/FileBrowser'
+import { tabLabels } from '../files/tabLabels'
 import { useAuth } from '../auth/AuthContext'
 import { AdminPanel } from '../admin/AdminPanel'
 import { DocsPanel } from '../docs/DocsPanel'
@@ -39,8 +44,11 @@ structure outfile = result.str
 
 export function WorkspacePage() {
   const { user, logout, clear } = useAuth()
-  const [projects, setProjects] = useState<Project[]>([])
-  const [active, setActive] = useState<Project | null>(null)
+  //: 열어 둔 파일 경로. 순서는 사용자가 연 순서다 — 정렬하면 탭이 제멋대로
+  //  움직인다.
+  const [openPaths, setOpenPaths] = useState<string[]>([])
+  const [active, setActive] = useState<string | null>(null)
+  const [showFiles, setShowFiles] = useState(false)
   const [source, setSource] = useState(STARTER_SOURCE)
   const [jobId, setJobId] = useState<number | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -55,6 +63,8 @@ export function WorkspacePage() {
   const [resultWidth, setResultWidth] = usePanelWidth('tcad.width.result', 400)
   const [docsWidth, setDocsWidth] = usePanelWidth('tcad.width.docs', 360)
 
+  const labels = tabLabels(openPaths)
+
   const report = useCallback(
     (error: unknown) => {
       if (error instanceof ApiError) {
@@ -67,32 +77,45 @@ export function WorkspacePage() {
     [clear],
   )
 
-  useEffect(() => {
-    projectApi
-      .list()
-      .then((list) => {
-        setProjects(list)
-        setActive((current) => current ?? list[0] ?? null)
-      })
-      .catch(report)
-  }, [report])
-
-  /** 프로젝트를 연다. 저장하지 않은 편집이 있으면 먼저 묻는다. */
-  const openProject = useCallback(
-    (project: Project) => {
-      if (project.id === active?.id) return
+  /** 탭을 전환한다. 저장하지 않은 편집이 있으면 먼저 묻는다. */
+  const switchTo = useCallback(
+    (path: string) => {
+      if (path === active) return
       // 편집 중이던 내용은 서버에 없다. 말없이 덮어쓰면 사용자는 방금 쓴 것을
       // 잃고 이유도 모른다.
       if (dirty && !window.confirm('저장하지 않은 변경이 있습니다. 버리고 이동할까요?')) {
         return
       }
-      setActive(project)
+      setActive(path)
     },
     [active, dirty],
   )
 
-  // 연 프로젝트의 저장된 소스를 편집기에 채운다. 이게 없으면 탭을 눌러도
-  // 이전 프로젝트의 내용이 그대로 남아 엉뚱한 소스를 고치게 된다.
+  /** 브라우저에서 고른 파일을 탭에 붙이고 연다. */
+  function openFile(path: string) {
+    setOpenPaths((current) =>
+      // 같은 파일을 두 번 열어도 탭은 하나다.
+      current.includes(path) ? current : [...current, path],
+    )
+    setActive(path)
+    setShowFiles(false)
+  }
+
+  /** 탭에서만 뺀다. **파일은 지우지 않는다.** */
+  function closeTab(path: string) {
+    setOpenPaths((current) => {
+      const remaining = current.filter((item) => item !== path)
+      setActive((currentActive) =>
+        currentActive === path ? (remaining[0] ?? null) : currentActive,
+      )
+      // 닫은 파일의 결과가 남으면 다음 파일의 것으로 오해한다.
+      if (path === active) setJobId(null)
+      return remaining
+    })
+  }
+
+  // 연 파일의 내용을 편집기에 채운다. 이게 없으면 탭을 눌러도 이전 파일의
+  // 내용이 그대로 남아 엉뚱한 소스를 고치게 된다.
   useEffect(() => {
     if (!active) return
     let cancelled = false
@@ -101,23 +124,16 @@ export function WorkspacePage() {
     // 요청이 도는 동안 사용자가 쳤으면 그 입력을 살린다.
     const stale = () => cancelled || edits.current !== startedAt
 
-    projectApi
-      .latestSource(active.id)
-      .then((revision) => {
+    fileApi
+      .read(active)
+      .then((file) => {
         if (stale()) return
-        setSource(revision.source)
+        setSource(file.content)
         setDirty(false)
         setMessage(null)
       })
       .catch((error) => {
         if (stale()) return
-        if (error instanceof ApiError && error.status === 404) {
-          // 아직 한 번도 저장하지 않은 프로젝트다. 예제로 시작하게 둔다.
-          setSource(STARTER_SOURCE)
-          setDirty(true)
-          setMessage(null)
-          return
-        }
         report(error)
       })
 
@@ -126,28 +142,15 @@ export function WorkspacePage() {
     }
   }, [active, report])
 
-  async function createProject() {
-    const name = window.prompt('프로젝트 이름')
-    if (!name) return
-    try {
-      const project = await projectApi.create(name)
-      setProjects((list) => [project, ...list])
-      setActive(project)
-      setDirty(true)
-    } catch (error) {
-      report(error)
-    }
-  }
-
   const save = useCallback(async () => {
     if (!active) {
-      setMessage('먼저 프로젝트를 만들어 주세요')
+      setMessage('먼저 파일을 열어 주세요')
       return
     }
     try {
-      const revision = await projectApi.saveSource(active.id, source)
+      await fileApi.write(active, source)
       setDirty(false)
-      setMessage(`리비전 ${revision.revision} 저장됨`)
+      setMessage('저장됨')
     } catch (error) {
       report(error)
     }
@@ -155,11 +158,11 @@ export function WorkspacePage() {
 
   async function run() {
     if (!active) return
-    // 편집 중인 내용은 아직 서버에 없다. 저장하지 않고 돌리면 이전 리비전이
+    // 편집 중인 내용은 아직 서버에 없다. 저장하지 않고 돌리면 예전 내용이
     // 돌아가서, 방금 고친 줄이 반영되지 않은 결과를 보게 된다.
     if (dirty) await save()
     try {
-      const job = await projectApi.submit(active.id)
+      const job = await fileApi.run(active)
       setJobId(job.id)
       setMessage(null)
     } catch (error) {
@@ -171,20 +174,36 @@ export function WorkspacePage() {
     <div className="workspace">
       <header>
         <strong>TCAD</strong>
-        <nav>
-          {projects.map((project) => (
-            <button
-              key={project.id}
-              className={project.id === active?.id ? 'tab active' : 'tab'}
-              onClick={() => openProject(project)}
+        <nav role="tablist">
+          {/* 탭 이름은 보통 파일 이름만. 다른 폴더에 같은 이름이 있을 때만
+              구분될 만큼 경로를 붙인다. */}
+          {openPaths.map((path, index) => (
+            <span
+              key={path}
+              className={path === active ? 'tab active' : 'tab'}
             >
-              {project.name}
-            </button>
+              <button
+                role="tab"
+                aria-selected={path === active}
+                className="link"
+                onClick={() => switchTo(path)}
+              >
+                {labels[index]}
+              </button>
+              {/* 탭에서만 뺀다. 파일은 그대로 남는다. */}
+              <button
+                className="link close"
+                aria-label={`${labels[index]} 탭 닫기`}
+                onClick={() => closeTab(path)}
+              >
+                ×
+              </button>
+            </span>
           ))}
-          <button className="tab" onClick={createProject}>
-            + 새 프로젝트
-          </button>
         </nav>
+        <button className="link" onClick={() => setShowFiles(true)}>
+          파일 열기
+        </button>
         <div className="spacer" />
         <span className="muted">{user?.email}</span>
         {/* 관리자에게만 보인다. 일반 사용자가 눌러 봐야 서버가 403 을 준다. */}
@@ -212,6 +231,10 @@ export function WorkspacePage() {
       </div>
 
       {showAdmin && <AdminPanel onClose={() => setShowAdmin(false)} />}
+
+      {showFiles && (
+        <FileBrowser onOpen={openFile} onClose={() => setShowFiles(false)} />
+      )}
 
       {/* 폭은 인라인 스타일로 준다. 드래그 중에는 값이 계속 바뀌므로 CSS
           클래스로는 표현할 수 없다. */}

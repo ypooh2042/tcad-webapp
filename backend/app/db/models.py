@@ -140,7 +140,15 @@ class SourceRevision(Base):
     )
 
     project: Mapped[Project] = relationship(back_populates="revisions")
-    jobs: Mapped[list[Job]] = relationship(back_populates="source_revision")
+    # cascade 를 적지 않으면 ORM 이 스키마와 반대로 움직인다. 컬럼에는
+    # ON DELETE CASCADE 가 걸려 있는데, 관계에 아무 것도 없으면 SQLAlchemy 는
+    # 리비전을 지울 때 잡의 FK 를 NULL 로 만들려 하고 NOT NULL 에 걸려 터진다
+    # (프로젝트 삭제를 붙이면서 실제로 그렇게 터졌다).
+    jobs: Mapped[list[Job]] = relationship(
+        back_populates="source_revision",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -158,9 +166,17 @@ class Job(Base):
     owner_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    source_revision_id: Mapped[int] = mapped_column(
-        ForeignKey("source_revisions.id", ondelete="CASCADE"), index=True
+    #: 예전 프로젝트 모델의 잔재. 파일 기반 실행에서는 비어 있다.
+    source_revision_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_revisions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=True,
     )
+    #: 작업공간 기준 경로. 어느 파일을 돌렸는지 알아보는 단서다.
+    source_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    #: 제출 시점의 소스 스냅샷. **파일이 그 뒤 바뀌어도 결과는 재현 가능해야
+    #: 한다** — 경로만 들고 있으면 나중에 읽은 내용이 그때 돌린 것과 다르다.
+    source: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus, name="job_status", native_enum=False),
         default=JobStatus.QUEUED,

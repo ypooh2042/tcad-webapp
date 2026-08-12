@@ -11,6 +11,9 @@ export default async function globalTeardown() {
     // 연결이 남아 있어도 지워야 한다. 안 그러면 임시 DB 가 계속 쌓인다.
     sql(`drop database if exists "${state.databaseName}" with (force)`)
   }
+  if (state.workspacesRoot) {
+    rmSync(state.workspacesRoot, { recursive: true, force: true })
+  }
   if (state.jobsRoot) {
     rmSync(state.jobsRoot, { recursive: true, force: true })
   }

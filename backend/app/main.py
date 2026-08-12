@@ -17,6 +17,7 @@ from app.api import (
     routes_auth,
     routes_catalog,
     routes_docs,
+    routes_files,
     routes_jobs,
     routes_plot,
     routes_projects,
@@ -54,6 +55,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes_auth.router, prefix="/api")
     app.include_router(routes_admin.router, prefix="/api")
     app.include_router(routes_projects.router, prefix="/api")
+    app.include_router(routes_files.router, prefix="/api")
     app.include_router(routes_jobs.router, prefix="/api")
     app.include_router(routes_catalog.router, prefix="/api")
     app.include_router(routes_docs.router, prefix="/api")

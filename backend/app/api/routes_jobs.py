@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from pathlib import Path
 from uuid import uuid4
 
@@ -35,12 +37,19 @@ router = APIRouter(tags=["jobs"])
 class JobResponse(BaseModel):
     id: int
     status: str
-    source_revision_id: int
+    #: 예전 프로젝트 모델의 잔재. 파일로 돌린 잡은 비어 있다 — 필수로 두면
+    #: 조회가 직렬화 단계에서 터지고 화면은 폴링 실패만 반복한다.
+    source_revision_id: int | None = None
+    #: 어느 파일을 돌렸는지. 리비전 기반 잡은 비어 있다.
+    source_path: str | None = None
 
 
 class JobDetailResponse(JobResponse):
     log: str | None
     exit_code: int | None
+    #: 제출 시각. 화면은 잡 번호 대신 이걸로 실행을 가리킨다 — 번호는 전체
+    #: 사용자가 공유하는 기본키라 혼자 두 번 돌려도 건너뛴다.
+    created_at: datetime
     artifacts: list["ArtifactResponse"]
 
 
@@ -48,6 +57,16 @@ class ArtifactResponse(BaseModel):
     sequence: int
     filename: str
     size_bytes: int
+
+
+def _aware(moment: datetime) -> datetime:
+    """시간대를 반드시 붙여서 내보낸다.
+
+    Postgres 는 timestamptz 라 시간대를 갖고 오지만 SQLite 는 그렇지 않다.
+    시간대 없는 값을 그대로 보내면 브라우저가 **현지 시각으로 읽어** 몇 시간
+    어긋난 시각을 보여준다.
+    """
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
 
 
 @router.post(
@@ -116,6 +135,8 @@ async def detail(
         id=job.id,
         status=job.status.value,
         source_revision_id=job.source_revision_id,
+        source_path=job.source_path,
+        created_at=_aware(job.created_at),
         log=job.log,
         exit_code=job.exit_code,
         artifacts=[
@@ -158,6 +179,8 @@ async def index(
 
     from app.db.models import SourceRevision
 
+    # INNER JOIN 이라 리비전이 없는 잡(파일 기반)은 애초에 걸리지 않는다.
+    # 프로젝트별 목록은 예전 모델 전용이므로 그대로 둔다.
     jobs = (
         await db.execute(
             select(Job)
@@ -169,7 +192,10 @@ async def index(
 
     return [
         JobResponse(
-            id=j.id, status=j.status.value, source_revision_id=j.source_revision_id
+            id=j.id,
+            status=j.status.value,
+            source_revision_id=j.source_revision_id,
+            source_path=j.source_path,
         )
         for j in jobs
     ]

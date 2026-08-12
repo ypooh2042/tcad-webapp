@@ -40,6 +40,20 @@ class Settings(BaseSettings):
     sandbox_image: str = "tcad/suprem:latest"
     job_timeout_seconds: int = Field(default=600, gt=0)
 
+    #: 사용자 작업공간(소스 파일) 루트.
+    workspaces_root: Path = Path("var/workspaces")
+
+    #: 사용자당 **소스 파일** 저장 상한. `.in` 은 보통 몇 KB 라 50MB 면 사실상
+    #: 안전장치다 — 실제로 용량을 먹는 것은 산출물이고 그쪽은 따로 관리한다.
+    workspace_quota_mb: int = Field(default=50, gt=0)
+
+    #: 관리자 상한. 예제와 참고 자료를 쌓아 둘 여지를 준다.
+    admin_workspace_quota_mb: int = Field(default=1024, gt=0)
+
+    #: 산출물 청소 주기(초). 세션이 끝난 사용자의 `.str` 을 얼마나 자주 훑을지.
+    #: 너무 짧으면 DB 를 계속 두드리고, 길면 디스크가 그만큼 오래 차 있는다.
+    artifact_sweep_seconds: int = Field(default=300, gt=0)
+
     #: 사용자당 저장 가능한 산출물 총량. CMOS 예제 한 번이 약 5MB 다.
     storage_quota_mb: int = Field(default=500, gt=0)
 
