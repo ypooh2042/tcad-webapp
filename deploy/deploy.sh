@@ -61,6 +61,12 @@ rsync -a --delete \
 log "시뮬레이터 동기화"
 rsync -a --delete "$REPO_ROOT/SUPREM4GS/" "$TARGET/SUPREM4GS/"
 
+log "컨테이너 정의 동기화"
+# 아래 "샌드박스 이미지 재빌드" 가 $TARGET/docker 의 Containerfile 을 쓴다.
+# 이걸 빼먹으면 Containerfile 을 고쳐도 배포에 반영되지 않고, 옛 정의로 조용히
+# 다시 빌드된다 — 실패하지 않고 낡은 이미지가 나오므로 알아채기 어렵다.
+rsync -a --delete "$REPO_ROOT/docker/" "$TARGET/docker/"
+
 log "의존성 설치"
 "$TARGET/backend/.venv/bin/pip" install --quiet --upgrade \
     -e "$TARGET/backend"
