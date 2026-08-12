@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+import shutil
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,13 +13,18 @@ from app.api.deps import current_session, get_db
 from app.auth.models import Session
 from app.projects.service import (
     DuplicateProjectName,
+    ProjectBusy,
     ProjectNotFound,
     add_revision,
     create_project,
+    delete_project,
     get_owned_project,
     latest_revision,
     list_projects,
+    rename_project,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -70,6 +78,62 @@ async def index(
 ) -> list[ProjectResponse]:
     projects = await list_projects(db, int(session.user_id))
     return [ProjectResponse(id=p.id, name=p.name) for p in projects]
+
+
+@router.patch("/{project_id}")
+async def rename(
+    project_id: int,
+    payload: ProjectCreate,
+    session: Session = Depends(current_session),
+    db: AsyncSession = Depends(get_db),
+) -> ProjectResponse:
+    """프로젝트 이름을 바꾼다. 소스와 잡은 그대로 둔다."""
+    try:
+        project = await rename_project(
+            db, project_id, int(session.user_id), payload.name
+        )
+    except ProjectNotFound:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="프로젝트를 찾을 수 없습니다",
+        ) from None
+    except DuplicateProjectName:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="같은 이름의 프로젝트가 이미 있습니다",
+        ) from None
+    return ProjectResponse(id=project.id, name=project.name)
+
+
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def destroy(
+    project_id: int,
+    session: Session = Depends(current_session),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """프로젝트를 지운다. 소스·잡·산출물이 함께 사라지며 되돌릴 수 없다."""
+    try:
+        workdirs = await delete_project(db, project_id, int(session.user_id))
+    except ProjectNotFound:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="프로젝트를 찾을 수 없습니다",
+        ) from None
+    except ProjectBusy:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="실행 중인 시뮬레이션이 있습니다. 끝난 뒤에 지워 주세요",
+        ) from None
+
+    # DB 는 행만 지운다. 디스크의 산출물은 여기서 치우지 않으면 영영 남는다.
+    # 실패해도 삭제 자체는 이미 끝났으므로 요청을 실패시키지 않는다 — 남은
+    # 디렉토리는 사용자가 할 수 있는 일이 없고, 지워진 프로젝트가 목록에
+    # 되살아나는 편이 더 혼란스럽다.
+    for workdir in workdirs:
+        try:
+            shutil.rmtree(workdir, ignore_errors=True)
+        except OSError:
+            logger.warning("작업 디렉토리를 지우지 못했습니다: %s", workdir)
 
 
 @router.post("/{project_id}/revisions", status_code=status.HTTP_201_CREATED)
