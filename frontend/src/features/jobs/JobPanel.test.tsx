@@ -15,6 +15,8 @@ function detail(overrides: Partial<JobDetail> = {}): JobDetail {
     id: 42,
     status: 'succeeded',
     source_revision_id: 1,
+    source_path: 'a.in',
+    created_at: '2026-08-12T12:00:00+00:00',
     log: null,
     exit_code: 0,
     artifacts: [],
@@ -170,5 +172,54 @@ describe('로그 공간', () => {
     await screen.findByText('실패 로그')
 
     expect(screen.queryByRole('button', { name: '로그만 보기' })).not.toBeInTheDocument()
+  })
+})
+
+describe('어느 실행인지 알려주기', () => {
+  it('파일 이름과 시각을 보여준다', async () => {
+    // 잡 번호는 전체 사용자가 공유하는 기본키라 혼자 두 번 돌려도 건너뛴다.
+    // 무엇을 언제 돌렸는지가 훨씬 읽기 쉽다.
+    get.mockResolvedValue(
+      detail({
+        source_path: 'semi/boron.in',
+        created_at: '2026-08-12T12:03:00+00:00',
+      }),
+    )
+
+    render(<JobPanel jobId={24} />)
+
+    expect(await screen.findByText(/semi\/boron.in/)).toBeInTheDocument()
+  })
+
+  it('시각은 현지 시각으로 보여준다', async () => {
+    // 서버는 UTC 로 보낸다. 그대로 찍으면 몇 시간 어긋난 값이 보인다.
+    const iso = '2026-08-12T12:03:00+00:00'
+    const expected = new Date(iso).toLocaleTimeString('ko-KR', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+    get.mockResolvedValue(detail({ source_path: 'a.in', created_at: iso }))
+
+    render(<JobPanel jobId={24} />)
+
+    expect(await screen.findByText(new RegExp(expected))).toBeInTheDocument()
+  })
+
+  it('경로가 없으면 잡 번호로 돌아간다', async () => {
+    // 예전 프로젝트 모델로 만든 잡에는 경로가 없다.
+    get.mockResolvedValue(detail({ source_path: null }))
+
+    render(<JobPanel jobId={24} />)
+
+    expect(await screen.findByText(/#24/)).toBeInTheDocument()
+  })
+
+  it('아직 못 받았으면 잡 번호를 보여준다', () => {
+    // 응답 전에는 아무것도 안 보이면 무엇을 기다리는지 알 수 없다.
+    get.mockReturnValue(new Promise(() => {}))
+
+    render(<JobPanel jobId={24} />)
+
+    expect(screen.getByText(/#24/)).toBeInTheDocument()
   })
 })
