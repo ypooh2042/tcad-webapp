@@ -20,8 +20,13 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from redis.asyncio import Redis
+
+from app.auth.policy import SessionPolicy
+from app.auth.redis_store import RedisSessionStore
 from app.core.config import Settings, get_settings
 from app.jobs.queue import JobQueue
+from app.jobs.sweeper import run_sweeper, sweep_idle_artifacts
 from app.jobs.worker import Worker
 from app.runner.sandbox import SandboxLimits
 
@@ -70,6 +75,10 @@ async def run_worker(settings: Settings, stop: asyncio.Event) -> None:
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     worker = build_worker(settings, sessionmaker)
+    # 워커는 API 와 같은 Redis 를 본다. 활성 세션을 알아야 접속 중인 사용자의
+    # 결과를 지우지 않는다.
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    store = RedisSessionStore(redis)
 
     try:
         # 앞선 워커가 죽으면서 남긴 잡은 RUNNING 인 채로 정원을 차지한다. 치우지
@@ -83,8 +92,19 @@ async def run_worker(settings: Settings, stop: asyncio.Event) -> None:
             settings.max_concurrent_jobs,
             settings.sandbox_image,
         )
-        await run_loops(worker, stop, settings.max_concurrent_jobs)
+        # 산출물 청소를 워커에 얹는다. **로그아웃만으로는 부족하다** — 브라우저를
+        # 그냥 닫으면 `.str` 이 그대로 남아 디스크를 먹는다.
+        async def sweep() -> int:
+            return await sweep_idle_artifacts(
+                sessionmaker, store, SessionPolicy().idle_timeout
+            )
+
+        await asyncio.gather(
+            run_loops(worker, stop, settings.max_concurrent_jobs),
+            run_sweeper(sweep, stop, settings.artifact_sweep_seconds),
+        )
     finally:
+        await redis.aclose()
         await engine.dispose()
         logger.info("워커 종료")
 

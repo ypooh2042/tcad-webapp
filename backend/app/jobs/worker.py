@@ -102,10 +102,18 @@ class Worker:
         )
 
     async def _load_source(self, job_id: int) -> str:
+        """돌릴 소스. **제출 시점의 스냅샷을 쓴다.**
+
+        경로만 들고 파일을 다시 읽으면, 제출 뒤 사용자가 파일을 고쳤을 때
+        결과와 입력이 어긋난다. 예전 프로젝트 모델로 만들어진 잡은 리비전에서
+        읽는다.
+        """
         async with self.sessionmaker() as session:
             from app.db.models import Job
 
             job = await session.get(Job, job_id)
+            if job.source is not None:
+                return job.source
             revision = await session.get(SourceRevision, job.source_revision_id)
             return revision.source
 

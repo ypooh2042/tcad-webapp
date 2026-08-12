@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -14,6 +16,7 @@ from app.api.throttle import (
     throttle_login_attempt,
     throttle_register,
 )
+from app.jobs.cache import discard_artifacts
 from app.api.deps import (
     current_session,
     get_app_settings,
@@ -35,6 +38,8 @@ from app.auth.policy import SessionLimitExceeded, SessionPolicy
 from app.auth.service import EmailAlreadyRegistered, authenticate, register_user
 from app.auth.store import SessionStore
 from app.core.config import Settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -142,8 +147,18 @@ async def logout(
     store: SessionStore = Depends(get_session_store),
     policy: SessionPolicy = Depends(get_session_policy),
     settings: Settings = Depends(get_app_settings),
+    db: AsyncSession = Depends(get_db),
 ) -> None:
     await policy.close_session(store, session.id)
+
+    # 산출물은 캐시다. 소스는 작업공간에 남아 있으므로 다시 실행하면 되살아난다.
+    # 실패해도 로그아웃 자체는 끝내야 한다 — 세션은 이미 닫혔고, 여기서 500 을
+    # 내면 사용자는 로그아웃이 안 된 줄 안다.
+    try:
+        await discard_artifacts(db, int(session.user_id))
+    except Exception:  # noqa: BLE001 - 정리는 로그아웃을 막지 못한다
+        logger.warning("산출물 정리 실패: user=%s", session.user_id, exc_info=True)
+
     response.delete_cookie(settings.session_cookie_name)
 
 
