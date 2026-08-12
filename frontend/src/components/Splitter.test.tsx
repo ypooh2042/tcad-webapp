@@ -31,6 +31,78 @@ describe('폭 제한', () => {
   })
 })
 
+/**
+ * 손잡이를 그리드 안에 놓고, 남는 폭을 가져가는 칸(편집기)의 크기를 정해 준다.
+ * jsdom 은 배치를 하지 않으므로 폭은 직접 알려 줘야 한다.
+ */
+function renderInGrid(
+  width: number,
+  onChange: (next: number) => void,
+  editorWidth = 900,
+) {
+  render(
+    <div>
+      <div data-testid="editor" />
+      <Splitter width={width} onChange={onChange} label="크기" />
+    </div>,
+  )
+  vi.spyOn(
+    screen.getByTestId('editor'),
+    'getBoundingClientRect',
+  ).mockReturnValue({ width: editorWidth } as DOMRect)
+  return screen.getByRole('separator')
+}
+
+/** jsdom 에는 PointerEvent 가 없다. clientX 를 실어 보내려면 MouseEvent 를 쓴다. */
+function drag(handle: HTMLElement, from: number, to: number) {
+  fireEvent.pointerDown(handle, { clientX: from })
+  window.dispatchEvent(new MouseEvent('pointermove', { clientX: to }))
+}
+
+describe('드래그', () => {
+  it('끈 거리만큼만 움직인다', () => {
+    // 창 끝을 기준으로 재면 오른쪽에 다른 패널이 있을 때 그 폭만큼 부풀려진다.
+    // 실제로 매뉴얼 손잡이가 그래서 편집기를 0 으로 접고 왼쪽 끝에 붙었다.
+    const onChange = vi.fn()
+    const handle = renderInGrid(400, onChange)
+
+    drag(handle, 1000, 940)
+
+    expect(onChange).toHaveBeenLastCalledWith(460)
+  })
+
+  it('오른쪽으로 끌면 좁아진다', () => {
+    const onChange = vi.fn()
+    const handle = renderInGrid(400, onChange)
+
+    drag(handle, 1000, 1060)
+
+    expect(onChange).toHaveBeenLastCalledWith(340)
+  })
+
+  it('옆 칸이 내줄 수 있는 만큼까지만 넓어진다', () => {
+    // 편집기가 내줄 수 있는 폭을 넘기면 그리드가 넘쳐 편집기가 접힌다.
+    const onChange = vi.fn()
+    const handle = renderInGrid(400, onChange, 500)
+
+    drag(handle, 1000, 200)
+
+    // 400 + 500 = 900 을 편집기와 나눠 쓴다. 편집기 몫 320 을 남긴다.
+    expect(onChange).toHaveBeenLastCalledWith(580)
+  })
+
+  it('놓은 뒤에는 따라오지 않는다', () => {
+    const onChange = vi.fn()
+    const handle = renderInGrid(400, onChange)
+
+    drag(handle, 1000, 940)
+    fireEvent.pointerUp(handle)
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 500 }))
+
+    expect(onChange).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('접근성', () => {
   it('separator 로 알린다', () => {
     render(<Splitter width={360} onChange={vi.fn()} label="결과 패널 크기" />)

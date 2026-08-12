@@ -19,8 +19,9 @@ import { AdminPanel } from '../admin/AdminPanel'
 import { DocsPanel } from '../docs/DocsPanel'
 import { SupremEditor } from '../editor/SupremEditor'
 import { JobPanel } from '../jobs/JobPanel'
-import { Splitter } from '../../components/Splitter'
+import { SPLITTER_WIDTH, Splitter } from '../../components/Splitter'
 import { usePanelWidth } from './usePanelWidth'
+import { fitPanels, useViewportWidth } from './panelLayout'
 
 //: 새 프로젝트를 열면 이 소스가 들어 있다. **반드시 그대로 실행되어야 한다** —
 //: 처음 들어온 사람이 가장 먼저 누르는 것이 실행 버튼이다.
@@ -62,6 +63,14 @@ export function WorkspacePage() {
   const [cursorCommand, setCursorCommand] = useState<string | null>(null)
   const [resultWidth, setResultWidth] = usePanelWidth('tcad.width.result', 400)
   const [docsWidth, setDocsWidth] = usePanelWidth('tcad.width.docs', 360)
+  const viewport = useViewportWidth()
+
+  // 저장된 폭이 지금 창에 맞는다는 보장이 없다. 창을 줄였거나, 매뉴얼을 함께
+  // 열었거나, 예전 버전이 과한 값을 저장해 뒀을 수 있다. 그리는 폭은 늘 다시
+  // 맞춘다 — 저장된 값 자체는 건드리지 않아 창을 넓히면 되돌아온다.
+  const [docsFit, resultFit] = showDocs
+    ? fitPanels([docsWidth, resultWidth], viewport, SPLITTER_WIDTH * 2)
+    : [docsWidth, fitPanels([resultWidth], viewport, SPLITTER_WIDTH)[0]]
 
   const labels = tabLabels(openPaths)
 
@@ -242,8 +251,8 @@ export function WorkspacePage() {
         className={showDocs ? 'with-docs' : ''}
         style={{
           gridTemplateColumns: showDocs
-            ? `minmax(0, 1fr) auto ${docsWidth}px auto ${resultWidth}px`
-            : `minmax(0, 1fr) auto ${resultWidth}px`,
+            ? `minmax(0, 1fr) auto ${docsFit}px auto ${resultFit}px`
+            : `minmax(0, 1fr) auto ${resultFit}px`,
         }}
       >
         <section className="editor">
@@ -261,7 +270,7 @@ export function WorkspacePage() {
         {showDocs && (
           <>
             <Splitter
-              width={docsWidth}
+              width={docsFit}
               onChange={setDocsWidth}
               label="매뉴얼 패널 크기"
             />
@@ -269,7 +278,7 @@ export function WorkspacePage() {
           </>
         )}
         <Splitter
-          width={resultWidth}
+          width={resultFit}
           onChange={setResultWidth}
           label="결과 패널 크기"
         />
