@@ -5,10 +5,16 @@
  * 있으므로, 순번을 훑으면 공정이 진행되는 모습을 그대로 볼 수 있다. 이름순으로
  * 정렬하면 그 순서가 깨진다 — 그래서 서버가 준 sequence 를 그대로 쓴다.
  *
- * 물리량은 **체크박스로 여러 개** 고른다. 콤보박스로 하나만 고르게 하면 겹쳐
- * 보기가 부가 기능처럼 되는데, 실제로는 비교가 기본 사용법이다 — chem 과
- * active 를 나란히 봐야 얼마나 활성화됐는지 알고, net_doping 을 겹쳐야 접합이
- * 어디인지 보인다.
+ * **물리량 고르기가 두 군데로 나뉜다.** 보는 대상이 다르기 때문이다:
+ *
+ *     구조 단면(2D)  = 콤보박스 하나. 값을 색으로 칠하는 그림이라 한 번에
+ *                      하나만 의미가 있다. "재질" 을 고르면 값 대신 층을
+ *                      칠한다 — 이때는 물리량을 보내지 않아야 서버가 요소를
+ *                      버리지 않고 층이 다 나온다.
+ *     수직선 프로파일 = 체크박스 여럿. chem 과 active 를 나란히 봐야 얼마나
+ *                      활성화됐는지 알고, net_doping 을 겹쳐야 접합이 보인다.
+ *
+ * 둘을 한 상태로 묶으면 단면 색을 바꾸려다 그래프가 통째로 바뀐다.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../api/client'
@@ -32,8 +38,8 @@ const SERIES_COLORS = [
   '#22d3ee',
 ]
 
-/** 단계 비교선. 물리량 색과 겹치지 않게 따로 둔다. */
-const COMPARE_COLOR = '#ff9f43'
+/** 값 대신 재질로 칠하는 보기. 물리량 이름과 겹치지 않는다. */
+const MATERIAL_VIEW = '재질'
 
 interface Props {
   jobId: number
@@ -44,11 +50,12 @@ export function ResultView({ jobId, artifacts }: Props) {
   const [step, setStep] = useState(0)
   const [summary, setSummary] = useState<StructureSummary | null>(null)
   const [selected, setSelected] = useState<string[]>([])
+  //: 구조 단면에 무엇을 칠할지. 수직선 프로파일과 따로 둔다 — 묶으면 단면 색을
+  //  바꾸려다 그래프가 통째로 바뀐다. MATERIAL_VIEW 면 재질로 칠한다.
+  const [surfaceView, setSurfaceView] = useState<string>(MATERIAL_VIEW)
   const [series, setSeries] = useState<Series[]>([])
   const [surface, setSurface] = useState<SurfaceResponse | null>(null)
   const [cutX, setCutX] = useState<number | null>(null)
-  const [compareTo, setCompareTo] = useState<number | null>(null)
-  const [stepSeries, setStepSeries] = useState<Series[]>([])
   const [error, setError] = useState<string | null>(null)
 
   const current = artifacts[Math.min(step, artifacts.length - 1)]
@@ -75,6 +82,14 @@ export function ResultView({ jobId, artifacts }: Props) {
           // 골라 준다 — 빈 차트로 시작하면 무엇을 해야 할지 알기 어렵다.
           const kept = previous.filter((name) => next.quantities.includes(name))
           return kept.length ? kept : next.quantities.slice(0, 1)
+        })
+        setSurfaceView((previous) => {
+          // **기본은 재질이다.** 구조가 어떻게 생겼는지부터 보는 것이 자연스럽고,
+          // 값 분포는 그다음이다. 물리량이 없는 구조에서도 언제나 볼 수 있다.
+          if (previous === MATERIAL_VIEW) return previous
+          // 이 단계에 없는 물리량을 보고 있었으면 재질로 돌아간다.
+          if (previous && next.quantities.includes(previous)) return previous
+          return MATERIAL_VIEW
         })
         // 2D 는 가로 한가운데를 기본 컷으로 잡는다.
         setCutX((previous) =>
@@ -132,8 +147,7 @@ export function ResultView({ jobId, artifacts }: Props) {
   // 단면은 컷 위치와 무관하다. cutX 를 의존성에 넣으면 컷을 옮길 때마다
   // 수천 개 삼각형을 다시 받는다.
   useEffect(() => {
-    const quantity = selected[0]
-    if (sequence === null || !summary || !quantity) return
+    if (sequence === null || !summary) return
     if (summary.dimension !== 2) {
       setSurface(null)
       return
@@ -141,52 +155,18 @@ export function ResultView({ jobId, artifacts }: Props) {
     let cancelled = false
 
     plot
-      .surface(jobId, sequence, quantity)
+      .surface(
+        jobId,
+        sequence,
+        surfaceView === MATERIAL_VIEW ? null : surfaceView,
+      )
       .then((next) => !cancelled && setSurface(next))
       .catch(report)
 
     return () => {
       cancelled = true
     }
-  }, [jobId, sequence, summary, selected, report])
-
-  // 비교 단계는 첫 번째 물리량만 겹친다. 물리량마다 두 단계를 그리면 선이
-  // 배가 되어 무엇이 무엇인지 알 수 없다.
-  useEffect(() => {
-    const quantity = selected[0]
-    if (compareTo === null || !summary || !quantity) {
-      setStepSeries([])
-      return
-    }
-    let cancelled = false
-
-    plot
-      .profile(
-        jobId,
-        compareTo,
-        quantity,
-        summary.dimension === 2 ? (cutX ?? undefined) : undefined,
-      )
-      .then((next) => {
-        if (cancelled) return
-        const name =
-          artifacts.find((a) => a.sequence === compareTo)?.filename ??
-          `#${compareTo}`
-        setStepSeries([
-          {
-            label: `${quantity} @ ${name}`,
-            points: next.points,
-            color: COMPARE_COLOR,
-            muted: true,
-          },
-        ])
-      })
-      .catch(() => !cancelled && setStepSeries([]))
-
-    return () => {
-      cancelled = true
-    }
-  }, [jobId, compareTo, selected, summary, cutX, artifacts])
+  }, [jobId, sequence, summary, surfaceView, report])
 
   if (artifacts.length === 0) {
     return <p className="muted">저장된 구조가 없습니다. `structure out=` 을 넣어 보세요.</p>
@@ -223,41 +203,24 @@ export function ResultView({ jobId, artifacts }: Props) {
         </span>
       </div>
 
-      <fieldset className="quantities">
-        <legend>물리량</legend>
-        {summary?.quantities.map((name) => (
-          <label key={name}>
-            <input
-              type="checkbox"
-              checked={selected.includes(name)}
-              onChange={(event) => toggle(name, event.target.checked)}
-            />
-            {name}
-          </label>
-        ))}
-      </fieldset>
-
       <div className="controls">
-        {artifacts.length > 1 && (
+        {/* 구조 단면은 값을 색으로 칠하는 그림이라 한 번에 하나만 의미가 있다.
+            아래 체크박스(수직선 프로파일)와 일부러 따로 둔다. */}
+        {summary?.dimension === 2 && (
           <>
-            <label htmlFor="compare">단계 비교</label>
+            <label htmlFor="surface-quantity">구조 단면</label>
             <select
-              id="compare"
-              value={compareTo ?? ''}
-              onChange={(event) =>
-                setCompareTo(
-                  event.target.value ? Number(event.target.value) : null,
-                )
-              }
+              id="surface-quantity"
+              value={surfaceView}
+              onChange={(event) => setSurfaceView(event.target.value)}
             >
-              <option value="">없음</option>
-              {artifacts
-                .filter((a) => a.sequence !== sequence)
-                .map((a) => (
-                  <option key={a.sequence} value={a.sequence}>
-                    {a.filename}
-                  </option>
-                ))}
+              {/* 재질은 값이 없어도 볼 수 있으므로 언제나 맨 위에 둔다. */}
+              <option value={MATERIAL_VIEW}>{MATERIAL_VIEW}</option>
+              {summary.quantities.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
             </select>
           </>
         )}
@@ -285,10 +248,26 @@ export function ResultView({ jobId, artifacts }: Props) {
         </p>
       )}
 
+      {/* 그래프 **바로 위**에 둔다. 2D 단면이 사이에 끼면 체크박스를 누를
+          때마다 스크롤을 오르내려야 한다. */}
+      <fieldset className="quantities">
+        <legend>수직선 물리량</legend>
+        {summary?.quantities.map((name) => (
+          <label key={name}>
+            <input
+              type="checkbox"
+              checked={selected.includes(name)}
+              onChange={(event) => toggle(name, event.target.checked)}
+            />
+            {name}
+          </label>
+        ))}
+      </fieldset>
+
       {selected.length === 0 ? (
         <p className="muted">물리량을 하나 이상 골라 주세요.</p>
       ) : (
-        <ProfileChart series={[...series, ...stepSeries]} />
+        <ProfileChart series={series} />
       )}
     </div>
   )

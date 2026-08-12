@@ -9,7 +9,7 @@
  *     배경 띠 = 재질
  * 재질을 선 색으로 쓰면 물리량에 쓸 색이 남지 않는다.
  */
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { ProfileChart, type Series } from './ProfileChart'
 
@@ -40,7 +40,8 @@ function polylines(container: HTMLElement) {
 }
 
 function bands(container: HTMLElement) {
-  return [...container.querySelectorAll('svg rect')]
+  // clipPath 안에도 rect 가 있다. 재질 띠만 골라야 한다.
+  return [...container.querySelectorAll('svg rect.band-fill')]
 }
 
 function pointsOf(polyline: SVGPolylineElement) {
@@ -133,6 +134,36 @@ describe('재질 배경 띠', () => {
 
     expect(legend).toHaveTextContent('oxide')
     expect(legend).toHaveTextContent('silicon')
+  })
+})
+
+describe('재질 경계', () => {
+  it('경계마다 구분선을 긋는다', () => {
+    // 색만으로는 어두운 배경에서 아슬아슬하다(현재 팔레트 최소 ΔE 3.8, 감지
+    // 한계 수준). 선을 그으면 색과 무관하게 경계가 보인다.
+    const { container } = render(
+      <ProfileChart series={[series({ points: LAYERED })]} />,
+    )
+
+    expect(container.querySelectorAll('.material-edge')).toHaveLength(1)
+  })
+
+  it('재질이 하나면 구분선이 없다', () => {
+    const { container } = render(<ProfileChart series={[series()]} />)
+
+    expect(container.querySelectorAll('.material-edge')).toHaveLength(0)
+  })
+
+  it('띠 위에 재질 이름을 적는다', () => {
+    // 범례를 오가며 색을 맞춰 보지 않아도 되게. 색맹이어도 읽힌다.
+    const { container } = render(
+      <ProfileChart series={[series({ points: LAYERED })]} />,
+    )
+    const labels = [...container.querySelectorAll('.band-label')].map(
+      (node) => node.textContent,
+    )
+
+    expect(labels).toEqual(['oxide', 'silicon'])
   })
 })
 
@@ -315,5 +346,211 @@ describe('균일 도핑', () => {
     expect(
       coordinates.every(([x, y]) => Number.isFinite(x) && Number.isFinite(y)),
     ).toBe(true)
+  })
+})
+
+describe('가로축 확대·축소', () => {
+  const WIDE = [
+    point(0, 1e20),
+    point(0.05, 1e19),
+    point(0.1, 1e18),
+    point(5, 1e15),
+  ]
+
+  function svgOf(container: HTMLElement) {
+    const svg = container.querySelector('svg')!
+    // jsdom 은 레이아웃을 하지 않아 크기가 0 이다. 640x380 인 척한다.
+    svg.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 640, height: 380 }) as DOMRect
+    return svg
+  }
+
+  function depthLabels(container: HTMLElement) {
+    return [...container.querySelectorAll('.tick')]
+      .map((node) => node.textContent!)
+      .filter((text) => !text.startsWith('1e'))
+  }
+
+  it('처음에는 전체를 보여준다', () => {
+    const { container } = render(<ProfileChart series={[series({ points: WIDE })]} />)
+
+    expect(depthLabels(container).map(Number)).toContain(5)
+  })
+
+  it('휠을 굴리면 범위가 좁아진다', () => {
+    const { container } = render(<ProfileChart series={[series({ points: WIDE })]} />)
+    const before = Math.max(...depthLabels(container).map(Number))
+
+    fireEvent.wheel(svgOf(container), { deltaY: -100, clientX: 100 })
+
+    expect(Math.max(...depthLabels(container).map(Number))).toBeLessThan(before)
+  })
+
+  it('반대로 굴리면 다시 넓어진다', () => {
+    const { container } = render(<ProfileChart series={[series({ points: WIDE })]} />)
+    const svg = svgOf(container)
+    fireEvent.wheel(svg, { deltaY: -100, clientX: 100 })
+    const zoomed = Math.max(...depthLabels(container).map(Number))
+
+    fireEvent.wheel(svg, { deltaY: 100, clientX: 100 })
+
+    expect(Math.max(...depthLabels(container).map(Number))).toBeGreaterThan(zoomed)
+  })
+
+  it('확대하면 되돌리기 버튼이 나온다', () => {
+    const { container } = render(<ProfileChart series={[series({ points: WIDE })]} />)
+
+    fireEvent.wheel(svgOf(container), { deltaY: -100, clientX: 100 })
+
+    expect(screen.getByRole('button', { name: /전체 보기/ })).toBeInTheDocument()
+  })
+
+  it('전체를 보고 있으면 되돌리기 버튼이 없다', () => {
+    render(<ProfileChart series={[series({ points: WIDE })]} />)
+
+    expect(screen.queryByRole('button', { name: /전체 보기/ })).not.toBeInTheDocument()
+  })
+
+  it('되돌리면 전체가 다시 보인다', () => {
+    const { container } = render(<ProfileChart series={[series({ points: WIDE })]} />)
+    fireEvent.wheel(svgOf(container), { deltaY: -100, clientX: 100 })
+
+    fireEvent.click(screen.getByRole('button', { name: /전체 보기/ }))
+
+    expect(depthLabels(container).map(Number)).toContain(5)
+  })
+
+  it('확대해도 세로 눈금은 그대로다', () => {
+    // 단계를 오갈 때 높이를 비교할 수 없게 된다.
+    const { container } = render(<ProfileChart series={[series({ points: WIDE })]} />)
+    const before = [...container.querySelectorAll('.tick')]
+      .map((n) => n.textContent!)
+      .filter((t) => t.startsWith('1e'))
+
+    fireEvent.wheel(svgOf(container), { deltaY: -100, clientX: 100 })
+
+    const after = [...container.querySelectorAll('.tick')]
+      .map((n) => n.textContent!)
+      .filter((t) => t.startsWith('1e'))
+    expect(after).toEqual(before)
+  })
+
+  it('그림이 축 밖으로 넘치지 않는다', () => {
+    // 확대하면 범위 밖 점들이 좌우로 밀려난다. 잘라내지 않으면 눈금과 범례
+    // 위에까지 선이 그려진다.
+    const { container } = render(<ProfileChart series={[series({ points: WIDE })]} />)
+
+    fireEvent.wheel(svgOf(container), { deltaY: -100, clientX: 100 })
+
+    expect(container.querySelector('clipPath')).toBeInTheDocument()
+  })
+
+  it('그래프 위에서는 페이지가 스크롤되지 않는다', () => {
+    // 확대와 바깥 스크롤이 겹치면 그래프를 키우려다 화면이 같이 밀린다.
+    // React 의 onWheel 은 루트에 passive 로 붙어 preventDefault 가 먹지
+    // 않는다 — 네이티브 리스너를 passive:false 로 달아야 한다.
+    const { container } = render(<ProfileChart series={[series({ points: WIDE })]} />)
+    const svg = svgOf(container)
+
+    const event = new WheelEvent('wheel', {
+      deltaY: -100,
+      clientX: 100,
+      bubbles: true,
+      cancelable: true,
+    })
+    svg.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(true)
+  })
+
+  it('빈 상태로 떴다가 데이터가 와도 휠이 걸린다', () => {
+    // 결과를 받기 전에는 그릴 것이 없어 일찍 반환한다. 그 시점에 리스너를
+    // 달려고 하면 노드가 없어 영영 안 붙는다 — 실제로 그렇게 깨졌고 단위
+    // 테스트가 처음부터 데이터를 주는 바람에 E2E 에서야 드러났다.
+    const { container, rerender } = render(
+      <ProfileChart series={[series({ points: [] })]} />,
+    )
+
+    rerender(<ProfileChart series={[series({ points: WIDE })]} />)
+
+    const svg = svgOf(container)
+    const event = new WheelEvent('wheel', {
+      deltaY: -100,
+      clientX: 100,
+      bubbles: true,
+      cancelable: true,
+    })
+    svg.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(true)
+
+    // 축이 실제로 좁아지는지는 fireEvent 로 본다. raw dispatchEvent 는
+    // act() 로 감싸이지 않아 상태 갱신이 반영되기 전에 읽게 된다.
+    fireEvent.wheel(svg, { deltaY: -100, clientX: 100 })
+    expect(Math.max(...depthLabels(container).map(Number))).toBeLessThan(5)
+  })
+
+  it('확대 한계에 닿아도 페이지로 새어 나가지 않는다', () => {
+    // 더 확대할 수 없다고 스크롤이 뚫리면 화면이 튄다.
+    const { container } = render(<ProfileChart series={[series({ points: WIDE })]} />)
+    const svg = svgOf(container)
+    for (let i = 0; i < 60; i += 1) {
+      fireEvent.wheel(svg, { deltaY: -100, clientX: 100 })
+    }
+
+    const event = new WheelEvent('wheel', {
+      deltaY: -100,
+      clientX: 100,
+      bubbles: true,
+      cancelable: true,
+    })
+    svg.dispatchEvent(event)
+
+    expect(event.defaultPrevented).toBe(true)
+  })
+
+  it('값만 바뀌면 확대를 유지한다', () => {
+    // 2D 에서 컷 위치를 옮기면 같은 깊이 범위의 새 값이 온다. 확대가 풀리면
+    // 컷을 옮길 때마다 다시 확대해야 한다.
+    const { container, rerender } = render(
+      <ProfileChart series={[series({ points: WIDE })]} />,
+    )
+    fireEvent.wheel(svgOf(container), { deltaY: -100, clientX: 100 })
+    const zoomed = Math.max(...depthLabels(container).map(Number))
+
+    rerender(
+      <ProfileChart
+        series={[
+          series({
+            points: WIDE.map((p) => ({ ...p, value: p.value * 2 })),
+          }),
+        ]}
+      />,
+    )
+
+    expect(Math.max(...depthLabels(container).map(Number))).toBeCloseTo(zoomed, 6)
+    expect(screen.getByRole('button', { name: /전체 보기/ })).toBeInTheDocument()
+  })
+
+  it('깊이 범위가 좁아지면 그 안으로 밀어 넣는다', () => {
+    // 확대 구간이 새 데이터 밖에 있으면 빈 화면이 뜬다.
+    const { container, rerender } = render(
+      <ProfileChart series={[series({ points: WIDE })]} />,
+    )
+    // 오른쪽 끝(깊은 쪽)으로 확대해 둔다.
+    const svg = svgOf(container)
+    for (let i = 0; i < 6; i += 1) {
+      fireEvent.wheel(svg, { deltaY: -100, clientX: 600 })
+    }
+
+    rerender(
+      <ProfileChart
+        series={[series({ points: [point(0, 1e18), point(0.2, 1e15)] })]}
+      />,
+    )
+
+    const labels = depthLabels(container).map(Number)
+    expect(Math.max(...labels)).toBeLessThanOrEqual(0.2)
+    expect(labels.length).toBeGreaterThan(1)
   })
 })

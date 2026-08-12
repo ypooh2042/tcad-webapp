@@ -168,17 +168,23 @@ async def profile(
 
 @router.get("/jobs/{job_id}/artifacts/{sequence}/surface")
 async def surface(
-    quantity: str = Query(min_length=1, max_length=64),
+    quantity: str | None = Query(default=None, max_length=64),
     artifact: Artifact = Depends(owned_artifact),
 ) -> SurfaceResponse:
-    """2D 컨투어용 삼각형 목록."""
+    """2D 컨투어용 삼각형 목록.
+
+    quantity 를 생략하면 **재질만** 내려준다. 값을 읽지 않으므로 요소를 하나도
+    버리지 않는다 — 재질 그림에서 층이 빠지면 없는 층을 없다고 읽게 된다.
+    """
     structure = _structure(artifact)
     if structure.dimension != 2:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="1D 구조에는 단면이 없습니다. profile 을 쓰세요.",
         )
-    _require_quantity(structure, quantity)
+    # 생략은 허용하되 오타는 그대로 거절한다.
+    if quantity is not None:
+        _require_quantity(structure, quantity)
 
     built = build_surface(structure, quantity)
     low, high = built.value_range

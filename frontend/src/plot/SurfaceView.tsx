@@ -8,17 +8,38 @@
  * 때문이다. 여기서는 세 값의 평균으로 삼각형을 단색 칠한다 — 메시가 촘촘해서
  * 육안으로는 연속으로 보이고, 정점 보간을 흉내 내려다 계면을 뭉개는 것보다 낫다.
  *
+ * **두 가지 보기가 있다.** 서버가 무엇을 보냈는지로 구분한다:
+ *     quantity 가 있으면 → 값을 색으로 칠한다(컨투어).
+ *     quantity 가 비어 있으면 → 재질로 칠하고 범례를 붙인다.
+ * 재질 보기는 서버가 요소를 하나도 버리지 않으므로 층이 빠지지 않는다.
+ *
  * y 축이 깊이다. 화면 아래로 갈수록 깊어지게 그린다.
+ *
+ * 좌표 변환은 surfaceGeometry 하나에 모아 두고 그리기와 클릭이 같이 쓴다.
+ * 따로 두면 여백을 넣을 때 한쪽만 고쳐져 클릭한 자리와 컷 선이 어긋난다.
  */
 import { useEffect, useRef } from 'react'
 import type { SurfaceResponse } from '../api/types'
+import { solidOf } from './materials'
 import { colorFor, toLogDomain } from './scale'
+import { surfaceGeometry } from './surfaceGeometry'
 
 interface Props {
   surface: SurfaceResponse
   /** 세로 컷 위치(µm). 없으면 표시하지 않는다. */
   cutX: number | null
   onPickCut: (x: number) => void
+}
+
+const AXIS = '#8b929e'
+
+function boundsOf(surface: SurfaceResponse) {
+  return {
+    xMin: Math.min(...surface.x),
+    xMax: Math.max(...surface.x),
+    yMin: Math.min(...surface.y),
+    yMax: Math.max(...surface.y),
+  }
 }
 
 export function SurfaceView({ surface, cutX, onPickCut }: Props) {
@@ -29,11 +50,6 @@ export function SurfaceView({ surface, cutX, onPickCut }: Props) {
     const context = canvas?.getContext('2d')
     if (!canvas || !context) return
 
-    const xMin = Math.min(...surface.x)
-    const xMax = Math.max(...surface.x)
-    const yMin = Math.min(...surface.y)
-    const yMax = Math.max(...surface.y)
-
     // 흐릿하게 보이지 않도록 물리 픽셀 밀도에 맞춘다.
     const ratio = window.devicePixelRatio || 1
     const width = canvas.clientWidth
@@ -43,27 +59,29 @@ export function SurfaceView({ surface, cutX, onPickCut }: Props) {
     context.setTransform(ratio, 0, 0, ratio, 0, 0)
     context.clearRect(0, 0, width, height)
 
-    // 세로/가로 비율을 유지한다. 늘려 그리면 접합 깊이가 실제와 달라 보인다.
-    const scale = Math.min(width / (xMax - xMin), height / (yMax - yMin))
-    const offsetX = (width - (xMax - xMin) * scale) / 2
-    const offsetY = (height - (yMax - yMin) * scale) / 2
-    const px = (x: number) => offsetX + (x - xMin) * scale
-    const py = (y: number) => offsetY + (y - yMin) * scale
-
-    const domain = toLogDomain(surface.values.flat())
+    const g = surfaceGeometry(boundsOf(surface), width, height)
+    // 값이 없으면 재질 보기다. 값 기준으로 색을 고르려 들면 아무것도 안 그린다.
+    const byMaterial = surface.values.length === 0
+    const domain = byMaterial
+      ? { min: 0, max: 0 }
+      : toLogDomain(surface.values.flat())
 
     surface.triangles.forEach((triangle, index) => {
-      const triple = surface.values[index]!
-      const mean = (triple[0] + triple[1] + triple[2]) / 3
-
       context.beginPath()
       const [a, b, c] = triangle
-      context.moveTo(px(surface.x[a]!), py(surface.y[a]!))
-      context.lineTo(px(surface.x[b]!), py(surface.y[b]!))
-      context.lineTo(px(surface.x[c]!), py(surface.y[c]!))
+      context.moveTo(g.px(surface.x[a]!), g.py(surface.y[a]!))
+      context.lineTo(g.px(surface.x[b]!), g.py(surface.y[b]!))
+      context.lineTo(g.px(surface.x[c]!), g.py(surface.y[c]!))
       context.closePath()
 
-      const color = colorFor(mean, domain.min, domain.max)
+      let color: string
+      if (byMaterial) {
+        color = solidOf(surface.materials[index] ?? '')
+      } else {
+        const triple = surface.values[index]!
+        const mean = (triple[0] + triple[1] + triple[2]) / 3
+        color = colorFor(mean, domain.min, domain.max)
+      }
       context.fillStyle = color
       // 삼각형 사이에 배경색 실선이 비쳐 격자무늬로 보이는 것을 막는다.
       context.strokeStyle = color
@@ -72,10 +90,85 @@ export function SurfaceView({ surface, cutX, onPickCut }: Props) {
       context.stroke()
     })
 
+    // 눈금은 그림 위에 얹는다. 먼저 그리면 삼각형에 덮인다.
+    context.font = '10px ui-sans-serif, system-ui, sans-serif'
+    context.fillStyle = AXIS
+    context.strokeStyle = AXIS
+    context.lineWidth = 1
+
+    context.textAlign = 'center'
+    context.textBaseline = 'top'
+    for (const tick of g.xTicks) {
+      const x = g.px(tick)
+      context.beginPath()
+      context.moveTo(x, g.top + g.plotHeight)
+      context.lineTo(x, g.top + g.plotHeight + 4)
+      context.stroke()
+      context.fillText(g.formatX(tick), x, g.top + g.plotHeight + 6)
+    }
+
+    context.textAlign = 'right'
+    context.textBaseline = 'middle'
+    for (const tick of g.yTicks) {
+      const y = g.py(tick)
+      context.beginPath()
+      context.moveTo(g.left - 4, y)
+      context.lineTo(g.left, y)
+      context.stroke()
+      context.fillText(g.formatY(tick), g.left - 6, y)
+    }
+
+    // 어느 축이 무엇인지. 둘 다 µm 라 숫자만 보면 구분할 수 없다.
+    // 눈금 숫자보다 한 줄 아래에 둔다 — 같은 줄에 놓으면 첫 눈금과 겹친다.
+    context.textAlign = 'center'
+    context.textBaseline = 'top'
+    context.fillText(
+      'x (µm)',
+      g.left + g.plotWidth / 2,
+      g.top + g.plotHeight + 19,
+    )
+    context.save()
+    context.translate(10, g.top)
+    context.rotate(-Math.PI / 2)
+    context.textAlign = 'right'
+    context.fillText('깊이 (µm)', 0, 0)
+    context.restore()
+
+    // 재질 범례. 색만 칠하면 무엇이 무엇인지 알 수 없다. 오른쪽 위에 작게 둔다
+    // — 구조는 보통 위쪽(표면)에 층이 몰려 있지만 오른쪽 끝은 비어 있다.
+    if (byMaterial) {
+      const seen = [...new Set(surface.materials)]
+      const box = 9
+      const gap = 14
+      const pad = 6
+      const right = g.left + g.plotWidth - 6
+
+      // 글자 폭을 재서 판을 깐다. 배경 없이 얹으면 구조 위에 겹친 글자가
+      // 묻힌다 — 회색 글씨가 amber 산화막 위에 놓여 첫 글자가 사라졌다(실측).
+      const textWidth = Math.max(
+        ...seen.map((material) => context.measureText(material).width),
+      )
+      const panelWidth = textWidth + box + 5 + pad * 2
+      const panelHeight = seen.length * gap + pad * 2 - (gap - box) + 2
+
+      context.fillStyle = 'rgba(22, 24, 29, 0.82)'
+      context.fillRect(right - panelWidth + pad, g.top, panelWidth, panelHeight)
+
+      seen.forEach((material, index) => {
+        const y = g.top + pad + index * gap
+        context.fillStyle = solidOf(material)
+        context.fillRect(right - box, y, box, box)
+        context.fillStyle = AXIS
+        context.textAlign = 'right'
+        context.textBaseline = 'top'
+        context.fillText(material, right - box - 5, y)
+      })
+    }
+
     if (cutX !== null) {
       context.beginPath()
-      context.moveTo(px(cutX), 0)
-      context.lineTo(px(cutX), height)
+      context.moveTo(g.px(cutX), g.top)
+      context.lineTo(g.px(cutX), g.top + g.plotHeight)
       context.strokeStyle = '#ffffff'
       context.lineWidth = 1.5
       context.setLineDash([4, 4])
@@ -89,19 +182,13 @@ export function SurfaceView({ surface, cutX, onPickCut }: Props) {
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
 
-    const xMin = Math.min(...surface.x)
-    const xMax = Math.max(...surface.x)
-    const yMin = Math.min(...surface.y)
-    const yMax = Math.max(...surface.y)
-    const scale = Math.min(
-      canvas.clientWidth / (xMax - xMin),
-      canvas.clientHeight / (yMax - yMin),
+    const g = surfaceGeometry(
+      boundsOf(surface),
+      canvas.clientWidth,
+      canvas.clientHeight,
     )
-    const offsetX = (canvas.clientWidth - (xMax - xMin) * scale) / 2
-
-    const modelX = (event.clientX - rect.left - offsetX) / scale + xMin
     // 도메인 밖을 찍으면 빈 프로파일이 나온다. 가장자리로 잘라 준다.
-    onPickCut(Math.min(xMax, Math.max(xMin, modelX)))
+    onPickCut(g.clampX(g.unpx(event.clientX - rect.left)))
   }
 
   return (

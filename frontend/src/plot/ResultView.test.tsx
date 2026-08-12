@@ -219,52 +219,204 @@ describe('경고와 오류', () => {
   })
 })
 
-describe('단계 비교', () => {
-  it('단계가 하나면 비교 선택이 없다', async () => {
-    render(<ResultView jobId={1} artifacts={[ARTIFACTS[0]!]} />)
-    await screen.findByText(/after_implant/)
+describe('단계 비교는 없앴다', () => {
+  it('비교 선택이 없다', async () => {
+    // 같은 물리량을 두 단계로 겹치면 선이 배가 되어 무엇이 무엇인지 알 수
+    // 없었다. 단계 슬라이더로 옮겨 보는 것으로 충분하다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await screen.findByLabelText('chem_boron')
 
     expect(screen.queryByLabelText('단계 비교')).not.toBeInTheDocument()
   })
+})
 
-  it('현재 단계는 비교 대상에서 뺀다', async () => {
-    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-
-    const select = await screen.findByLabelText('단계 비교')
-    const options = within(select).getAllByRole('option').map((o) => o.textContent)
-    expect(options).toEqual(['없음', 'after_diffuse.str'])
+describe('단면과 수직선 물리량 분리', () => {
+  beforeEach(() => {
+    plot.summary.mockResolvedValue(
+      summary({
+        dimension: 2,
+        bounds: { x_min: 0, x_max: 4, y_min: 0, y_max: 3 },
+      }),
+    )
   })
 
-  it('고른 단계의 프로파일을 같은 조건으로 읽는다', async () => {
-    // 물리량과 컷 위치가 다르면 비교가 의미를 잃는다.
+  it('단면 물리량은 콤보박스로 하나만 고른다', async () => {
+    // 단면은 색으로 값을 칠하는 그림이라 한 번에 하나만 의미가 있다.
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await screen.findByLabelText('단계 비교')
+
+    const select = await screen.findByLabelText('구조 단면')
+    expect(select.tagName).toBe('SELECT')
+    expect(
+      within(select).getAllByRole('option').map((o) => o.textContent),
+    ).toEqual(['재질', 'chem_boron', 'net_doping'])
+  })
+
+  it('수직선 물리량은 체크박스로 여러 개 고른다', async () => {
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+
+    expect(await screen.findByLabelText('chem_boron')).toBeInTheDocument()
+    expect(screen.getByLabelText('net_doping')).toBeInTheDocument()
+  })
+
+  it('단면을 바꿔도 수직선 그래프는 그대로다', async () => {
+    // 둘이 묶여 있으면 단면 색을 바꾸려다 그래프가 통째로 바뀐다 — 이게
+    // 분리한 이유다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    // 초기 프로파일 호출이 끝난 뒤에 세기 시작한다. 먼저 지우면 그 호출이
+    // 뒤늦게 도착해 간헐적으로 실패한다.
+    await waitFor(() => expect(plot.profile).toHaveBeenCalled())
     plot.profile.mockClear()
 
-    await userEvent.selectOptions(screen.getByLabelText('단계 비교'), '2')
+    await userEvent.selectOptions(screen.getByLabelText('구조 단면'), 'net_doping')
 
     await waitFor(() =>
-      expect(plot.profile).toHaveBeenCalledWith(1, 2, 'chem_boron', undefined),
+      expect(plot.surface).toHaveBeenCalledWith(1, 1, 'net_doping'),
     )
+    // 프로파일은 다시 읽지 않는다.
+    expect(plot.profile).not.toHaveBeenCalled()
   })
 
-  it('비교를 끄면 겹친 선이 사라진다', async () => {
-    // 같은 이름이 비교 <option> 에도 있으므로 범례 안에서만 찾는다.
-    const { container } = render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await userEvent.selectOptions(await screen.findByLabelText('단계 비교'), '2')
-    await waitFor(() =>
-      expect(container.querySelector('.legend')).toHaveTextContent(
-        'after_diffuse.str',
-      ),
-    )
+  it('수직선 물리량을 바꿔도 단면은 그대로다', async () => {
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    // 처음 한 번은 단면을 읽는다. 그 호출이 끝나기 전에 세어 두면 뒤늦게
+    // 도착해서 간헐적으로 실패한다 — 실제로 6회 중 1회 그렇게 깨졌다.
+    await waitFor(() => expect(plot.surface).toHaveBeenCalled())
+    plot.surface.mockClear()
 
-    await userEvent.selectOptions(screen.getByLabelText('단계 비교'), '')
+    await userEvent.click(screen.getByLabelText('net_doping'))
 
     await waitFor(() =>
-      expect(container.querySelector('.legend')).not.toHaveTextContent(
-        'after_diffuse.str',
-      ),
+      expect(plot.profile).toHaveBeenCalledWith(1, 1, 'net_doping', 2),
     )
+    expect(plot.surface).not.toHaveBeenCalled()
+  })
+
+  it('1D 에는 단면 선택이 없다', async () => {
+    // 1D 는 깊이가 곧 x 축이라 자를 단면이 없다.
+    plot.summary.mockResolvedValue(summary({ dimension: 1 }))
+
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+
+    await screen.findByLabelText('chem_boron')
+    expect(screen.queryByLabelText('구조 단면')).not.toBeInTheDocument()
   })
 })
 
+describe('재질만 보기', () => {
+  beforeEach(() => {
+    plot.summary.mockResolvedValue(
+      summary({
+        dimension: 2,
+        bounds: { x_min: 0, x_max: 4, y_min: 0, y_max: 3 },
+      }),
+    )
+  })
+
+  it('단면 옵션에 재질이 들어 있다', async () => {
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+
+    const select = await screen.findByLabelText('구조 단면')
+    expect(
+      within(select).getAllByRole('option').map((o) => o.textContent),
+    ).toEqual(['재질', 'chem_boron', 'net_doping'])
+  })
+
+  it('재질이 기본값이다', async () => {
+    // 구조가 어떻게 생겼는지부터 보는 것이 자연스럽다. 값 분포는 그다음이다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+
+    expect(await screen.findByLabelText('구조 단면')).toHaveValue('재질')
+  })
+
+  it('기본 상태에서 물리량 없이 부른다', async () => {
+    // 물리량을 끼워 보내면 서버가 해 없는 요소를 버려서 층이 사라진다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+
+    await waitFor(() => expect(plot.surface).toHaveBeenCalledWith(1, 1, null))
+  })
+
+  it('물리량으로 바꿨다가 돌아올 수 있다', async () => {
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await screen.findByLabelText('구조 단면')
+
+    await userEvent.selectOptions(screen.getByLabelText('구조 단면'), 'net_doping')
+    await waitFor(() =>
+      expect(plot.surface).toHaveBeenCalledWith(1, 1, 'net_doping'),
+    )
+
+    await userEvent.selectOptions(screen.getByLabelText('구조 단면'), '재질')
+    await waitFor(() => expect(plot.surface).toHaveBeenCalledWith(1, 1, null))
+  })
+
+  it('재질 보기에서도 수직선 그래프는 그대로다', async () => {
+    // 단면과 수직선은 따로다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await waitFor(() => expect(plot.profile).toHaveBeenCalled())
+    plot.profile.mockClear()
+
+    await userEvent.selectOptions(screen.getByLabelText('구조 단면'), '재질')
+
+    await waitFor(() => expect(plot.surface).toHaveBeenCalledWith(1, 1, null))
+    expect(plot.profile).not.toHaveBeenCalled()
+  })
+
+  it('물리량이 하나도 없어도 재질은 볼 수 있다', async () => {
+    // 값이 없는 구조에서도 층 모양은 볼 가치가 있다.
+    plot.summary.mockResolvedValue(
+      summary({
+        dimension: 2,
+        quantities: [],
+        bounds: { x_min: 0, x_max: 4, y_min: 0, y_max: 3 },
+      }),
+    )
+
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+
+    await waitFor(() => expect(plot.surface).toHaveBeenCalledWith(1, 1, null))
+  })
+})
+
+describe('체크박스 위치', () => {
+  beforeEach(() => {
+    plot.summary.mockResolvedValue(
+      summary({
+        dimension: 2,
+        bounds: { x_min: 0, x_max: 4, y_min: 0, y_max: 3 },
+      }),
+    )
+  })
+
+  it('그래프 바로 위에 둔다', async () => {
+    // 2D 단면이 사이에 끼면 체크박스를 누를 때마다 스크롤을 오르내려야 한다.
+    const { container } = render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    // 차트는 프로파일을 받은 뒤에야 그려진다. 먼저 읽으면 null 이다.
+    await waitFor(() => expect(container.querySelector('.chart')).toBeTruthy())
+
+    const quantities = container.querySelector('.quantities')!
+    const chart = container.querySelector('.chart')!
+
+    // DOM 순서상 체크박스가 차트 바로 앞이어야 한다.
+    expect(
+      quantities.compareDocumentPosition(chart) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(quantities.nextElementSibling).toBe(chart)
+  })
+
+  it('단면보다 아래에 있다', async () => {
+    const { container } = render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    // 단면은 surface 응답을 받은 뒤에야 붙는다. 먼저 읽으면 null 이고,
+    // `!` 가 그것을 가려 간헐적으로만 깨진다(5회 중 1회 실측).
+    await waitFor(() =>
+      expect(container.querySelector('canvas.surface')).toBeTruthy(),
+    )
+
+    const surface = container.querySelector('canvas.surface')!
+    const quantities = container.querySelector('.quantities')!
+
+    expect(
+      surface.compareDocumentPosition(quantities) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+})

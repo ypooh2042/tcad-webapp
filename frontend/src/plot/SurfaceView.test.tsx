@@ -1,15 +1,16 @@
 /**
  * 2D 단면.
  *
- * jsdom 에는 캔버스가 없다. 컨텍스트를 흉내 내어 **좌표 변환**과 **컷 위치
- * 계산**을 확인한다 — 그림 자체가 아니라 그 두 계산이 틀리면 접합 깊이가
- * 실제와 달라 보이거나 엉뚱한 위치의 프로파일이 나온다.
+ * jsdom 에는 캔버스가 없다. 컨텍스트를 흉내 내어 **무엇을 그리라고 시켰는지**를
+ * 확인한다. 정확한 좌표 계산은 surfaceGeometry.test.ts 가 따로 검증하므로
+ * 여기서는 배선(삼각형·눈금·컷 선)과 클릭 전달만 본다.
  */
 import { render } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SurfaceView } from './SurfaceView'
 import type { SurfaceResponse } from '../api/types'
+import { solidOf } from './materials'
 
 /** 도메인 x=[0,4], y=[0,3] 짜리 삼각형 두 개. */
 const SURFACE: SurfaceResponse = {
@@ -30,21 +31,38 @@ const SURFACE: SurfaceResponse = {
 }
 
 let context: Record<string, ReturnType<typeof vi.fn>>
-let moves: [number, number][]
+let texts: string[]
+let fills: string[]
 
 beforeEach(() => {
-  moves = []
+  texts = []
+  fills = []
   context = {
     setTransform: vi.fn(),
     clearRect: vi.fn(),
     beginPath: vi.fn(),
-    moveTo: vi.fn((x: number, y: number) => void moves.push([x, y])),
+    moveTo: vi.fn(),
     lineTo: vi.fn(),
     closePath: vi.fn(),
     fill: vi.fn(),
     stroke: vi.fn(),
     setLineDash: vi.fn(),
+    fillText: vi.fn((text: string) => void texts.push(text)),
+    save: vi.fn(),
+    restore: vi.fn(),
+    translate: vi.fn(),
+    rotate: vi.fn(),
+    fillRect: vi.fn(),
+    // 범례 판 크기를 글자 폭으로 정한다.
+    measureText: vi.fn((text: string) => ({ width: text.length * 5 })),
   }
+  // fillStyle 은 메서드가 아니라 속성이다. 대입을 가로채야 어떤 색으로
+  // 칠했는지 볼 수 있다.
+  Object.defineProperty(context, 'fillStyle', {
+    configurable: true,
+    set: (value: string) => void fills.push(value),
+    get: () => '',
+  })
   HTMLCanvasElement.prototype.getContext = vi.fn(() => context) as never
 
   // jsdom 은 레이아웃을 하지 않아 크기가 전부 0 이다. 400x300 인 척한다.
@@ -64,17 +82,31 @@ describe('그리기', () => {
   it('삼각형마다 경로를 만든다', () => {
     render(<SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} />)
 
-    expect(context.beginPath).toHaveBeenCalledTimes(2)
+    // beginPath 는 눈금선도 쓴다. 삼각형 개수는 fill 로 센다.
     expect(context.fill).toHaveBeenCalledTimes(2)
   })
 
-  it('가로세로 비율을 유지한다', () => {
-    // 도메인이 4x3, 캔버스가 400x300 이므로 배율이 정확히 100 이다. 늘려
-    // 그리면 접합 깊이가 실제와 달라 보인다.
+  it('가로 눈금 숫자를 찍는다', () => {
+    // 이게 없으면 소자 폭이 몇 µm 인지 그림에서 읽을 수 없다.
     render(<SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} />)
 
-    // 첫 삼각형의 첫 정점은 도메인 원점 (0,0) 이다.
-    expect(moves[0]).toEqual([0, 0])
+    // 1µm 간격이라 소수점이 붙지 않는다. 간격이 좁아지면 자릿수가 늘어난다.
+    expect(texts).toContain('0')
+    expect(texts).toContain('4')
+  })
+
+  it('세로 눈금 숫자를 찍는다', () => {
+    render(<SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} />)
+
+    expect(texts).toContain('3')
+  })
+
+  it('어느 축이 무엇인지 적는다', () => {
+    // 둘 다 µm 라 숫자만 보면 가로가 폭인지 깊이인지 알 수 없다.
+    render(<SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} />)
+
+    expect(texts).toContain('x (µm)')
+    expect(texts).toContain('깊이 (µm)')
   })
 
   it('컷 라인이 없으면 점선을 긋지 않는다', () => {
@@ -97,14 +129,32 @@ describe('컷 위치 고르기', () => {
       <SurfaceView surface={SURFACE} cutX={null} onPickCut={onPickCut} />,
     )
 
-    // 배율 100 이므로 화면 x=200 은 도메인 x=2 다.
     await userEvent.pointer({
       target: container.querySelector('canvas')!,
       coords: { clientX: 200, clientY: 100 },
       keys: '[MouseLeft]',
     })
 
-    expect(onPickCut).toHaveBeenCalledWith(2)
+    // 정확한 값은 여백에 달렸다(surfaceGeometry 가 검증한다). 여기서 볼 것은
+    // 화면 가운데쯤을 찍으면 도메인 안쪽 값이 넘어간다는 배선이다.
+    const [picked] = onPickCut.mock.calls[0]!
+    expect(picked).toBeGreaterThan(0)
+    expect(picked).toBeLessThan(4)
+  })
+
+  it('왼쪽 끝을 찍으면 도메인 시작이다', async () => {
+    const onPickCut = vi.fn()
+    const { container } = render(
+      <SurfaceView surface={SURFACE} cutX={null} onPickCut={onPickCut} />,
+    )
+
+    await userEvent.pointer({
+      target: container.querySelector('canvas')!,
+      coords: { clientX: 0, clientY: 100 },
+      keys: '[MouseLeft]',
+    })
+
+    expect(onPickCut).toHaveBeenCalledWith(0)
   })
 
   it('도메인 밖을 찍으면 가장자리로 잘라 준다', async () => {
@@ -134,5 +184,75 @@ describe('접근성', () => {
       'aria-label',
       expect.stringContaining('클릭하면'),
     )
+  })
+})
+
+describe('재질 보기', () => {
+  /** quantity 가 빈 문자열이고 values 가 없으면 재질만 온 것이다. */
+  const BY_MATERIAL: SurfaceResponse = {
+    ...SURFACE,
+    quantity: '',
+    values: [],
+    materials: ['oxide', 'silicon'],
+  }
+
+  it('값이 없어도 삼각형을 그린다', () => {
+    // 값 기준으로 색을 고르려 들면 여기서 터지거나 아무것도 안 그린다.
+    render(<SurfaceView surface={BY_MATERIAL} cutX={null} onPickCut={vi.fn()} />)
+
+    expect(context.fill).toHaveBeenCalledTimes(2)
+  })
+
+  it('재질마다 자기 색을 쓴다', () => {
+    // fills 에는 축 라벨 색도 섞인다. 재질 색이 들어 있는지를 직접 본다.
+    render(<SurfaceView surface={BY_MATERIAL} cutX={null} onPickCut={vi.fn()} />)
+
+    expect(solidOf('oxide')).not.toBe(solidOf('silicon'))
+    expect(fills).toContain(solidOf('oxide'))
+    expect(fills).toContain(solidOf('silicon'))
+  })
+
+  it('1D 배경 띠와 같은 재질 체계를 쓴다', () => {
+    // 두 화면에서 oxide 색이 다르면 같은 층인지 알아보지 못한다.
+    expect(solidOf('oxide')).toBeTruthy()
+    expect(solidOf('알수없는재질')).toBe(solidOf('또다른미지재질'))
+  })
+
+  it('오른쪽 위에 범례를 넣는다', () => {
+    // 색만 칠하면 무엇이 무엇인지 알 수 없다.
+    render(<SurfaceView surface={BY_MATERIAL} cutX={null} onPickCut={vi.fn()} />)
+
+    expect(texts).toContain('oxide')
+    expect(texts).toContain('silicon')
+  })
+
+  it('범례 뒤에 판을 깐다', () => {
+    // 배경 없이 얹으면 구조 위에 겹친 글자가 묻힌다 — 회색 글씨가 amber
+    // 산화막 위에 놓여 첫 글자가 사라졌다(실측).
+    render(<SurfaceView surface={BY_MATERIAL} cutX={null} onPickCut={vi.fn()} />)
+
+    // 색 견본 2개 + 판 1개.
+    expect(context.fillRect).toHaveBeenCalledTimes(3)
+  })
+
+  it('범례에 재질을 한 번씩만 적는다', () => {
+    // 삼각형마다 적으면 수천 줄이 겹쳐 찍힌다.
+    render(<SurfaceView surface={BY_MATERIAL} cutX={null} onPickCut={vi.fn()} />)
+
+    expect(texts.filter((t) => t === 'silicon')).toHaveLength(1)
+  })
+
+  it('물리량 보기에는 범례를 넣지 않는다', () => {
+    // 그쪽은 색이 값을 뜻한다. 재질 범례를 붙이면 거짓말이 된다.
+    render(<SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} />)
+
+    expect(texts).not.toContain('silicon')
+  })
+
+  it('축 눈금은 그대로 나온다', () => {
+    render(<SurfaceView surface={BY_MATERIAL} cutX={null} onPickCut={vi.fn()} />)
+
+    expect(texts).toContain('x (µm)')
+    expect(texts).toContain('깊이 (µm)')
   })
 })

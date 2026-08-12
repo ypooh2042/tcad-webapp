@@ -122,6 +122,13 @@ async def job_2d(app, alice, tmp_path):
     return await seed_job(app, alice, "2d_substrate.str", tmp_path)
 
 
+@pytest.fixture
+async def job_cmos(app, alice, tmp_path):
+    """재질이 셋인 2D 구조. 2d_substrate 는 silicon 하나뿐이라 재질 보기를
+    검증할 수 없다."""
+    return await seed_job(app, alice, "2d_cmos_source.str", tmp_path)
+
+
 class TestOwnership:
     async def test_other_user_cannot_read_structure(
         self, alice, bob, job_1d
@@ -281,3 +288,52 @@ class TestSurface:
         )
 
         assert response.status_code == 400
+
+
+class TestMaterialSurface:
+    """재질만 보는 단면. quantity 를 빼면 재질만 내려온다."""
+
+    async def test_omitting_quantity_gives_materials(self, alice, job_cmos):
+        response = await alice.get(
+            f"/api/jobs/{job_cmos}/artifacts/1/surface"
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["quantity"] == ""
+        assert set(body["materials"]) == {"oxide", "poly", "silicon"}
+
+    async def test_carries_no_values(self, alice, job_cmos):
+        # 값이 없다. 0 을 채워 보내면 프론트가 색 범위를 잘못 잡는다.
+        response = await alice.get(
+            f"/api/jobs/{job_cmos}/artifacts/1/surface"
+        )
+
+        assert response.json()["values"] == []
+
+    async def test_covers_more_triangles_than_a_quantity_view(
+        self, alice, job_cmos
+    ):
+        """재질 보기는 요소를 버리지 않는다. 적으면 층이 사라진 것이다."""
+        materials = await alice.get(f"/api/jobs/{job_cmos}/artifacts/1/surface")
+        values = await alice.get(
+            f"/api/jobs/{job_cmos}/artifacts/1/surface?quantity=chem_boron"
+        )
+
+        assert len(materials.json()["triangles"]) >= len(
+            values.json()["triangles"]
+        )
+
+    async def test_still_refuses_1d(self, alice, job_1d):
+        response = await alice.get(f"/api/jobs/{job_1d}/artifacts/1/surface")
+
+        assert response.status_code == 400
+
+    async def test_unknown_quantity_is_still_rejected(self, alice, job_cmos):
+        # 생략 허용이 오타까지 통과시키면 안 된다. 없는 물리량은 404 다
+        # (다른 엔드포인트와 같은 규약).
+        response = await alice.get(
+            f"/api/jobs/{job_cmos}/artifacts/1/surface?quantity=nonexistent"
+        )
+
+        assert response.status_code == 404
