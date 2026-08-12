@@ -26,6 +26,13 @@ _MATERIAL_NAMES: dict[int, str] = {
     2: "nitride",
     3: "silicon",
     4: "poly",
+    # 5~8 은 물질을 하나씩만 증착해 확인했다. silicon(3) 위에 region 이 하나
+    # 생기고 그 id 가 곧 그 물질의 번호다. 금속배선 구조가 통째로 "모르는 재질"
+    # 로 보이던 것이 이 빈칸 때문이었다.
+    5: "oxynitride",
+    6: "aluminum",
+    7: "photoresist",
+    8: "gaas",
 }
 
 

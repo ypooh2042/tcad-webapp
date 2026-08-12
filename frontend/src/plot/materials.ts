@@ -16,6 +16,8 @@ const FILLS: Record<string, string> = {
   poly: '#16331e',
   aluminum: '#3e3e3e',
   gaas: '#512633',
+  oxynitride: '#10474c',
+  photoresist: '#443f22',
 }
 
 /** 모르는 재질은 중립 회색. 실제 재질처럼 보이면 안 된다. */
@@ -36,7 +38,12 @@ const SOLIDS: Record<string, string> = {
   poly: '#3fa06a',
   aluminum: '#9aa3ad',
   gaas: '#c0566f',
+  oxynitride: '#20ccd4',
+  photoresist: '#747044',
 }
+
+/** 색을 아는 재질. 새 재질을 넣으면 두 팔레트에 모두 넣어야 한다. */
+export const MATERIALS = Object.keys(SOLIDS)
 
 const UNKNOWN_SOLID = '#6b7280'
 

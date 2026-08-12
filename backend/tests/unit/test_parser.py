@@ -14,6 +14,7 @@ import pytest
 
 from app.str_parser import parse_structure
 from app.str_parser.errors import StructureFormatError
+from app.str_parser.materials import is_known_material, resolve_material
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
@@ -217,3 +218,37 @@ class TestImmutability:
     def test_structure_is_frozen(self, boron_1d) -> None:
         with pytest.raises(Exception):
             boron_1d.version = "mutated"  # type: ignore[misc]
+
+
+class TestMaterialIds:
+    """`.str` 의 material_id 지도.
+
+    번호는 추측할 수 없어 하나씩 증착해 확인했다. 각 물질만 올린 1D 구조에서
+    silicon(3) 위에 새 region 이 하나 생기고, 그 id 가 그 물질의 번호다.
+
+        deposit oxynitride  → r 2 5
+        deposit aluminum    → r 2 6
+        deposit photoresist → r 2 7
+        deposit gaas        → r 2 8
+
+    이름이 없으면 화면에서 회색 `unknown_6` 이 된다. 금속을 올린 구조가 통째로
+    "모르는 재질" 로 보였다.
+    """
+
+    def test_names_every_material_the_simulator_can_deposit(self) -> None:
+        assert [resolve_material(code) for code in range(9)] == [
+            "ambient",
+            "oxide",
+            "nitride",
+            "silicon",
+            "poly",
+            "oxynitride",
+            "aluminum",
+            "photoresist",
+            "gaas",
+        ]
+
+    def test_still_admits_ignorance_beyond_that(self) -> None:
+        # 조용히 다른 물질로 잘못 표시하는 것보다 모른다고 드러내는 편이 안전하다.
+        assert resolve_material(99) == "unknown_99"
+        assert not is_known_material(99)
