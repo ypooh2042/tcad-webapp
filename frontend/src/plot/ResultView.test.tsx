@@ -251,6 +251,30 @@ describe('단면과 수직선 물리량 분리', () => {
     ).toEqual(['재질', 'chem_boron', 'net_doping'])
   })
 
+  it('격자 보기는 기본으로 꺼져 있다', async () => {
+    // 촘촘한 메시를 항상 얹으면 정작 값이 안 보인다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+
+    expect(await screen.findByLabelText('격자 보기')).not.toBeChecked()
+  })
+
+  it('격자 보기를 켜면 단면에 전달한다', async () => {
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+
+    await userEvent.click(await screen.findByLabelText('격자 보기'))
+
+    expect(screen.getByLabelText('격자 보기')).toBeChecked()
+  })
+
+  it('1D 구조에는 격자 보기가 없다', async () => {
+    // 단면 그림이 없으므로 얹을 곳도 없다.
+    plot.summary.mockResolvedValue(summary({ dimension: 1 }))
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+
+    await screen.findByText(/1D/)
+    expect(screen.queryByLabelText('격자 보기')).not.toBeInTheDocument()
+  })
+
   it('수직선 물리량은 체크박스로 여러 개 고른다', async () => {
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
 

@@ -56,6 +56,8 @@ export function ResultView({ jobId, artifacts }: Props) {
   const [series, setSeries] = useState<Series[]>([])
   const [surface, setSurface] = useState<SurfaceResponse | null>(null)
   const [cutX, setCutX] = useState<number | null>(null)
+  //: 격자 오버레이. 기본은 꺼짐 — 촘촘한 메시를 항상 얹으면 값이 묻힌다.
+  const [showMesh, setShowMesh] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const current = artifacts[Math.min(step, artifacts.length - 1)]
@@ -222,6 +224,16 @@ export function ResultView({ jobId, artifacts }: Props) {
                 </option>
               ))}
             </select>
+            {/* 격자는 값과 무관한 별개의 보기라 콤보박스가 아니라 체크박스다.
+                구조가 얼마나 촘촘한지 확인할 때만 잠깐 켜는 용도다. */}
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={showMesh}
+                onChange={(event) => setShowMesh(event.target.checked)}
+              />
+              격자 보기
+            </label>
           </>
         )}
         {summary && (
@@ -239,7 +251,12 @@ export function ResultView({ jobId, artifacts }: Props) {
       ))}
 
       {surface && (
-        <SurfaceView surface={surface} cutX={cutX} onPickCut={setCutX} />
+        <SurfaceView
+          surface={surface}
+          cutX={cutX}
+          onPickCut={setCutX}
+          showMesh={showMesh}
+        />
       )}
 
       {summary?.dimension === 2 && cutX !== null && (

@@ -451,3 +451,28 @@ test('물리량 체크박스가 그래프 바로 위에 있다', async ({ page }
   // 사이에 다른 것이 끼면 안 된다.
   expect(graph.y - (boxes.y + boxes.height)).toBeLessThan(40)
 })
+
+test('격자 보기를 켜면 단면에 격자가 얹힌다', async ({ page }) => {
+  // 캔버스에 그리는 기능이라 단위 테스트로는 "그리라고 시켰는지"까지만 볼 수
+  // 있다. 실제로 픽셀이 바뀌는지는 브라우저에서만 확인된다.
+  await createProject(page, 'meshview')
+  await setSource(page, TWO_DIMENSIONAL_SOURCE)
+  await page.getByRole('button', { name: '실행' }).click()
+
+  const canvas = page.locator('canvas.surface')
+  await expect(canvas).toBeVisible({ timeout: 120_000 })
+
+  const toggle = page.getByLabel('격자 보기')
+  await expect(toggle).not.toBeChecked()
+  const before = await canvas.screenshot()
+
+  await toggle.check()
+  await expect(toggle).toBeChecked()
+  const withMesh = await canvas.screenshot()
+  expect(Buffer.compare(before, withMesh)).not.toBe(0)
+
+  // 끄면 원래대로 돌아와야 한다. 남아 있으면 끌 방법이 없다.
+  await toggle.uncheck()
+  const after = await canvas.screenshot()
+  expect(Buffer.compare(before, after)).toBe(0)
+})

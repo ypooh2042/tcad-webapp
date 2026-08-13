@@ -29,9 +29,19 @@ interface Props {
   /** 세로 컷 위치(µm). 없으면 표시하지 않는다. */
   cutX: number | null
   onPickCut: (x: number) => void
+  /** 삼각형 격자를 위에 얹을지. 기본은 끔. */
+  showMesh?: boolean
 }
 
 const AXIS = '#8b929e'
+
+/**
+ * 격자선 색.
+ *
+ * 반투명 어두운 선이라 재질 판(밝은 색)과 컨투어 배색 양쪽에서 읽힌다.
+ * 불투명한 검정은 촘촘한 메시에서 그림을 덮어 버린다.
+ */
+export const MESH_COLOR = 'rgba(18, 22, 28, 0.5)'
 
 function boundsOf(surface: SurfaceResponse) {
   return {
@@ -42,7 +52,12 @@ function boundsOf(surface: SurfaceResponse) {
   }
 }
 
-export function SurfaceView({ surface, cutX, onPickCut }: Props) {
+export function SurfaceView({
+  surface,
+  cutX,
+  onPickCut,
+  showMesh = false,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -89,6 +104,24 @@ export function SurfaceView({ surface, cutX, onPickCut }: Props) {
       context.fill()
       context.stroke()
     })
+
+    // 격자는 삼각형을 **다 칠한 뒤에** 얹는다. 먼저 그리면 덮인다.
+    //
+    // 변을 삼각형마다 따로 그리지 않고 경로 하나에 모아 한 번만 stroke 한다.
+    // 따로 그리면 이웃과 공유하는 변이 두 번 칠해져 반투명 선이 얼룩덜룩해지고,
+    // 삼각형 수천 개에서는 호출 수만큼 느려진다.
+    if (showMesh) {
+      context.beginPath()
+      for (const [a, b, c] of surface.triangles) {
+        context.moveTo(g.px(surface.x[a]!), g.py(surface.y[a]!))
+        context.lineTo(g.px(surface.x[b]!), g.py(surface.y[b]!))
+        context.lineTo(g.px(surface.x[c]!), g.py(surface.y[c]!))
+        context.closePath()
+      }
+      context.strokeStyle = MESH_COLOR
+      context.lineWidth = 0.5
+      context.stroke()
+    }
 
     // 눈금은 그림 위에 얹는다. 먼저 그리면 삼각형에 덮인다.
     context.font = '10px ui-sans-serif, system-ui, sans-serif'
@@ -175,7 +208,9 @@ export function SurfaceView({ surface, cutX, onPickCut }: Props) {
       context.stroke()
       context.setLineDash([])
     }
-  }, [surface, cutX])
+  // showMesh 를 빠뜨리면 체크박스를 눌러도 다시 그리지 않는다. 단위 테스트는
+  // 매번 새로 렌더해서 이걸 못 잡는다 — E2E 가 잡았다.
+  }, [surface, cutX, showMesh])
 
   function pick(event: React.MouseEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current

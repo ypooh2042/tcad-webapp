@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SurfaceView } from './SurfaceView'
 import type { SurfaceResponse } from '../api/types'
 import { solidOf } from './materials'
+import { MESH_COLOR } from './SurfaceView'
 
 /** 도메인 x=[0,4], y=[0,3] 짜리 삼각형 두 개. */
 const SURFACE: SurfaceResponse = {
@@ -33,10 +34,12 @@ const SURFACE: SurfaceResponse = {
 let context: Record<string, ReturnType<typeof vi.fn>>
 let texts: string[]
 let fills: string[]
+let strokes: string[]
 
 beforeEach(() => {
   texts = []
   fills = []
+  strokes = []
   context = {
     setTransform: vi.fn(),
     clearRect: vi.fn(),
@@ -61,6 +64,11 @@ beforeEach(() => {
   Object.defineProperty(context, 'fillStyle', {
     configurable: true,
     set: (value: string) => void fills.push(value),
+    get: () => '',
+  })
+  Object.defineProperty(context, 'strokeStyle', {
+    configurable: true,
+    set: (value: string) => void strokes.push(value),
     get: () => '',
   })
   HTMLCanvasElement.prototype.getContext = vi.fn(() => context) as never
@@ -254,5 +262,78 @@ describe('재질 보기', () => {
 
     expect(texts).toContain('x (µm)')
     expect(texts).toContain('깊이 (µm)')
+  })
+})
+
+
+describe('격자 보기', () => {
+  it('꺼 두면 격자선을 그리지 않는다', () => {
+    // 기본은 꺼짐이다. 촘촘한 메시를 항상 얹으면 정작 값이 안 보인다.
+    render(<SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} />)
+
+    expect(strokes).not.toContain(MESH_COLOR)
+  })
+
+  it('켜면 격자선을 그린다', () => {
+    render(
+      <SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} showMesh />,
+    )
+
+    expect(strokes).toContain(MESH_COLOR)
+  })
+
+  it('체크만 바꿔도 다시 그린다', () => {
+    // 매번 새로 렌더하는 테스트는 이걸 못 잡는다. 실제 화면에서는 컴포넌트가
+    // 살아 있는 채로 prop 만 바뀌므로, 그리기 effect 가 showMesh 를 의존성에
+    // 넣지 않으면 체크박스를 눌러도 아무 일도 일어나지 않는다(E2E 가 잡았다).
+    const view = render(
+      <SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} />,
+    )
+    expect(strokes).not.toContain(MESH_COLOR)
+
+    view.rerender(
+      <SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} showMesh />,
+    )
+
+    expect(strokes).toContain(MESH_COLOR)
+  })
+
+  it('삼각형을 다 칠한 뒤에 얹는다', () => {
+    // 먼저 그리면 삼각형 색에 덮여 아무것도 안 보인다.
+    const order: string[] = []
+    context.fill = vi.fn(() => void order.push('fill'))
+    context.stroke = vi.fn(() => void order.push('stroke'))
+    Object.defineProperty(context, 'strokeStyle', {
+      configurable: true,
+      set: (value: string) => {
+        strokes.push(value)
+        if (value === MESH_COLOR) order.push('mesh')
+      },
+      get: () => '',
+    })
+
+    render(
+      <SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} showMesh />,
+    )
+
+    // 마지막 삼각형 칠하기가 격자선보다 앞에 있어야 한다.
+    expect(order.lastIndexOf('fill')).toBeLessThan(order.indexOf('mesh'))
+  })
+
+  it('격자선을 한 번에 그린다', () => {
+    // 삼각형마다 stroke 를 부르면 겹친 변이 두 번 칠해져 얼룩덜룩해지고,
+    // 수천 개에서는 느려진다. 경로 하나로 모아 한 번만 그린다.
+    const plain = render(
+      <SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} />,
+    )
+    const without = context.stroke.mock.calls.length
+    plain.unmount()
+    context.stroke.mockClear()
+
+    render(
+      <SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} showMesh />,
+    )
+
+    expect(context.stroke.mock.calls.length).toBe(without + 1)
   })
 })

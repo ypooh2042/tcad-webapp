@@ -439,3 +439,6 @@ body.resizing { user-select: none; cursor: col-resize; }
 }
 .quantities legend { color: var(--muted); padding: 0 4px; }
 .quantities label { display: flex; align-items: center; gap: 4px; }
+
+/* 컨트롤 줄 안의 체크박스. 상자와 글자가 세로로 어긋나 보이지 않게 묶는다. */
+.controls label.toggle { display: flex; align-items: center; gap: 4px; cursor: pointer; }
