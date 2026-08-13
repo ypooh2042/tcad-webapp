@@ -179,6 +179,21 @@ class TestDenseGridSurvivesOxidation:
         assert result.succeeded, result.log[-2000:]
         assert [f.name for f in result.structure_files] == ["oxidation.str"]
 
+    def test_grid_that_the_malloc_workaround_could_not_save(
+        self, tmp_path: Path
+    ) -> None:
+        """환경변수 완화로는 부족했던 격자.
+
+        컨테이너의 MALLOC_MMAP_THRESHOLD_ 는 realloc 이 제자리에서 늘어나도록
+        유도할 뿐이라, 힙 상태에 따라 여전히 블록이 옮겨진다. 이 격자가 실제로
+        그랬다(완화를 걸고도 5회 연속 죽음). 소스 패치가 빠지면 다시 죽는다.
+        """
+        source = (FIXTURES / "2d_wide_uniform_grid.in").read_text()
+
+        result = run_simulation(source, tmp_path / "job")
+
+        assert result.succeeded, result.log[-2000:]
+
     def test_oxide_actually_grew(self, tmp_path: Path) -> None:
         """죽지 않는 것만으로는 부족하다 — 결과가 물리적으로 맞아야 한다."""
         source = (FIXTURES / "2d_dense_surface_grid.in").read_text()
@@ -199,3 +214,24 @@ class TestDenseGridSurvivesOxidation:
         # 1050도 건식산화 5분이면 20nm 안팎이다. 자릿수가 어긋나면 결과가 깨진 것이다.
         thickness = max(oxide_y) - min(oxide_y)
         assert 0.005 < thickness < 0.05, thickness
+
+
+@requires_sandbox
+class TestGridLimitIsExplained:
+    """상한을 넘겼을 때 사용자가 이유를 알 수 있는가.
+
+    이 격자는 고칠 수 없다 — 시뮬레이터 안의 16비트 카운터가 넘친다. 고칠 수
+    없다면 **최소한 왜 실패했는지는 말해 줘야 한다.** 세그폴트는 로그를 통째로
+    날리므로 그냥 두면 화면에 아무 단서도 남지 않는다.
+    """
+
+    def test_failure_names_the_grid_size(self, tmp_path: Path) -> None:
+        source = (FIXTURES / "2d_over_grid_limit.in").read_text()
+
+        result = run_simulation(source, tmp_path / "job")
+
+        assert not result.succeeded
+        joined = " ".join(result.errors)
+        assert "격자" in joined, joined
+        # 실제로 만든 점 개수를 알려 줘야 얼마나 줄일지 판단할 수 있다.
+        assert "점입니다" in joined, joined

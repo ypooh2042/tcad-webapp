@@ -13,17 +13,60 @@
 #  실행 측 제약(--network none, --cap-drop ALL 등)은 app/runner/sandbox.py 참조.
 # ─────────────────────────────────────────────────────────────────────────
 
+# ── 1단계: 소스에서 빌드 ────────────────────────────────────────────────
+#
+# 예전에는 출처를 설명할 수 없는 바이너리를 그대로 실었다. 이제 상류 소스를
+# 레포에 담고(SUPREM4GS/upstream, rafael1193/suprem4gs @ 33e9043) 여기서
+# 빌드한다. 무엇을 고쳤는지는 patches/ 의 diff 로 남는다.
+FROM debian:bookworm AS builder
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc gfortran make patch \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY SUPREM4GS/upstream/ /build/
+COPY docker/suprem/patches/ /patches/
+
+WORKDIR /build
+
+# 1993년 코드를 요즘 도구로 빌드하기 위한 조정. **동작을 바꾸는 수정이 아니다**
+# — 코드 변경은 patches/ 에만 있다.
+#
+#   g77        : 30년 전 포트란 컴파일러. gfortran 의 legacy 모드로 대체.
+#   -std=gnu89 : K&R 정의와 암묵적 int 를 쓰는 코드다.
+#   -fcommon   : gcc 10 부터 -fno-common 이 기본이라 tentative definition 이
+#                중복 심볼로 링크에서 터진다.
+#   -no-pie    : **이게 없으면 시작하자마자 죽는다.** coeffox 등 여섯 군데가
+#                포인터를 int 로 받는다(1993년엔 같은 크기였다). PIE 로 빌드하면
+#                힙이 2GB 위로 올라가 잘린 주소가 음수가 되고 즉사한다. 배포되던
+#                바이너리가 0x400000 고정 로드였던 이유이기도 하다.
+RUN sed -i 's/^FC\t= g77/FC\t= gfortran/' Makefile src/Makefile.proto \
+ && sed -i 's/^CC\t= gcc/CC\t= gcc -std=gnu89 -fcommon -fno-pie -no-pie/' Makefile src/Makefile.proto \
+ && sed -i 's/^FOPT\t= -O2/FOPT\t= -O2 -std=legacy -fno-pie/' Makefile src/Makefile.proto \
+ && sed -i '/^[a-z_]*\.o: \/usr\/include/d' src/keyread/Makefile
+
+# 코드 수정. 적용에 실패하면 빌드를 멈춘다 — 조용히 안 고쳐진 채로 나가면
+# 격자를 조금만 키워도 죽는 바이너리가 배포된다.
+RUN for p in /patches/*.patch; do patch -p1 --batch --forward < "$p"; done
+
+RUN SUPREM4_HOME=/build make depend \
+ && SUPREM4_HOME=/build make install \
+ ; test -x /build/src/suprem
+
+# ── 2단계: 실행 이미지 ──────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
 # suprem 은 x86-64 동적 링크 실행파일이고 의존성은 libc.so.6 / libm.so.6 뿐이다
 # (ldd 로 확인). 베이스 이미지에 이미 있으므로 추가 패키지 설치가 필요 없다.
-# 패키지를 안 깔면 공격 표면도 그만큼 줄어든다.
+# 패키지를 안 깔면 공격 표면도 그만큼 줄어든다. 빌드 도구는 여기 오지 않는다.
 
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin suprem
 
 # 바이너리와 물성 데이터는 root 소유 + 쓰기 불가.
 # 실행 유저(suprem)가 자기 실행 환경을 고쳐 쓰지 못하게 한다.
-COPY SUPREM4GS/suprem   /opt/suprem4gs/suprem
+COPY --from=builder /build/src/suprem /opt/suprem4gs/suprem
+# 물성 데이터는 기존 것을 그대로 쓴다. 상류 것과 내용은 같고 줄바꿈만 다른데,
+# 바꾸면 결과가 달라지는지 다시 검증해야 하므로 이번에 함께 건드리지 않는다.
 COPY SUPREM4GS/data/    /opt/suprem4gs/data/
 
 RUN chown -R root:root /opt/suprem4gs \
@@ -43,21 +86,15 @@ ENV SUP4KEYFILE=/opt/suprem4gs/data/suprem.uk \
     SUP4IMPDATA=/opt/suprem4gs/data/sup4gs.imp \
     SUP4MANDIR=/opt/suprem4gs/help
 
-# 격자가 조금만 커지면 `diffuse` 가 세그폴트로 죽는 것을 막는다.
+# 큰 할당을 힙에 두어 realloc 이 제자리에서 늘어나게 한다.
 #
-# 시뮬레이터의 희소행렬 작업공간은 realloc 으로 두 배씩 커지는 자체 풀인데,
-# min_ia_fill 이 그 realloc 뒤에도 **호출 전에 구한 포인터를 계속 쓴다**
-# (crash 직전 세 명령어: call new_storage → freelist 는 다시 읽고 → %rbx 는
-# 옛 주소 그대로 역참조). 1993년 malloc 은 큰 블록도 힙에서 잡아 대개 제자리
-# 확장이라 이 버그가 잠들어 있었지만, 현대 glibc 는 128KB 를 넘는 할당을
-# mmap 으로 돌리고 늘릴 때 mremap 으로 주소를 옮겨 버그를 깨운다.
+# min_ia_fill 의 포인터 문제는 patches/ 에서 근본적으로 고쳤으므로 이 변수는
+# 더 이상 그 버그를 막기 위한 것이 아니다. 다만 이 코드베이스에는 realloc 로
+# 자라는 자료구조가 여럿 있고(예: dbase/list.c 의 add_list), 그중 어디에
+# 같은 종류의 문제가 더 남아 있는지 전부 확인하지 못했다. 제자리 확장을
+# 유도해 두면 그런 잠복 버그의 발동 확률이 낮아진다.
 #
-# 임계값을 올려 큰 할당도 힙에 두면 제자리 확장이 되어 옛 포인터가 유효한 채로
-# 남는다. **버그를 고치는 것이 아니라 발동 조건을 피하는 것이다** — 풀이
-# 아주 커지면 결국 옮겨질 수 있으므로 격자 크기 제약이 사라지지는 않는다.
-#
-# 실측: 이것만으로 죽던 격자 3종이 모두 통과했고, 양쪽에서 모두 도는 격자의
-# 결과 `.str` 은 바이트 단위로 동일했다(값을 바꾸지 않는다는 뜻).
+# 결과에는 영향이 없다 — 켠 것과 끈 것의 `.str` 이 바이트 단위로 같았다.
 ENV MALLOC_MMAP_THRESHOLD_=1073741824
 
 USER suprem
@@ -66,4 +103,9 @@ USER suprem
 # 허용되는 유일한 경로다.
 WORKDIR /work
 
-ENTRYPOINT ["/opt/suprem4gs/suprem"]
+# **줄 단위로 흘려보낸다.** 기본 블록 버퍼링이면 시뮬레이터가 신호로 죽을 때
+# 버퍼가 통째로 사라져 로그가 완전히 빈 채로 남는다(exit 139, log='' 로 실측).
+# 그러면 화면에 아무 단서도 없어 사용자가 자기 입력 문법을 의심하게 된다.
+# stdbuf 는 LD_PRELOAD 로 stdio 버퍼링만 바꾼다 — 바이너리는 그대로다.
+# --tty 로 해결하지 않는 이유는 제어문자가 섞여 로그 파싱이 깨지기 때문이다.
+ENTRYPOINT ["stdbuf", "-oL", "-eL", "/opt/suprem4gs/suprem"]

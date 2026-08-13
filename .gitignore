@@ -82,3 +82,17 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/blob-report/
 var/staging/
+
+# ─────────────────────────────────────────────────────────────
+# 상류 소스 빌드 산출물
+# SUPREM4GS/upstream 은 rafael1193/suprem4gs @ 33e9043 의 원본 트리다.
+# 컨테이너 안에서만 빌드하므로 호스트에 목적 파일이 생길 일은 없지만,
+# 실수로 로컬 빌드를 돌렸을 때 딸려 들어가지 않게 막는다.
+# ─────────────────────────────────────────────────────────────
+SUPREM4GS/upstream/**/*.o
+SUPREM4GS/upstream/**/*.a
+SUPREM4GS/upstream/src/suprem
+SUPREM4GS/upstream/src/arlib/
+SUPREM4GS/upstream/src/keyread/keyread
+SUPREM4GS/upstream/bin/
+SUPREM4GS/upstream/lib/

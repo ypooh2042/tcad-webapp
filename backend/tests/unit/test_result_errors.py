@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.runner.results import describe_abnormal_exit, SimulationResult, extract_errors
+from app.runner.results import GRID_POINTS_PER_REGION, describe_abnormal_exit, SimulationResult, extract_errors
 
 BANNER = (
     "SUPREM-IV.GS B.9305\n"
@@ -143,3 +143,44 @@ class TestAbnormalTermination:
     def test_covers_other_signals(self) -> None:
         assert "SIGABRT" in describe_abnormal_exit(134)
         assert "SIGKILL" in describe_abnormal_exit(137)
+
+
+class TestGridLimit:
+    """격자가 시뮬레이터 내부 상한을 넘었을 때.
+
+    영역 하나의 변 개수가 32,767 을 넘으면 `add_list` 의 short 카운터가 음수로
+    뒤집혀 버퍼 밖에 쓴다(geom.h 의 `struct list_str`). 삼각형 격자에서 변은
+    점의 약 3배이므로 **영역당 약 10,900점**이 상한이다.
+
+    죽기 직전 로그에 격자 크기가 찍히므로, 그 숫자를 근거로 원인을 짚어 줄 수
+    있다. 숫자가 없으면 짐작하지 않는다.
+    """
+
+    LOG = "Mesh statistics Mesh Creation:\n    Points = 12236\tNodes = 12500\t\n"
+
+    def test_points_at_the_grid_when_the_mesh_was_large(self) -> None:
+        message = describe_abnormal_exit(139, self.LOG)
+
+        assert "12,236" in message
+        assert f"{GRID_POINTS_PER_REGION:,}" in message
+
+    def test_stays_generic_for_a_small_mesh(self) -> None:
+        # 작은 격자에서 죽은 것은 다른 이유다. 격자를 탓하면 엉뚱한 곳을 고친다.
+        small = "Mesh statistics Mesh Creation:\n    Points = 420\tNodes = 430\t\n"
+
+        message = describe_abnormal_exit(139, small)
+
+        assert f"{GRID_POINTS_PER_REGION:,}" not in message
+        assert "SIGSEGV" in message
+
+    def test_stays_generic_when_the_log_says_nothing(self) -> None:
+        assert f"{GRID_POINTS_PER_REGION:,}" not in describe_abnormal_exit(139, "")
+
+    def test_uses_the_last_mesh_size_in_the_log(self) -> None:
+        # 공정이 진행되며 격자가 커진다. 죽은 시점의 크기가 알고 싶은 값이다.
+        log = (
+            "    Points = 3000\tNodes = 3100\t\n"
+            "    Points = 11500\tNodes = 11800\t\n"
+        )
+
+        assert "11,500" in describe_abnormal_exit(139, log)

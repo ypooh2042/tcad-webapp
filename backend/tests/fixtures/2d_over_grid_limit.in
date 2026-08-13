@@ -1,0 +1,17 @@
+# 영역 하나가 시뮬레이터 내부 상한을 넘는 격자.
+#
+# geom.h 의 `struct list_str` 이 개수를 short 로 센다. 영역의 변이 32,767 을
+# 넘으면 카운터가 음수로 뒤집혀 버퍼 밖에 쓰고 죽는다. 여기서 확인하는 것은
+# **죽는다는 사실이 아니라, 왜 죽었는지 사용자에게 전달되는가** 이다.
+line x location=-2 spacing=0.02 tag=left
+line x location=2 spacing=0.02 tag=right
+line y loc=0 spacing=0.01 tag=top
+line y loc=0.6 spacing=0.01
+line y loc=0.8 spacing=0.1
+line y loc=1.5 spacing=0.2
+line y loc=3 spacing=1 tag=bottom
+region silicon xlo=left xhi=right ylo=top yhi=bottom
+bound exposed  xlo=left xhi=right ylo=top  yhi=top
+bound backside xlo=left xhi=right ylo=bottom yhi=bottom
+initialize boron conc=1.0e15 ori=100
+structure out=big.str

@@ -113,7 +113,7 @@ def run_simulation(
 
     # 신호로 죽었으면 로그가 비어 나온다. 그대로 두면 화면에 아무 단서도
     # 남지 않아 사용자가 자기 입력을 의심하며 시간을 버린다.
-    if (abnormal := describe_abnormal_exit(exit_code)) and not timed_out:
+    if (abnormal := describe_abnormal_exit(exit_code, log)) and not timed_out:
         errors.append(abnormal)
 
     structure_files = collect_structure_files(workdir, source)

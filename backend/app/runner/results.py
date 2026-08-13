@@ -79,25 +79,59 @@ _SIGNAL_NAMES = {
 }
 
 
-def describe_abnormal_exit(exit_code: int) -> str | None:
+#: 로그에 찍히는 격자 크기. 공정이 진행되며 여러 번 나오므로 마지막 것을 쓴다.
+_MESH_POINTS_RE = re.compile(r"Points\s*=\s*(\d+)")
+
+#: 영역 하나가 감당하는 점의 대략적 상한.
+#:
+#: geom.h 의 `struct list_str` 이 개수를 short 로 센다. 영역의 변 목록이
+#: 32,767 을 넘으면 카운터가 음수로 뒤집히고, `add_list` 는 그때부터 버퍼를
+#: 늘리지 않은 채 계속 쓴다. 삼각형 격자에서 변은 점의 약 3배다.
+GRID_POINTS_PER_REGION = 32_767 // 3
+
+#: 이 크기 아래에서 죽었다면 격자 탓으로 보기 어렵다. 엉뚱한 곳을 고치게
+#: 만들지 않으려면 짐작하지 않는 편이 낫다.
+_GRID_BLAME_FLOOR = 8_000
+
+
+def mesh_points(log: str) -> int | None:
+    """로그가 마지막으로 알린 격자 크기. 없으면 None."""
+    found = _MESH_POINTS_RE.findall(log)
+    return int(found[-1]) if found else None
+
+
+def describe_abnormal_exit(exit_code: int, log: str = "") -> str | None:
     """신호로 죽은 실행에 붙일 설명. 정상 종료면 None.
 
     **세그폴트가 나면 로그가 통째로 빈다** — 버퍼가 플러시되지 못하고 사라지기
     때문이다. 그러면 오류 줄이 하나도 없어 화면에 아무 단서도 남지 않는다.
     입력 문법 문제로 오해하기 딱 좋아서, 무엇이 일어났는지 대신 적어 준다.
 
-    격자를 가리키는 이유: 이 비정상 종료는 거의 전부 시뮬레이터가 희소행렬
-    작업공간을 키우다 옛 포인터를 참조해 죽는 경우이고, 그 발동 조건이 격자
-    크기다. 컨테이너에서 완화해 두었지만 충분히 크면 여전히 재현된다.
+    격자가 컸다면 그 숫자를 근거로 원인을 짚는다. 작았다면 짐작하지 않는다 —
+    비정상 종료의 원인이 격자 하나뿐인 것은 아니다.
     """
     if exit_code <= 128:
         return None
     name = _SIGNAL_NAMES.get(exit_code - 128)
     if name is None:
         return None
+
+    opening = (
+        f"시뮬레이터가 비정상 종료했습니다({name})."
+        " 입력 문법 문제가 아니라 시뮬레이터 내부에서 죽은 것입니다."
+    )
+
+    points = mesh_points(log)
+    if points is not None and points >= _GRID_BLAME_FLOOR:
+        return (
+            f"{opening} 마지막으로 만든 격자가 {points:,}점입니다."
+            f" 영역 하나가 약 {GRID_POINTS_PER_REGION:,}점을 넘으면 시뮬레이터"
+            " 내부 한계에 걸립니다 — 촘촘한 구간을 좁히거나 격자선을 줄여 보세요."
+            " 한계는 영역별이라, 층이 여러 개면 전체 점수는 더 커도 됩니다."
+        )
+
     return (
-        f"시뮬레이터가 비정상 종료했습니다({name}). 입력 문법 문제가 아니라"
-        " 시뮬레이터 내부에서 죽은 것입니다. 격자를 성기게 하면 대개 넘어갑니다"
+        f"{opening} 격자를 성기게 하면 넘어가는 경우가 많습니다"
         " — 촘촘한 구간을 좁히거나 반대 방향 격자선을 줄여 보세요."
     )
 

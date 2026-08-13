@@ -1,0 +1,74 @@
+--- a/src/math/min_fill.c
++++ b/src/math/min_fill.c
+@@ -39,8 +39,22 @@
+ 
+ /* All links come off a single big list */
+ typedef struct _link {struct _link *n; int v;} link;
+-link *storage, *freelist;
++link *freelist;
+ int   storage_size;
++
++/* 이미 나눠준 link 포인터가 살아 있는 동안 풀을 **절대 옮기지 않는다.**
++ *
++ * 예전에는 realloc 으로 두 배씩 키웠다. 그러면 nbrs[] 와 소거 루프의 지역변수
++ * p, q, lastq, workl 이 들고 있던 포인터가 전부 옛 블록을 가리키게 되어,
++ * 해제된 메모리를 따라가다 죽었다. 격자를 조금만 촘촘히 깔아도 재현된다.
++ * 1993년 malloc 은 대개 제자리에서 늘려 줘 이 버그가 드러나지 않았지만,
++ * 현대 glibc 는 큰 블록을 mmap 으로 잡고 늘릴 때 주소를 옮긴다.
++ *
++ * 덩어리를 새로 잡아 목록에만 이어 두면 기존 포인터가 그대로 유효하다.
++ * 총 할당량은 예전과 같다(s + 2s + 4s + ...). */
++#define MAX_CHUNKS 64
++static link *chunks[ MAX_CHUNKS];
++static int   nchunks;
+ int   su, hwm;			/* Storage used, high water mark */
+ 
+ #define takefrom( F, O) {link *t = (O); (O) = (F); (F) = (F)->n; (O)->n = t;}
+@@ -97,7 +111,7 @@
+     nbrs = salloc( link, nn);
+     storage_size = 1.5*ia[ nn];
+     su = hwm = 0;
+-    storage = 0;
++    nchunks = 0;
+     new_storage();
+ 
+     /* Initialize link table */
+@@ -241,7 +255,7 @@
+ 		hwm, (float) hwm / ia[ nn], total);
+ 
+     free(nbrs);
+-    free(storage);
++    while (nchunks) free( chunks[ --nchunks]);
+     free(order);
+     return( total - nn);
+ }
+@@ -265,18 +279,17 @@
+ {
+     link *start, *end, *p;
+ 
+-    if (!storage) {
+-	storage = salloc( link, storage_size);
+-	start = storage;
+-	end   = storage + storage_size -1;
+-    }
+-    else {
+-	storage = sralloc( link, 2*storage_size, storage);
+-	start = storage + storage_size;
+-	end   = storage + 2*storage_size -1;
+-	storage_size *= 2;
+-    }
+-    assert( storage);
++    assert( nchunks < MAX_CHUNKS);
++
++    /* **원래 코드와 똑같은 개수만큼 늘린다.** 매번 지금 총량만큼 덧붙이면
++     * 총합이 두 배가 되어 예전 realloc 판과 일치한다. 개수가 어긋나면
++     * freelist 재활용 순서가 달라지고, 그것이 최소차수 정렬의 tie-break 를
++     * 바꿔 결과가 반올림 수준에서 흔들린다(CMOS 예제에서 실제로 겪었다). */
++    start = salloc( link, storage_size);
++    assert( start);
++    chunks[ nchunks++] = start;
++    end = start + storage_size - 1;
++    if (nchunks > 1) storage_size *= 2;
+ 
+     for (p = start; p < end; p++) p->n = p+1;
+     end->n = 0;

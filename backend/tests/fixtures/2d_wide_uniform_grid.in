@@ -1,0 +1,18 @@
+# 균일한 가로 격자 위의 초기 산화.
+#
+# 이 격자는 컨테이너의 MALLOC_MMAP_THRESHOLD_ 완화로도 살릴 수 없었다.
+# 소스에서 min_fill 의 포인터 문제를 고쳐야만 통과한다 — 완화는 realloc 이
+# 제자리에서 늘어나도록 유도할 뿐이라 힙 상태에 따라 여전히 옮겨진다.
+line x location=-2 spacing=0.06 tag=left
+line x location=2 spacing=0.06 tag=right
+line y loc=0 spacing=0.01 tag=top
+line y loc=0.4 spacing=0.01
+line y loc=0.8 spacing=0.1
+line y loc=1.5 spacing=0.2
+line y loc=3 spacing=1 tag=bottom
+region silicon xlo=left xhi=right ylo=top yhi=bottom
+bound exposed  xlo=left xhi=right ylo=top  yhi=top
+bound backside xlo=left xhi=right ylo=bottom yhi=bottom
+initialize boron conc=1.0e15 ori=100
+diffuse time=5 temp=1050 dryo2
+structure out=oxidation.str
