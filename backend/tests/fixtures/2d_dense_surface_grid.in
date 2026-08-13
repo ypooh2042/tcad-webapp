@@ -1,0 +1,20 @@
+# 표면 근처를 촘촘히 깐 2D 격자 위에서의 초기 산화.
+#
+# 이 격자는 예전에 세그폴트로 죽었다. 시뮬레이터의 희소행렬 작업공간이
+# realloc 으로 커질 때 min_ia_fill 이 옛 포인터를 계속 쓰기 때문이다.
+# 컨테이너에서 MALLOC_MMAP_THRESHOLD_ 를 올려 제자리 확장을 유도해 피한다.
+line x location=-2 spacing=0.1 tag=left
+line x location=-1 spacing=0.05
+line x location=1 spacing=0.05
+line x location=2 spacing=0.1 tag=right
+line y loc=0 spacing=0.01 tag=top
+line y loc=0.4 spacing=0.01
+line y loc=0.8 spacing=0.1
+line y loc=1.5 spacing=0.2
+line y loc=3 spacing=1 tag=bottom
+region silicon xlo=left xhi=right ylo=top yhi=bottom
+bound exposed  xlo=left xhi=right ylo=top  yhi=top
+bound backside xlo=left xhi=right ylo=bottom yhi=bottom
+initialize boron conc=1.0e15 ori=100
+diffuse time=5 temp=1050 dryo2
+structure out=oxidation.str

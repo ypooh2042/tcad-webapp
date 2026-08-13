@@ -156,3 +156,46 @@ class TestResourceLimits:
         )
         assert result.timed_out or result.exit_code != 0
         assert not result.succeeded
+
+
+@requires_sandbox
+class TestDenseGridSurvivesOxidation:
+    """격자를 촘촘히 깔면 죽던 문제.
+
+    시뮬레이터의 희소행렬 작업공간은 realloc 으로 두 배씩 커지는 자체 풀인데,
+    `min_ia_fill` 이 그 realloc **뒤에도 호출 전에 구한 포인터를 계속 쓴다.**
+    1993년 malloc 은 큰 블록도 힙에서 잡아 대개 제자리 확장이라 이 버그가
+    잠들어 있었지만, 현대 glibc 는 큰 할당을 mmap 으로 돌리고 늘릴 때 주소를
+    옮겨 버그를 깨운다. 컨테이너가 MALLOC_MMAP_THRESHOLD_ 를 올려 피한다.
+
+    이 테스트는 그 환경변수가 이미지에서 빠지면 빨간불이 된다.
+    """
+
+    def test_dense_surface_grid_completes_oxidation(self, tmp_path: Path) -> None:
+        source = (FIXTURES / "2d_dense_surface_grid.in").read_text()
+
+        result = run_simulation(source, tmp_path / "job")
+
+        assert result.succeeded, result.log[-2000:]
+        assert [f.name for f in result.structure_files] == ["oxidation.str"]
+
+    def test_oxide_actually_grew(self, tmp_path: Path) -> None:
+        """죽지 않는 것만으로는 부족하다 — 결과가 물리적으로 맞아야 한다."""
+        source = (FIXTURES / "2d_dense_surface_grid.in").read_text()
+
+        result = run_simulation(source, tmp_path / "job")
+        structure = parse_structure(result.structure_files[0].read_text())
+
+        materials = {r.material for r in structure.regions}
+        assert "oxide" in materials
+
+        by_region = {r.id: r.material for r in structure.regions}
+        oxide_y = [
+            structure.coordinates[v].y
+            for element in structure.elements
+            if by_region[element.region_id] == "oxide"
+            for v in element.vertices
+        ]
+        # 1050도 건식산화 5분이면 20nm 안팎이다. 자릿수가 어긋나면 결과가 깨진 것이다.
+        thickness = max(oxide_y) - min(oxide_y)
+        assert 0.005 < thickness < 0.05, thickness

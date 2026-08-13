@@ -43,6 +43,23 @@ ENV SUP4KEYFILE=/opt/suprem4gs/data/suprem.uk \
     SUP4IMPDATA=/opt/suprem4gs/data/sup4gs.imp \
     SUP4MANDIR=/opt/suprem4gs/help
 
+# 격자가 조금만 커지면 `diffuse` 가 세그폴트로 죽는 것을 막는다.
+#
+# 시뮬레이터의 희소행렬 작업공간은 realloc 으로 두 배씩 커지는 자체 풀인데,
+# min_ia_fill 이 그 realloc 뒤에도 **호출 전에 구한 포인터를 계속 쓴다**
+# (crash 직전 세 명령어: call new_storage → freelist 는 다시 읽고 → %rbx 는
+# 옛 주소 그대로 역참조). 1993년 malloc 은 큰 블록도 힙에서 잡아 대개 제자리
+# 확장이라 이 버그가 잠들어 있었지만, 현대 glibc 는 128KB 를 넘는 할당을
+# mmap 으로 돌리고 늘릴 때 mremap 으로 주소를 옮겨 버그를 깨운다.
+#
+# 임계값을 올려 큰 할당도 힙에 두면 제자리 확장이 되어 옛 포인터가 유효한 채로
+# 남는다. **버그를 고치는 것이 아니라 발동 조건을 피하는 것이다** — 풀이
+# 아주 커지면 결국 옮겨질 수 있으므로 격자 크기 제약이 사라지지는 않는다.
+#
+# 실측: 이것만으로 죽던 격자 3종이 모두 통과했고, 양쪽에서 모두 도는 격자의
+# 결과 `.str` 은 바이트 단위로 동일했다(값을 바꾸지 않는다는 뜻).
+ENV MALLOC_MMAP_THRESHOLD_=1073741824
+
 USER suprem
 
 # 잡별 스크래치 디렉토리가 여기에 rw 로 마운트된다. 컨테이너 안에서 쓰기가

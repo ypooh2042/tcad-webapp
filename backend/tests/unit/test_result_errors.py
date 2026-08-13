@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.runner.results import SimulationResult, extract_errors
+from app.runner.results import describe_abnormal_exit, SimulationResult, extract_errors
 
 BANNER = (
     "SUPREM-IV.GS B.9305\n"
@@ -115,3 +115,31 @@ class TestShellFallthrough:
         log = f"{BANNER}/bin/bash: 줄 1: strcture: 명령어를 찾을 수 없음\n"
 
         assert extract_errors(log)
+
+
+class TestAbnormalTermination:
+    """시뮬레이터가 신호로 죽었을 때.
+
+    세그폴트가 나면 **로그가 통째로 비어 나온다** — 버퍼가 플러시되지 못하고
+    사라지기 때문이다. 오류 줄이 없으니 화면에 아무 단서도 남지 않고, 사용자는
+    왜 실패했는지 알 방법이 없다(exit_code=139, log='' 로 실측).
+    """
+
+    def test_names_the_signal(self) -> None:
+        message = describe_abnormal_exit(139)
+
+        assert message is not None
+        assert "SIGSEGV" in message
+
+    def test_points_at_the_grid_not_the_syntax(self) -> None:
+        # 문법 오류로 오해하면 멀쩡한 입력을 붙들고 시간을 버린다.
+        assert "격자" in describe_abnormal_exit(139)
+
+    def test_says_nothing_for_a_normal_exit(self) -> None:
+        assert describe_abnormal_exit(0) is None
+        # 커맨드 오류는 로그가 설명한다. 여기서 덧붙이면 잡음이다.
+        assert describe_abnormal_exit(1) is None
+
+    def test_covers_other_signals(self) -> None:
+        assert "SIGABRT" in describe_abnormal_exit(134)
+        assert "SIGKILL" in describe_abnormal_exit(137)

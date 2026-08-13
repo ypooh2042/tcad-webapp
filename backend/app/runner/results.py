@@ -70,6 +70,38 @@ class SimulationResult:
         return not self.timed_out and not self.errors and self.exit_code == 0
 
 
+#: 신호로 죽었을 때 붙이는 설명. 종료 코드 128+N 이 신호 N 을 뜻한다.
+_SIGNAL_NAMES = {
+    6: "SIGABRT",
+    7: "SIGBUS",
+    9: "SIGKILL",
+    11: "SIGSEGV",
+}
+
+
+def describe_abnormal_exit(exit_code: int) -> str | None:
+    """신호로 죽은 실행에 붙일 설명. 정상 종료면 None.
+
+    **세그폴트가 나면 로그가 통째로 빈다** — 버퍼가 플러시되지 못하고 사라지기
+    때문이다. 그러면 오류 줄이 하나도 없어 화면에 아무 단서도 남지 않는다.
+    입력 문법 문제로 오해하기 딱 좋아서, 무엇이 일어났는지 대신 적어 준다.
+
+    격자를 가리키는 이유: 이 비정상 종료는 거의 전부 시뮬레이터가 희소행렬
+    작업공간을 키우다 옛 포인터를 참조해 죽는 경우이고, 그 발동 조건이 격자
+    크기다. 컨테이너에서 완화해 두었지만 충분히 크면 여전히 재현된다.
+    """
+    if exit_code <= 128:
+        return None
+    name = _SIGNAL_NAMES.get(exit_code - 128)
+    if name is None:
+        return None
+    return (
+        f"시뮬레이터가 비정상 종료했습니다({name}). 입력 문법 문제가 아니라"
+        " 시뮬레이터 내부에서 죽은 것입니다. 격자를 성기게 하면 대개 넘어갑니다"
+        " — 촘촘한 구간을 좁히거나 반대 방향 격자선을 줄여 보세요."
+    )
+
+
 def extract_errors(log: str) -> tuple[str, ...]:
     """로그(stdout+stderr)에서 오류 줄만 골라낸다."""
     return tuple(

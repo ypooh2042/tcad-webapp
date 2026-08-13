@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 from app.runner.results import (
+    describe_abnormal_exit,
     SimulationResult,
     collect_structure_files,
     extract_errors,
@@ -109,6 +110,11 @@ def run_simulation(
             f"출력이 상한({limits.max_output_mb}MB)을 넘었습니다. "
             f"실행을 중단하고 결과를 버렸습니다."
         )
+
+    # 신호로 죽었으면 로그가 비어 나온다. 그대로 두면 화면에 아무 단서도
+    # 남지 않아 사용자가 자기 입력을 의심하며 시간을 버린다.
+    if (abnormal := describe_abnormal_exit(exit_code)) and not timed_out:
+        errors.append(abnormal)
 
     structure_files = collect_structure_files(workdir, source)
 
