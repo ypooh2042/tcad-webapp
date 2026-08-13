@@ -30,6 +30,10 @@ class SessionLimitExceeded(Exception):
 class SessionPolicy:
     max_concurrent: int = 10
     idle_timeout: timedelta = timedelta(minutes=30)
+    #: 관리자 쿠키 수명. 관리자는 유휴 만료를 면제받아 서버 세션이 죽지 않는데,
+    #: 쿠키에까지 유휴 상한을 걸면 브라우저 쪽에서만 30분마다 끊겨 면제가
+    #: 무의미해진다 — 실제로 30분마다 다시 로그인해야 했다.
+    admin_cookie_lifetime: timedelta = timedelta(days=30)
 
     def is_active(self, session: Session, now: datetime) -> bool:
         """유휴 시간이 상한을 넘지 않았는지. 관리자는 항상 활성이다.
@@ -43,6 +47,23 @@ class SessionPolicy:
     def ttl_for(self, role: Role) -> timedelta | None:
         """저장소에 걸 만료 시간. 관리자는 만료시키지 않는다."""
         return None if role.is_exempt_from_limits else self.idle_timeout
+
+    def cookie_max_age(self, role: Role) -> int:
+        """브라우저에 걸 쿠키 수명(초).
+
+        저장소 TTL 과 짝을 이뤄야 한다. 서버가 세션을 살려 둬도 **브라우저가
+        쿠키를 버리면 사용자에게는 로그아웃과 같다.**
+
+        일반 사용자는 유휴 상한이 곧 수명이고, 요청마다 다시 심어 갱신한다.
+        관리자는 만료가 없으므로 쿠키에만 유한한 수명이 남는데, 그걸 30분으로
+        두면 면제가 사라진다.
+        """
+        lifetime = (
+            self.admin_cookie_lifetime
+            if role.is_exempt_from_limits
+            else self.idle_timeout
+        )
+        return int(lifetime.total_seconds())
 
     async def open_session(
         self,

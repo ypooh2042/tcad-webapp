@@ -11,9 +11,10 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from fastapi import Cookie, Depends, HTTPException, Request, status
+from fastapi import Cookie, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.cookies import set_session_cookie
 from app.auth.models import Session
 from app.auth.policy import SessionPolicy
 from app.auth.store import SessionStore
@@ -54,6 +55,7 @@ def get_app_settings(request: Request) -> Settings:
 
 
 async def current_session(
+    response: Response,
     tcad_session: str | None = Cookie(default=None),
     store: SessionStore = Depends(get_session_store),
     policy: SessionPolicy = Depends(get_session_policy),
@@ -63,6 +65,10 @@ async def current_session(
 
     유효한 세션이면 활동 시각을 갱신한다. 이것이 "30분간 동작이 없으면 강제
     로그아웃" 규칙의 실제 동작 지점이다.
+
+    **쿠키도 함께 다시 심는다.** 서버에서만 시간을 미루면 브라우저의 쿠키는
+    로그인 시점 기준으로 만료되어, 계속 쓰고 있는데도 로그인 30분 뒤에 딱
+    끊긴다. 미루는 쪽과 기억하는 쪽이 같이 움직여야 한다.
     """
     if not tcad_session:
         raise HTTPException(
@@ -70,7 +76,7 @@ async def current_session(
         )
 
     try:
-        return await policy.touch(
+        session = await policy.touch(
             store, tcad_session, now=datetime.now(timezone.utc)
         )
     except KeyError:
@@ -78,6 +84,9 @@ async def current_session(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="세션이 만료되었습니다. 다시 로그인해 주세요.",
         ) from None
+
+    set_session_cookie(response, session, settings, policy)
+    return session
 
 
 async def require_admin(session: Session = Depends(current_session)) -> Session:

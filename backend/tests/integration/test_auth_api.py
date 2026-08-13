@@ -225,3 +225,103 @@ class TestConcurrentLimitOverHttp:
 
         assert response.status_code == 503
         assert "정원" in response.json()["detail"]
+
+
+async def make_admin(app, email: str) -> None:
+    """관리자 계정을 DB 에 직접 만든다. 승격 경로는 여기서 검증 대상이 아니다."""
+    async with app.state.sessionmaker() as session:
+        session.add(
+            User(
+                email=email,
+                password_hash=hash_password(PASSWORD),
+                role="admin",
+            )
+        )
+        await session.commit()
+
+
+async def login(client, email: str):
+    return await client.post(
+        "/api/auth/login", json={"email": email, "password": PASSWORD}
+    )
+
+
+def max_age_of(response) -> int | None:
+    """세션 쿠키의 max-age. 없으면 브라우저를 닫을 때까지 사는 세션 쿠키다.
+
+    **Set-Cookie 는 여러 번 나갈 수 있다.** 의존성이 갱신용으로 한 번 심고
+    로그아웃이 지우는 식이다. 브라우저는 순서대로 적용하므로 마지막 것이 최종
+    상태다 — 첫 번째를 읽으면 지운 뒤에도 살아 있다고 잘못 읽는다.
+    """
+    headers = [
+        value
+        for key, value in response.headers.multi_items()
+        if key.lower() == "set-cookie" and value.startswith("tcad_session=")
+    ]
+    assert headers, "세션 쿠키가 나가지 않았습니다"
+    for part in headers[-1].split(";"):
+        name, _, value = part.strip().partition("=")
+        if name.lower() == "max-age":
+            return int(value)
+    return None
+
+
+class TestCookieLifetime:
+    """쿠키가 사는 기간.
+
+    서버가 세션을 살려 둬도 **브라우저가 쿠키를 버리면 로그아웃된 것과 같다.**
+    관리자는 유휴 만료를 면제받는데 쿠키만 30분짜리로 나가고 있었고, 그래서
+    30분마다 다시 로그인해야 했다.
+    """
+
+    async def test_admin_cookie_outlives_the_idle_timeout(
+        self, client, app_and_state
+    ) -> None:
+        await make_admin(app_and_state, "root@example.com")
+
+        response = await login(client, "root@example.com")
+
+        idle = int(SessionPolicy().idle_timeout.total_seconds())
+        assert max_age_of(response) is None or max_age_of(response) > idle
+
+    async def test_user_cookie_matches_the_idle_timeout(self, client) -> None:
+        # 일반 사용자는 유휴 상한이 곧 세션 수명이다.
+        await register(client, "a@example.com")
+
+        response = await login(client, "a@example.com")
+
+        assert max_age_of(response) == int(
+            SessionPolicy().idle_timeout.total_seconds()
+        )
+
+    async def test_activity_extends_the_user_cookie(self, client) -> None:
+        """움직이는 동안에는 쫓겨나지 않아야 한다.
+
+        서버는 요청마다 활동 시각을 미루는데 쿠키는 로그인 시점에 한 번만
+        나갔다. 그래서 계속 쓰고 있어도 로그인 30분 뒤에 딱 끊겼다.
+        """
+        await register(client, "b@example.com")
+        await login(client, "b@example.com")
+
+        response = await client.get("/api/auth/me")
+
+        assert response.status_code == 200
+        assert max_age_of(response) == int(
+            SessionPolicy().idle_timeout.total_seconds()
+        )
+
+    async def test_logout_still_clears_the_cookie(self, client) -> None:
+        """요청마다 쿠키를 다시 심게 되면서 생긴 위험.
+
+        의존성이 먼저 쿠키를 심고 그 다음 로그아웃이 지운다. 순서가 뒤집히면
+        로그아웃해도 브라우저에 세션이 남는다.
+        """
+        await register(client, "c@example.com")
+        await login(client, "c@example.com")
+
+        response = await client.post("/api/auth/logout")
+
+        assert response.status_code == 204
+        # 지우는 쪽이 마지막이어야 한다.
+        assert max_age_of(response) == 0
+        assert (await client.get("/api/auth/me")).status_code == 401

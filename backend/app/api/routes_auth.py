@@ -36,6 +36,7 @@ from app.auth.models import Role, Session
 from app.auth.passwords import MIN_PASSWORD_LENGTH
 from app.auth.policy import SessionLimitExceeded, SessionPolicy
 from app.auth.service import EmailAlreadyRegistered, authenticate, register_user
+from app.auth.cookies import set_session_cookie
 from app.auth.store import SessionStore
 from app.core.config import Settings
 
@@ -136,7 +137,7 @@ async def login(
             ),
         ) from None
 
-    _set_session_cookie(response, session, settings, policy)
+    set_session_cookie(response, session, settings, policy)
     return UserResponse(id=user.id, email=user.email, role=user.role)
 
 
@@ -173,29 +174,6 @@ async def me(
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
     return UserResponse(id=user.id, email=user.email, role=user.role)
-
-
-def _set_session_cookie(
-    response: Response,
-    session: Session,
-    settings: Settings,
-    policy: SessionPolicy,
-) -> None:
-    """세션 쿠키를 심는다.
-
-    httponly: JS 가 읽지 못하게 해 XSS 로 세션이 새는 것을 막는다.
-    samesite=lax: 외부 사이트에서 넘어온 POST 에 쿠키가 실리지 않게 해 CSRF 를 줄인다.
-    secure: HTTPS 로만 전송. 운영에서는 반드시 켠다.
-    """
-    response.set_cookie(
-        key=settings.session_cookie_name,
-        value=session.id,
-        httponly=True,
-        samesite="lax",
-        secure=settings.session_cookie_secure,
-        max_age=int(policy.idle_timeout.total_seconds()),
-        path="/",
-    )
 
 
 def _invite_message(error: InviteError) -> str:
