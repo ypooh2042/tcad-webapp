@@ -35,11 +35,61 @@ class TestKnownCodes:
             (21, "active_phosphorus"),
             (22, "active_antimony"),
             (23, "active_boron"),
-            (24, "net_doping"),
+            # 코드 24 는 net doping 이 아니라 **폴리실리콘 결정립 크기**다.
+            # 상류 소스가 정답이다: impurity.h 의 `#define GRN 24`.
+            # 예전에는 net_doping 으로 잘못 이름 붙였고, 폴리가 없는 구조에서
+            # 늘 0 이 나오는 것을 "전기 시뮬레이션을 안 돌려서"로 오해했다.
+            (24, "poly_grain_size"),
         ],
     )
     def test_maps_verified_code_to_name(self, code: int, name: str) -> None:
         assert resolve_species(code).name == name
+
+    @pytest.mark.parametrize(
+        ("code", "name"),
+        [
+            (6, "electrons"),
+            (7, "holes"),
+            # 산화 중에 실제로 나온다. `diffuse dryo2` 를 돌리면 코드 10 이
+            # 담기는데, 이름이 없어 화면에 unknown_10 경고가 떴다.
+            (10, "oxidant_dry"),
+            (11, "oxidant_wet"),
+            (13, "gold"),
+            (15, "stress_xx"),
+            (16, "stress_yy"),
+            (17, "stress_xy"),
+            (18, "cesium"),
+            (25, "ptype_tracer"),
+            (31, "chem_beryllium"),
+            (32, "active_beryllium"),
+            (41, "chem_germanium"),
+            (48, "active_generic"),
+        ],
+    )
+    def test_maps_codes_read_from_upstream_header(
+        self, code: int, name: str
+    ) -> None:
+        """상류 impurity.h 에 정의된 나머지 코드.
+
+        레포에 소스가 들어온 뒤로는 실측으로 추정할 필요가 없다.
+        SUPREM4GS/upstream/src/include/impurity.h 가 정답이다.
+        """
+        assert resolve_species(code).name == name
+
+    def test_extended_dopants_pair_with_offset_one(self) -> None:
+        """확장 도펀트는 chem/active 간격이 1 이다. 고전 4종의 +18 과 다르다."""
+        assert resolve_species(43).name == "chem_zinc"
+        assert resolve_species(44).name == "active_zinc"
+
+    def test_extended_dopants_carry_no_dopant_role(self) -> None:
+        """역할을 함부로 정하지 않는다.
+
+        GaAs 계열에서 Si·Ge 는 양쪽으로 작용할 수 있어(amphoteric) 도너/억셉터를
+        단정하면 net doping 이 틀린다. 이름만 붙이고 역할은 비워 둔다 — 지금도
+        unknown 이라 계산에 안 들어가므로 후퇴가 아니다.
+        """
+        assert resolve_species(38).dopant_role is None
+        assert resolve_species(42).dopant_role is None
 
     def test_unknown_code_is_preserved_not_dropped(self) -> None:
         """미확인 코드도 버리지 않고 보존해야 한다 (데이터 손실 방지)."""

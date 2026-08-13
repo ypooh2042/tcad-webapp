@@ -74,18 +74,17 @@ class TestSurface:
 
 class TestQuantities:
     def test_net_doping_is_computed_not_read(self, cmos_2d) -> None:
-        """CMOS 파일에는 net_doping 컬럼(코드 24)이 실제로 있지만 쓸 수 없다.
+        """net doping 은 파일에 없으므로 활성 농도에서 계산한다.
 
-        전기 시뮬레이션을 돌리지 않은 공정 결과에서는 도핑이 있어도 0 으로
-        기록된다. 저장값을 그대로 보여주면 도핑이 없는 소자처럼 보인다.
+        예전에는 코드 24 를 net_doping 으로 잘못 읽었다. 실제로는 폴리실리콘
+        결정립 크기이고(impurity.h 의 GRN), 늘 0 이라 도핑으로 쓰면 도핑이 없는
+        소자처럼 보였다.
         """
-        assert cmos_2d.table.has(NET_DOPING)  # 컬럼은 존재한다
+        assert not cmos_2d.table.has(NET_DOPING)
 
         computed = [value_of(s, NET_DOPING) for s in cmos_2d.solutions]
-        stored = [s.value(NET_DOPING) for s in cmos_2d.solutions]
 
         assert any(value != 0.0 for value in computed)
-        assert all(value == 0.0 for value in stored)
 
     def test_net_doping_is_donors_minus_acceptors(self, cmos_2d) -> None:
         solution = cmos_2d.solutions[0]

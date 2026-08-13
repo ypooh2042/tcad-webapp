@@ -81,9 +81,9 @@ class NodeSolution:
     def net_doping(self) -> float:
         """활성 도너 − 활성 억셉터.
 
-        파일에 저장된 net_doping(코드 24) 값은 쓰지 않는다. 전기 시뮬레이션을
-        돌리지 않은 순수 공정 결과에서는 실제 도핑이 있어도 0 으로 기록되는 것을
-        CMOS 예제에서 확인했다.
+        **파일에는 net doping 컬럼이 없다.** 한동안 코드 24 를 그것으로 읽었지만
+        상류 impurity.h 는 `GRN`(폴리실리콘 결정립 크기)로 정의한다. 값이 늘
+        0 이라 도핑으로 쓰면 도핑이 없는 소자처럼 보였다.
         """
         donors = sum(self.values[i] for i in self.table.donor_positions)
         acceptors = sum(self.values[i] for i in self.table.acceptor_positions)

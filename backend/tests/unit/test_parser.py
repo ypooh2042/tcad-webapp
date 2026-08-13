@@ -132,7 +132,7 @@ class TestSpeciesOrdering:
             "interstitials",
             "interstitial_traps",
             "potential",
-            "net_doping",
+            "poly_grain_size",
             "chem_phosphorus",
             "active_phosphorus",
             "chem_arsenic",
@@ -162,12 +162,25 @@ class TestSolutionValues:
 
 
 class TestNetDoping:
-    """코드 24(Net doping)의 저장값은 신뢰 불가 — 직접 계산해야 한다."""
+    """net doping 은 파일에 없다 — 활성 농도에서 계산해야 한다.
 
-    def test_stored_net_doping_is_zero_in_cmos(self, cmos_2d) -> None:
-        """실제 도핑이 1e16 수준인데도 저장값은 0 — 이 사실을 회귀로 고정."""
-        silicon = [s for s in cmos_2d.solutions if s.material == "silicon"]
-        assert all(s.value("net_doping") == 0.0 for s in silicon[:50])
+    한동안 코드 24 를 net_doping 으로 잘못 읽었다. 상류 impurity.h 는 그것을
+    `GRN`(폴리실리콘 결정립 크기)로 정의한다. 값이 늘 0 이라 "저장값은 못
+    쓴다"는 결론 자체는 맞았지만, 이유가 틀렸다.
+    """
+
+    def test_file_has_no_net_doping_column(self, cmos_2d) -> None:
+        assert not cmos_2d.table.has("net_doping")
+
+    def test_grain_size_is_zero_even_inside_poly(self, cmos_2d) -> None:
+        """결정립 크기는 폴리 안에서도 0 이다.
+
+        결정립 성장 모델을 켜지 않은 실행이라 그렇다. 이걸 도핑으로 읽으면
+        도핑이 없는 소자로 보인다.
+        """
+        poly = [s for s in cmos_2d.solutions if s.material == "poly"]
+        assert poly, "이 픽스처에는 폴리 영역이 있어야 한다"
+        assert all(s.value("poly_grain_size") == 0.0 for s in poly)
 
     def test_computed_net_doping_is_nonzero(self, cmos_2d) -> None:
         silicon = [s for s in cmos_2d.solutions if s.material == "silicon"]
