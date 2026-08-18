@@ -183,20 +183,29 @@ export function ResultView({ jobId, artifacts }: Props) {
   return (
     <div className="result">
       <div className="scrubber">
-        {/* 슬라이더는 단계가 둘 이상일 때만 의미가 있다. 다만 파일 이름은
-            언제나 보여야 한다 — 지금 무엇을 보고 있는지 알 수 있는 유일한
-            단서다. */}
+        {/* 단계 이동은 버튼이다. 슬라이더는 한 칸씩 옮기기가 어렵고, 끝에
+            닿았는지도 잡아 봐야 안다. 버튼은 끝에서 비활성으로 알려 준다.
+            단계가 하나면 누를 데가 없으므로 아예 두지 않는다. 파일 이름은
+            언제나 보여야 한다 — 지금 무엇을 보고 있는지 아는 유일한 단서다. */}
         {artifacts.length > 1 && (
           <>
-            <label htmlFor="step">공정 단계</label>
-            <input
-              id="step"
-              type="range"
-              min={0}
-              max={artifacts.length - 1}
-              value={step}
-              onChange={(event) => setStep(Number(event.target.value))}
-            />
+            <span className="muted">공정 단계</span>
+            <button
+              onClick={() => setStep((current) => Math.max(0, current - 1))}
+              disabled={step === 0}
+            >
+              « 이전
+            </button>
+            <button
+              onClick={() =>
+                setStep((current) =>
+                  Math.min(artifacts.length - 1, current + 1),
+                )
+              }
+              disabled={step === artifacts.length - 1}
+            >
+              다음 »
+            </button>
           </>
         )}
         <span className="muted">

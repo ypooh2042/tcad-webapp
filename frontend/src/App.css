@@ -130,7 +130,6 @@ input:focus { outline: none; border-color: var(--accent); }
 .result { display: flex; flex-direction: column; gap: 10px; }
 
 .scrubber, .controls { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.scrubber input[type="range"] { flex: 1; accent-color: var(--accent); }
 .scrubber label, .controls label { color: var(--muted); white-space: nowrap; }
 
 select {

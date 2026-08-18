@@ -99,8 +99,10 @@ describe('결과', () => {
 
     // 첫 단계가 먼저 보인다.
     expect(await screen.findByText(/after_implant.str/)).toBeInTheDocument()
-    const slider = screen.getByLabelText('공정 단계')
-    expect(slider).toHaveAttribute('max', '1')
+    expect(screen.getByText(/1\/2/)).toBeInTheDocument()
+    // 첫 단계이므로 뒤로는 못 가고 앞으로만 갈 수 있다.
+    expect(screen.getByRole('button', { name: /이전/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /다음/ })).toBeEnabled()
   })
 
   it('산출물이 하나여도 파일 이름을 보여준다', async () => {
@@ -114,7 +116,7 @@ describe('결과', () => {
     render(<JobPanel jobId={42} />)
 
     expect(await screen.findByText(/only.str/)).toBeInTheDocument()
-    expect(screen.queryByLabelText('공정 단계')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /다음/ })).not.toBeInTheDocument()
   })
 
   it('출력이 없으면 그렇다고 말한다', async () => {

@@ -72,15 +72,48 @@ describe('공정 단계', () => {
     expect(await screen.findByText(/after_implant.str/)).toBeInTheDocument()
   })
 
-  it('단계를 옮기면 그 단계를 다시 읽는다', async () => {
+  it('다음 단계로 넘어가면 그 단계를 읽는다', async () => {
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
     await waitFor(() => expect(plot.summary).toHaveBeenCalledWith(1, 1))
+    plot.summary.mockClear()
 
-    await userEvent.click(screen.getByLabelText('공정 단계'))
-    screen.getByLabelText('공정 단계').setAttribute('value', '1')
+    await userEvent.click(screen.getByRole('button', { name: /다음/ }))
 
-    // 슬라이더 조작 대신 직접 바꿔도 순번이 서버로 넘어가야 한다.
-    await waitFor(() => expect(plot.summary).toHaveBeenCalled())
+    await waitFor(() => expect(plot.summary).toHaveBeenCalledWith(1, 2))
+  })
+
+  it('이전 단계로 돌아간다', async () => {
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await screen.findByText(/after_implant.str/)
+
+    await userEvent.click(screen.getByRole('button', { name: /다음/ }))
+    await screen.findByText(/2\/2/)
+    await userEvent.click(screen.getByRole('button', { name: /이전/ }))
+
+    expect(await screen.findByText(/1\/2/)).toBeInTheDocument()
+  })
+
+  it('첫 단계에서는 이전이 눌리지 않는다', async () => {
+    // 슬라이더와 달리 버튼은 끝에서 무엇이 막혔는지 보여줄 수 있다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+
+    expect(await screen.findByRole('button', { name: /이전/ })).toBeDisabled()
+  })
+
+  it('마지막 단계에서는 다음이 눌리지 않는다', async () => {
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: /다음/ }))
+
+    expect(await screen.findByRole('button', { name: /다음/ })).toBeDisabled()
+  })
+
+  it('단계가 하나면 버튼을 두지 않는다', async () => {
+    // 누를 수 없는 버튼 두 개는 자리만 차지한다.
+    render(<ResultView jobId={1} artifacts={[ARTIFACTS[0]]} />)
+
+    await screen.findByText(/after_implant.str/)
+    expect(screen.queryByRole('button', { name: /다음/ })).not.toBeInTheDocument()
   })
 })
 

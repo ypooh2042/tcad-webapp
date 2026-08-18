@@ -291,16 +291,9 @@ test('단면을 재질로 볼 수 있다', async ({ page }) => {
   await expect(picker).toHaveValue('재질')
 
   // 층이 여럿인 단계로 옮긴다. 첫 단계(substrate)는 silicon 하나뿐이라
-  // 재질 구분을 확인할 수 없다. React 제어 input 이라 네이티브 setter 를
-  // 써야 onChange 가 뜬다.
-  await page.getByLabel('공정 단계').evaluate((node: HTMLInputElement) => {
-    const setter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      'value',
-    )!.set!
-    setter.call(node, node.max)
-    node.dispatchEvent(new Event('input', { bubbles: true }))
-  })
+  // 재질 구분을 확인할 수 없다. 마지막까지 눌러 간다 — 다 가면 비활성이 된다.
+  const next = page.getByRole('button', { name: /다음/ })
+  while (await next.isEnabled()) await next.click()
   await expect(page.getByText(/15\/15/)).toBeVisible()
 
   // 물리량으로 갔다가 재질로 돌아오며 요청을 확인한다. 이미 재질인 상태에서
