@@ -488,3 +488,28 @@ test('오래 도는 잡을 중단할 수 있다', async ({ page }) => {
   // 멈춘 잡에는 다시 누를 버튼이 없어야 한다.
   await expect(stop).toBeHidden()
 })
+
+test('다음 버튼을 꾹 누르면 단계가 연달아 넘어간다', async ({ page }) => {
+  // 마우스를 누른 채 유지하는 동작은 E2E 로만 확인된다. 단위 테스트는 가짜
+  // 타이머로 반복 로직만 볼 뿐, 실제 버튼이 누른 상태로 남는지는 못 본다.
+  await createProject(page, 'holdstep')
+  await setSource(page, TWO_DIMENSIONAL_SOURCE)
+  await page.getByRole('button', { name: '실행' }).click()
+  await expect(page.locator('canvas.surface')).toBeVisible({ timeout: 120_000 })
+  await expect(page.getByText(/1\/15/)).toBeVisible()
+
+  const next = page.getByRole('button', { name: /다음/ })
+  const box = (await next.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  // 뜸(400ms) + 반복 몇 번. 한 칸씩이면 이 시간에 다 못 간다.
+  await expect(page.getByText(/[5-9]\/15|1[0-5]\/15/)).toBeVisible({
+    timeout: 15_000,
+  })
+  await page.mouse.up()
+
+  // 떼면 멈춰야 한다. 계속 흐르면 끝까지 가 버린다.
+  const stopped = await page.getByText(/\/15/).textContent()
+  await page.waitForTimeout(1500)
+  expect(await page.getByText(/\/15/).textContent()).toBe(stopped)
+})

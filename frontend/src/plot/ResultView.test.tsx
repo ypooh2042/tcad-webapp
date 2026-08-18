@@ -5,7 +5,7 @@
  * 구조에는 arsenic 컬럼이 아예 없다. 그래서 단계를 옮기면 무엇을 그릴 수 있는지
  * 부터 다시 물어야 한다.
  */
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ResultView } from './ResultView'
@@ -106,6 +106,18 @@ describe('공정 단계', () => {
     await userEvent.click(await screen.findByRole('button', { name: /다음/ }))
 
     expect(await screen.findByRole('button', { name: /다음/ })).toBeDisabled()
+  })
+
+  it('꾹 누르기가 버튼에 연결돼 있다', async () => {
+    // 반복 타이밍 자체는 useHoldRepeat.test 가 가짜 타이머로 따로 본다.
+    // 여기서는 버튼이 pointerdown 에 반응하는지(= 훅이 붙었는지)만 확인한다.
+    // 클릭 대신 pointerdown 으로 한 칸 넘어가야 한다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await screen.findByText(/1\/2/)
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /다음/ }))
+
+    expect(await screen.findByText(/2\/2/)).toBeInTheDocument()
   })
 
   it('단계가 하나면 버튼을 두지 않는다', async () => {

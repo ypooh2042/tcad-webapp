@@ -27,6 +27,7 @@ import type {
 } from '../api/types'
 import { ProfileChart, type Series } from './ProfileChart'
 import { SurfaceView } from './SurfaceView'
+import { useHoldRepeat } from '../components/useHoldRepeat'
 
 /** 물리량별 선 색. 재질은 배경 띠가 맡으므로 선 색은 전부 물리량 몫이다. */
 const SERIES_COLORS = [
@@ -58,6 +59,13 @@ export function ResultView({ jobId, artifacts }: Props) {
   const [cutX, setCutX] = useState<number | null>(null)
   //: 격자 오버레이. 기본은 꺼짐 — 촘촘한 메시를 항상 얹으면 값이 묻힌다.
   const [showMesh, setShowMesh] = useState(false)
+
+  const back = useHoldRepeat(() =>
+    setStep((current) => Math.max(0, current - 1)),
+  )
+  const forward = useHoldRepeat(() =>
+    setStep((current) => Math.min(artifacts.length - 1, current + 1)),
+  )
   const [error, setError] = useState<string | null>(null)
 
   const current = artifacts[Math.min(step, artifacts.length - 1)]
@@ -190,20 +198,13 @@ export function ResultView({ jobId, artifacts }: Props) {
         {artifacts.length > 1 && (
           <>
             <span className="muted">공정 단계</span>
-            <button
-              onClick={() => setStep((current) => Math.max(0, current - 1))}
-              disabled={step === 0}
-            >
+            {/* 꾹 누르면 연달아 넘어간다. 15단계짜리 공정을 한 칸씩 누르는
+                것은 번거롭다. 범위를 넘지 않도록 clamp 는 여기서 한다 —
+                반복 중에도 없는 단계를 서버에 묻지 않는다. */}
+            <button {...back} disabled={step === 0}>
               « 이전
             </button>
-            <button
-              onClick={() =>
-                setStep((current) =>
-                  Math.min(artifacts.length - 1, current + 1),
-                )
-              }
-              disabled={step === artifacts.length - 1}
-            >
+            <button {...forward} disabled={step === artifacts.length - 1}>
               다음 »
             </button>
           </>
