@@ -3,7 +3,7 @@ import { AuthProvider, useAuth } from './features/auth/AuthContext'
 import { LoginPage } from './features/auth/LoginPage'
 import './App.css'
 
-// 편집기(Monaco)만 2.8MB 다. 로그인 화면에서는 쓰지 않으므로 로그인한 뒤에
+// 편집기(Monaco)를 포함한 작업 화면 묶음이 약 3.2MB 다(빌드 출력 실측). 로그인 화면에서는 쓰지 않으므로 로그인한 뒤에
 // 받는다. 그러지 않으면 첫 화면이 뜨기까지 그만큼을 기다려야 한다.
 const WorkspacePage = lazy(() =>
   import('./features/workspace/WorkspacePage').then((module) => ({
