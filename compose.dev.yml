@@ -17,6 +17,12 @@
 services:
   redis:
     image: docker.io/library/redis:7-alpine
+    # 호스트를 재시작해도 알아서 올라오게 한다. 이게 없으면 어느 날 조용히
+    # 내려가 있고, E2E 가 "ConnectionRefused" 로 실패할 때에야 알아챈다.
+    # 루트리스 Podman 에서 재부팅까지 살아남으려면 두 가지가 더 필요하다:
+    #   systemctl --user enable podman-restart.service
+    #   loginctl enable-linger $USER
+    restart: always
     ports:
       - "127.0.0.1:6380:6379"
     # 세션은 Redis 가 TTL 로 관리한다. 재시작 시 전원 로그아웃되는 것이
@@ -30,6 +36,7 @@ services:
 
   postgres:
     image: docker.io/library/postgres:16-alpine
+    restart: always
     ports:
       - "127.0.0.1:5433:5432"
     environment:
