@@ -23,8 +23,10 @@ from app.api.deps import (
 )
 from app.auth.models import Session
 from app.core.config import Settings
-from app.db.models import Artifact, Job
+from app.db.models import Artifact, Job, JobStatus
 from app.jobs.queue import JobQueue
+from app.runner.control import kill_container
+from app.runner.sandbox import container_name
 from app.projects.service import (
     ProjectNotFound,
     get_owned_project,
@@ -145,6 +147,39 @@ async def detail(
             )
             for a in artifacts
         ],
+    )
+
+
+@router.post("/jobs/{job_id}/cancel")
+async def cancel(
+    job: Job = Depends(owned_job),
+    queue: JobQueue = Depends(get_queue),
+) -> JobResponse:
+    """실행 중이거나 대기 중인 잡을 멈춘다.
+
+    컨테이너 이름은 workdir 에서 결정론적으로 나오므로, 워커에게 신호를 보내는
+    통로 없이 여기서 바로 죽일 수 있다.
+
+    **상태를 먼저 바꾸고 컨테이너를 죽인다.** 순서가 반대면, 컨테이너가 죽은 것을
+    워커가 먼저 읽어 "실패"로 기록해 버린다. 상태가 이미 CANCELLED 면 워커의
+    기록은 무시된다(JobQueue.mark_finished 의 RUNNING 가드).
+    """
+    before = await queue.cancel(job.id)
+    if before is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="이미 끝난 잡입니다",
+        )
+
+    if before.status is JobStatus.RUNNING:
+        # 죽이지 못해도 중단은 성립한다. 컨테이너는 타임아웃이 거둬 가고,
+        # 사용자에게는 이미 멈춘 것으로 보인다.
+        kill_container(container_name(Path(before.workdir)))
+
+    return JobResponse(
+        id=job.id,
+        status=JobStatus.CANCELLED.value,
+        source_revision_id=job.source_revision_id,
     )
 
 

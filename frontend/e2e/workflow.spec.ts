@@ -469,3 +469,22 @@ test('격자 보기를 켜면 단면에 격자가 얹힌다', async ({ page }) =
   const after = await canvas.screenshot()
   expect(Buffer.compare(before, after)).toBe(0)
 })
+
+test('오래 도는 잡을 중단할 수 있다', async ({ page }) => {
+  // 시뮬레이터는 인식하지 못한 첫 단어를 셸로 넘긴다. 타임아웃(600초)까지
+  // 도는 잡을 만들어, 사용자가 직접 멈출 수 있는지 확인한다.
+  await createProject(page, 'cancelme')
+  await setSource(page, 'sleep 300\n')
+  await page.getByRole('button', { name: '실행' }).click()
+
+  // **실행 중까지 기다린다.** 대기 중에 눌러 버리면 컨테이너를 죽이는 경로를
+  // 타지 않아, 정작 확인하려던 부분이 검증되지 않는다.
+  await expect(page.getByText('실행 중')).toBeVisible({ timeout: 60_000 })
+
+  const stop = page.getByRole('button', { name: '중단' })
+  await stop.click()
+
+  await expect(page.getByText('중단됨')).toBeVisible({ timeout: 30_000 })
+  // 멈춘 잡에는 다시 누를 버튼이 없어야 한다.
+  await expect(stop).toBeHidden()
+})

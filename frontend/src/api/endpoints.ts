@@ -1,6 +1,6 @@
 /** 백엔드 엔드포인트를 이름 있는 함수로 감싼다. 화면에서 경로 문자열을 다루지 않게. */
 import { request } from './client'
-import type {
+import type { JobStatus,
   Artifact,
   DocsReference,
   DocsSearchHit,
@@ -116,6 +116,12 @@ export const files = {
 
 export const jobs = {
   get: (jobId: number) => request<JobDetail>(`/api/jobs/${jobId}`),
+
+  /** 대기 중이거나 실행 중인 잡을 멈춘다. 끝난 잡이면 서버가 409 로 거절한다. */
+  cancel: (jobId: number) =>
+    request<{ id: number; status: JobStatus }>(`/api/jobs/${jobId}/cancel`, {
+      method: 'POST',
+    }),
 
   artifact: (jobId: number, sequence: number) =>
     request<{ filename: string; content: string }>(

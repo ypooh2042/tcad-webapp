@@ -113,9 +113,11 @@ class JobQueue:
             raise ValueError(f"종료 상태가 아닙니다: {status}")
 
         async with self.sessionmaker() as session:
+            # **RUNNING 에서만 전이한다.** 가드가 없으면 사용자가 중단한 잡을
+            # 워커가 "실패"로 덮어써, 자기가 멈춘 것인지 터진 것인지 알 수 없다.
             await session.execute(
                 update(Job)
-                .where(Job.id == job_id)
+                .where(Job.id == job_id, Job.status == JobStatus.RUNNING)
                 .values(
                     status=status,
                     log=log,
@@ -124,6 +126,43 @@ class JobQueue:
                 )
             )
             await session.commit()
+
+    async def cancel(self, job_id: int) -> Job | None:
+        """사용자 요청으로 잡을 중단한다.
+
+        끝나지 않은 잡(QUEUED 또는 RUNNING)만 대상이다. 조건을 UPDATE 의 WHERE
+        에 그대로 넣어, 워커가 같은 순간에 집어가더라도 한쪽만 성공하게 한다.
+
+        Returns:
+            중단 **직전**의 잡. 호출부가 상태를 보고 컨테이너를 죽일지 정한다 —
+            RUNNING 이었다면 workdir 로 컨테이너 이름을 만들 수 있다.
+            이미 끝났거나 없는 잡이면 None.
+        """
+        async with self.sessionmaker() as session:
+            job = await session.get(Job, job_id)
+            if job is None or job.status.is_terminal:
+                return None
+
+            before = Job(
+                id=job.id,
+                owner_id=job.owner_id,
+                status=job.status,
+                workdir=job.workdir,
+            )
+            result = await session.execute(
+                update(Job)
+                .where(
+                    Job.id == job_id,
+                    Job.status.in_((JobStatus.QUEUED, JobStatus.RUNNING)),
+                )
+                .values(
+                    status=JobStatus.CANCELLED,
+                    finished_at=datetime.now(timezone.utc),
+                )
+            )
+            await session.commit()
+            # 그 사이 워커가 상태를 바꿨다면 우리가 중단한 것이 아니다.
+            return before if result.rowcount else None
 
     async def requeue_stale(self, max_runtime: timedelta) -> int:
         """죽은 워커가 남긴 잡을 큐로 되돌린다.

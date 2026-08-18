@@ -416,3 +416,56 @@ class TestDelete:
 async def _project(client, name: str) -> int:
     response = await client.post("/api/projects", json={"name": name})
     return response.json()["id"]
+
+
+class TestCancel:
+    """실행 중단 엔드포인트.
+
+    시뮬레이터는 격자에 따라 몇 분씩 돈다. 잘못 짠 입력이면 타임아웃(600초)까지
+    슬롯을 붙잡고 있어, 사용자가 직접 멈출 수 있어야 한다.
+    """
+
+    async def test_cancels_a_queued_job(self, alice) -> None:
+        project_id = await make_project_with_source(alice)
+        job_id = (await alice.post(f"/api/projects/{project_id}/jobs")).json()["id"]
+
+        response = await alice.post(f"/api/jobs/{job_id}/cancel")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "cancelled"
+
+    async def test_detail_reports_the_cancellation(self, alice) -> None:
+        project_id = await make_project_with_source(alice)
+        job_id = (await alice.post(f"/api/projects/{project_id}/jobs")).json()["id"]
+        await alice.post(f"/api/jobs/{job_id}/cancel")
+
+        detail = (await alice.get(f"/api/jobs/{job_id}")).json()
+
+        assert detail["status"] == "cancelled"
+
+    async def test_cancelling_twice_is_refused(self, alice) -> None:
+        # 이미 끝난 잡에 성공을 돌려주면 화면이 계속 중단 버튼을 보여준다.
+        project_id = await make_project_with_source(alice)
+        job_id = (await alice.post(f"/api/projects/{project_id}/jobs")).json()["id"]
+        await alice.post(f"/api/jobs/{job_id}/cancel")
+
+        response = await alice.post(f"/api/jobs/{job_id}/cancel")
+
+        assert response.status_code == 409
+
+    async def test_cannot_cancel_someone_elses_job(self, alice, bob) -> None:
+        """남의 잡을 멈출 수 있으면 서로의 실행을 방해할 수 있다."""
+        project_id = await make_project_with_source(alice)
+        job_id = (await alice.post(f"/api/projects/{project_id}/jobs")).json()["id"]
+
+        response = await bob.post(f"/api/jobs/{job_id}/cancel")
+
+        assert response.status_code == 404
+
+    async def test_anonymous_is_rejected(self, app) -> None:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as anon:
+            response = await anon.post("/api/jobs/1/cancel")
+
+        assert response.status_code == 401

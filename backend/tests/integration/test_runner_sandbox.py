@@ -235,3 +235,59 @@ class TestGridLimitIsExplained:
         assert "격자" in joined, joined
         # 실제로 만든 점 개수를 알려 줘야 얼마나 줄일지 판단할 수 있다.
         assert "점입니다" in joined, joined
+
+
+@requires_sandbox
+class TestCancellingARunningJob:
+    """도는 컨테이너를 밖에서 멈출 수 있는가.
+
+    중단 버튼은 워커가 아니라 API 프로세스가 처리한다. 컨테이너 이름이 workdir
+    에서 결정론적으로 나오기 때문에 가능한 구조인데, 그 전제가 깨지면 버튼이
+    조용히 아무 일도 하지 않는다.
+    """
+
+    def test_kill_stops_the_container_and_the_runner(self, tmp_path: Path) -> None:
+        import subprocess
+        import threading
+        import time
+
+        from app.runner.control import kill_container
+        from app.runner.sandbox import container_name
+
+        # 인식하지 못한 첫 단어는 셸로 넘어간다. 오래 도는 잡을 만드는 가장
+        # 확실한 방법이고, 그 통로 자체가 격리 테스트의 전제이기도 하다.
+        workdir = tmp_path / "job-cancel"
+        outcome: dict[str, object] = {}
+        worker = threading.Thread(
+            target=lambda: outcome.update(result=run_simulation("sleep 120\n", workdir)),
+            daemon=True,
+        )
+        worker.start()
+
+        name = container_name(workdir)
+        for _ in range(60):
+            time.sleep(0.5)
+            running = subprocess.run(
+                ("podman", "ps", "--filter", f"name={name}", "--format", "{{.Names}}"),
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+            if running:
+                break
+        assert running, "컨테이너가 뜨지 않았습니다"
+
+        assert kill_container(name) is True
+
+        worker.join(timeout=30)
+        assert not worker.is_alive(), "죽였는데도 러너가 끝나지 않았습니다"
+        result = outcome["result"]
+        assert not result.succeeded
+        # 128+9. 신호로 죽은 것이므로 사용자에게 그렇다고 알려야 한다.
+        assert result.exit_code == 137
+
+    def test_killing_a_missing_container_is_not_an_error(self) -> None:
+        """이미 끝난 잡을 중단해도 서버가 터지면 안 된다."""
+        from app.runner.control import kill_container
+
+        assert kill_container("tcad-job-does-not-exist") is False

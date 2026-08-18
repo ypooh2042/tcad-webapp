@@ -196,3 +196,68 @@ class TestStaleRecovery:
         await queue.claim_next()
 
         assert await queue.requeue_stale(max_runtime=timedelta(minutes=30)) == 0
+
+
+class TestCancel:
+    """실행 중단.
+
+    오래 도는 잡을 사용자가 멈출 수 있어야 한다. 시뮬레이터는 격자에 따라
+    몇 분씩 돌 수 있고, 잘못 짠 입력이면 타임아웃(600초)까지 슬롯을 잡아먹는다.
+    """
+
+    async def test_queued_job_becomes_cancelled(self, queue, revision) -> None:
+        job = await queue.enqueue(1, revision.id, "/var/jobs/1")
+
+        cancelled = await queue.cancel(job.id)
+
+        assert cancelled is not None
+        assert cancelled.status is JobStatus.QUEUED  # 중단 직전 상태를 알려준다
+
+    async def test_cancelled_job_is_never_claimed(self, queue, revision) -> None:
+        """큐에서 중단하면 워커가 집어가면 안 된다."""
+        job = await queue.enqueue(1, revision.id, "/var/jobs/1")
+        await queue.cancel(job.id)
+
+        assert await queue.claim_next() is None
+
+    async def test_running_job_reports_its_workdir(self, queue, revision) -> None:
+        """실행 중이면 컨테이너를 죽여야 한다. 그 이름의 근거가 workdir 이다."""
+        await queue.enqueue(1, revision.id, "/var/jobs/abc")
+        await queue.claim_next()
+
+        cancelled = await queue.cancel(1)
+
+        assert cancelled.status is JobStatus.RUNNING
+        assert cancelled.workdir == "/var/jobs/abc"
+
+    async def test_finished_job_cannot_be_cancelled(self, queue, revision) -> None:
+        job = await queue.enqueue(1, revision.id, "/var/jobs/1")
+        await queue.claim_next()
+        await queue.mark_finished(
+            job.id, status=JobStatus.SUCCEEDED, log="", exit_code=0
+        )
+
+        assert await queue.cancel(job.id) is None
+
+    async def test_missing_job_is_not_cancellable(self, queue) -> None:
+        assert await queue.cancel(9999) is None
+
+    async def test_worker_does_not_overwrite_a_cancellation(
+        self, queue, revision, sessionmaker_fixture
+    ) -> None:
+        """중단한 뒤 워커가 결과를 기록해도 CANCELLED 가 유지돼야 한다.
+
+        컨테이너를 죽이면 워커는 그걸 실패로 읽는다. 그대로 기록하게 두면
+        사용자가 멈춘 잡이 "실패"로 남아, 자기가 멈춘 것인지 터진 것인지
+        구분할 수 없다.
+        """
+        job = await queue.enqueue(1, revision.id, "/var/jobs/1")
+        await queue.claim_next()
+        await queue.cancel(job.id)
+
+        await queue.mark_finished(
+            job.id, status=JobStatus.FAILED, log="killed", exit_code=137
+        )
+
+        async with sessionmaker_fixture() as session:
+            assert (await session.get(Job, job.id)).status is JobStatus.CANCELLED

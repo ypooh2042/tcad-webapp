@@ -46,5 +46,13 @@ export function useJob(jobId: number | null) {
     }
   }, [jobId])
 
-  return { job, error }
+  /** 서버 응답을 기다리지 않고 상태를 반영한다.
+   *
+   * 중단을 누르고 다음 폴링(1.5초)까지 "실행 중"으로 보이면 눌린 것인지 알 수
+   * 없다. 폴링이 곧 같은 값을 확인해 주므로 어긋날 위험은 없다. */
+  function applyStatus(status: JobDetail['status']) {
+    setJob((current) => (current ? { ...current, status } : current))
+  }
+
+  return { job, error, applyStatus }
 }

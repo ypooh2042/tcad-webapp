@@ -10,10 +10,10 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import threading
 from pathlib import Path
 
+from app.runner.control import kill_container
 from app.runner.workdir import directory_size
 
 logger = logging.getLogger(__name__)
@@ -71,14 +71,5 @@ class OutputWatchdog:
             return
 
     def _kill(self) -> None:
-        try:
-            subprocess.run(  # noqa: S603 - 이름은 서버가 정한 값이다
-                ("podman", "kill", self.container),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=30,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            # 죽이지 못해도 감시 자체는 끝난다. 뒤이어 실행 후 검사가 잡는다.
-            logger.exception("컨테이너 종료 실패: %s", self.container)
+        # 죽이지 못해도 감시 자체는 끝난다. 뒤이어 실행 후 검사가 잡는다.
+        kill_container(self.container)

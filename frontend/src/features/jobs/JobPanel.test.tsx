@@ -4,11 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { JobPanel } from './JobPanel'
 import type { JobDetail } from '../../api/types'
 
-const { get, plot } = vi.hoisted(() => ({
+const { get, cancel, plot } = vi.hoisted(() => ({
   get: vi.fn(),
+  cancel: vi.fn(),
   plot: { summary: vi.fn(), profile: vi.fn(), surface: vi.fn() },
 }))
-vi.mock('../../api/endpoints', () => ({ jobs: { get }, plot }))
+vi.mock('../../api/endpoints', () => ({ jobs: { get, cancel }, plot }))
 
 function detail(overrides: Partial<JobDetail> = {}): JobDetail {
   return {
@@ -26,6 +27,8 @@ function detail(overrides: Partial<JobDetail> = {}): JobDetail {
 
 beforeEach(() => {
   get.mockReset()
+  cancel.mockReset()
+  cancel.mockResolvedValue({ id: 42, status: 'cancelled' })
   get.mockResolvedValue(detail())
   plot.summary.mockResolvedValue({
     filename: 'a.str',
@@ -223,5 +226,64 @@ describe('어느 실행인지 알려주기', () => {
     render(<JobPanel jobId={24} />)
 
     expect(screen.getByText(/#24/)).toBeInTheDocument()
+  })
+})
+
+
+describe('실행 중단', () => {
+  it('실행 중이면 중단 버튼이 있다', async () => {
+    // 격자에 따라 몇 분씩 돈다. 잘못 짠 입력이면 타임아웃까지 기다려야 한다.
+    get.mockResolvedValue(detail({ status: 'running' }))
+
+    render(<JobPanel jobId={42} />)
+
+    expect(await screen.findByRole('button', { name: '중단' })).toBeInTheDocument()
+  })
+
+  it('대기 중에도 중단할 수 있다', async () => {
+    get.mockResolvedValue(detail({ status: 'queued' }))
+
+    render(<JobPanel jobId={42} />)
+
+    expect(await screen.findByRole('button', { name: '중단' })).toBeInTheDocument()
+  })
+
+  it('끝난 잡에는 중단 버튼이 없다', async () => {
+    get.mockResolvedValue(detail({ status: 'succeeded' }))
+
+    render(<JobPanel jobId={42} />)
+    await screen.findByText('성공')
+
+    expect(screen.queryByRole('button', { name: '중단' })).not.toBeInTheDocument()
+  })
+
+  it('누르면 서버에 중단을 요청한다', async () => {
+    get.mockResolvedValue(detail({ status: 'running' }))
+    render(<JobPanel jobId={42} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: '중단' }))
+
+    expect(cancel).toHaveBeenCalledWith(42)
+  })
+
+  it('중단하면 곧바로 상태가 바뀐다', async () => {
+    // 다음 폴링까지 기다리면 누르고도 한동안 "실행 중"으로 보인다.
+    get.mockResolvedValue(detail({ status: 'running' }))
+    render(<JobPanel jobId={42} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: '중단' }))
+
+    expect(await screen.findByText('중단됨')).toBeInTheDocument()
+  })
+
+  it('중단이 실패하면 알린다', async () => {
+    // 조용히 넘어가면 사용자는 멈춘 줄 알고 기다린다.
+    get.mockResolvedValue(detail({ status: 'running' }))
+    cancel.mockRejectedValue(new Error('이미 끝난 잡입니다'))
+    render(<JobPanel jobId={42} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: '중단' }))
+
+    expect(await screen.findByText(/중단하지 못했습니다/)).toBeInTheDocument()
   })
 })
