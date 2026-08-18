@@ -516,3 +516,46 @@ test('다음 버튼을 꾹 누르면 단계가 연달아 넘어간다', async ({
   await page.waitForTimeout(1500)
   expect(await page.getByText(/\/15/).textContent()).toBe(stopped)
 })
+
+test('단계 이름이 길어도 버튼 줄이 흐트러지지 않는다', async ({ page }) => {
+  // 이름이 버튼과 같은 줄에 있으면 접혀서 줄바꿈되고, 그때마다 버튼이
+  // 밀려난다. 배치가 흔들리는지는 실제 렌더에서만 확인된다.
+  //
+  // **단계가 둘 이상이어야 버튼이 뜬다.** 하나뿐이면 버튼이 없어 정작
+  // 확인하려던 것을 못 본다(처음에 그렇게 헛통과했다).
+  await createProject(page, 'longname')
+  await setSource(
+    page,
+    'mode one.dim\n' +
+      'line x loc=0 spacing=0.02 tag=top\n' +
+      'line x loc=1.0 spacing=0.1 tag=bot\n' +
+      'region silicon xlo=top xhi=bot\n' +
+      'bound exposed xlo=top xhi=top\n' +
+      'init boron conc=1e15\n' +
+      'structure outfile=short.str\n' +
+      'deposit oxide thick=0.05 divisions=2\n' +
+      'structure outfile=a_very_long_process_stage_name_for_layout.str\n',
+  )
+  await page.getByRole('button', { name: '실행' }).click()
+
+  const name = page.locator('.stage-name')
+  await expect(name).toBeVisible({ timeout: 120_000 })
+  // 버튼이 실제로 떠야 의미가 있다.
+  await expect(page.getByRole('button', { name: /다음/ })).toBeVisible()
+
+  // 긴 이름이 걸린 단계로 옮긴다.
+  await page.getByRole('button', { name: /다음/ }).click()
+  await expect(name).toContainText('a_very_long_process_stage_name')
+
+  const nameBox = (await name.boundingBox())!
+  const buttons = (await page.getByRole('button', { name: /다음/ }).boundingBox())!
+
+  // 이름은 버튼보다 아래에 있어야 한다.
+  expect(nameBox.y).toBeGreaterThan(buttons.y + buttons.height - 2)
+  // 그리고 한 줄만 차지해야 한다(줄바꿈되면 높이가 두 배가 된다).
+  expect(nameBox.height).toBeLessThan(28)
+  // 버튼은 한 줄에 나란히 있어야 한다.
+  const prev = (await page.getByRole('button', { name: /이전/ }).boundingBox())!
+  expect(Math.abs(prev.y - buttons.y)).toBeLessThan(2)
+
+})

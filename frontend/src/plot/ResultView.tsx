@@ -219,14 +219,22 @@ export function ResultView({ jobId, artifacts }: Props) {
             </button>
           </>
         )}
-        <span className="muted">
-          {artifacts.length > 1 && `${step + 1}/${artifacts.length} · `}
-          {current?.filename}
-        </span>
+        {artifacts.length > 1 && (
+          <span className="muted">
+            {step + 1}/{artifacts.length}
+          </span>
+        )}
+      </div>
+
+      {/* 단계 이름은 버튼 줄에 두지 않는다. 이름이 길면 같은 줄에서 접혀
+          줄바꿈되고, 그때마다 버튼 위치가 흔들린다. 아래 줄로 내려두면
+          이름이 아무리 길어도 배치가 그대로다. */}
+      <div className="stage-name muted">
+        {current?.filename}
         {/* 번호는 곧바로 바뀌지만 데이터는 멎은 뒤에 온다. 그 사이를 알리지
             않으면 옛 단계의 그림을 새 단계의 것으로 읽게 된다. */}
         {current && sequence !== current.sequence && (
-          <span className="muted">불러오는 중…</span>
+          <span> · 불러오는 중…</span>
         )}
       </div>
 

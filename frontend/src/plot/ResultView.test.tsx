@@ -163,6 +163,25 @@ describe('공정 단계', () => {
     )
   })
 
+  it('단계 이름은 버튼 줄 밖에 둔다', async () => {
+    // 이름이 길면 버튼과 같은 줄에서 접혀 줄바꿈되고 UI 가 흐트러진다.
+    // 아래 줄로 내려 이름이 아무리 길어도 버튼 배치가 흔들리지 않게 한다.
+    const { container } = render(
+      <ResultView jobId={1} artifacts={ARTIFACTS} />,
+    )
+    const name = await screen.findByText('after_implant.str')
+
+    expect(container.querySelector('.scrubber')).not.toContainElement(name)
+    expect(name.closest('.stage-name')).not.toBeNull()
+  })
+
+  it('단계가 하나여도 이름은 보여준다', async () => {
+    // 지금 무엇을 보고 있는지 아는 유일한 단서다.
+    render(<ResultView jobId={1} artifacts={[ARTIFACTS[0]]} />)
+
+    expect(await screen.findByText('after_implant.str')).toBeInTheDocument()
+  })
+
   it('단계가 하나면 버튼을 두지 않는다', async () => {
     // 누를 수 없는 버튼 두 개는 자리만 차지한다.
     render(<ResultView jobId={1} artifacts={[ARTIFACTS[0]]} />)
