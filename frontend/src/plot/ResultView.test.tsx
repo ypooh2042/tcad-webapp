@@ -120,6 +120,49 @@ describe('공정 단계', () => {
     expect(await screen.findByText(/2\/2/)).toBeInTheDocument()
   })
 
+  it('빠르게 훑는 동안 지나친 단계는 불러오지 않는다', async () => {
+    // 단계당 요청이 4개(요약·물리량·단면)라, 지나치는 단계까지 받으면 꾹
+    // 누르기(150ms)에서 초당 27개가 나가 nginx 레이트 리밋(20 req/s)에 걸린다.
+    // 실제로 503 이 떴다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await screen.findByText(/1\/2/)
+    plot.summary.mockClear()
+
+    // 멎기 전에 앞뒤로 훑는다. 마지막에 머문 단계만 불러와야 한다.
+    const next = screen.getByRole('button', { name: /다음/ })
+    const prev = screen.getByRole('button', { name: /이전/ })
+    fireEvent.pointerDown(next)
+    fireEvent.pointerDown(prev)
+    fireEvent.pointerDown(next)
+
+    await waitFor(() => expect(plot.summary).toHaveBeenCalled())
+    expect(plot.summary).toHaveBeenCalledTimes(1)
+    expect(plot.summary).toHaveBeenLastCalledWith(1, 2)
+  })
+
+  it('표시는 곧바로 바뀐다', async () => {
+    // 불러오기를 늦추더라도 번호는 즉시 움직여야 누른 것이 느껴진다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await screen.findByText(/1\/2/)
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /다음/ }))
+
+    expect(await screen.findByText(/2\/2/)).toBeInTheDocument()
+  })
+
+  it('아직 옛 단계를 보고 있으면 그렇다고 알린다', async () => {
+    // 번호만 먼저 바뀌면 옛 그림을 새 단계의 것으로 읽게 된다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await screen.findByText(/1\/2/)
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /다음/ }))
+
+    expect(screen.getByText(/불러오는 중/)).toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.queryByText(/불러오는 중/)).not.toBeInTheDocument(),
+    )
+  })
+
   it('단계가 하나면 버튼을 두지 않는다', async () => {
     // 누를 수 없는 버튼 두 개는 자리만 차지한다.
     render(<ResultView jobId={1} artifacts={[ARTIFACTS[0]]} />)

@@ -138,7 +138,8 @@ describe('오류', () => {
 
     const error = await failure(request('/api/projects'))
     expect(error.status).toBe(502)
-    expect(error.message).toContain('502')
+    // 상태 번호는 사람에게 쓸모가 없다. 무엇을 하면 되는지 알려준다.
+    expect(error.message).toMatch(/연결하지 못했습니다/)
   })
 
   it('네트워크가 끊기면 상태 0 으로 알린다', async () => {
@@ -146,5 +147,37 @@ describe('오류', () => {
 
     const error = await failure(request('/api/projects'))
     expect(error.status).toBe(0)
+  })
+})
+
+describe('속도 제한', () => {
+  it('429 는 잠시 기다리라고 알려준다', async () => {
+    // 프록시가 막은 것이라 본문이 JSON 이 아니다. 기본 문구는 "요청이
+    // 실패했습니다 (HTTP 429)" 뿐이라 고장인지 자기 탓인지 알 수 없다.
+    mockFetch({
+      ok: false,
+      status: 429,
+      json: async () => {
+        throw new Error('본문이 JSON 이 아니다')
+      },
+    })
+
+    const error = await failure(request('/api/plot/summary'))
+
+    expect(error.message).toMatch(/잠시/)
+  })
+
+  it('503 은 서버 쪽 문제로 알린다', async () => {
+    mockFetch({
+      ok: false,
+      status: 503,
+      json: async () => {
+        throw new Error('본문이 JSON 이 아니다')
+      },
+    })
+
+    const error = await failure(request('/api/plot/summary'))
+
+    expect(error.message).toMatch(/서버/)
   })
 })

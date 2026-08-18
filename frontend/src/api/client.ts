@@ -28,10 +28,19 @@ interface RequestOptions {
   signal?: AbortSignal
 }
 
+//: 프록시가 막은 응답은 본문이 JSON 이 아니라 상태 코드밖에 단서가 없다.
+//: 숫자만 보여주면 고장인지 자기 탓인지 알 수 없다.
+const STATUS_MESSAGE: Record<number, string> = {
+  429: '요청이 너무 잦습니다. 잠시 뒤 다시 시도해 주세요.',
+  502: '서버에 연결하지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
+  503: '서버가 요청을 처리할 수 없습니다. 잠시 뒤 다시 시도해 주세요.',
+  504: '서버 응답이 너무 늦습니다. 잠시 뒤 다시 시도해 주세요.',
+}
+
 function messageFrom(detail: ErrorDetail | null, status: number): string {
   if (typeof detail === 'string') return detail
   if (detail && typeof detail.message === 'string') return detail.message
-  return `요청이 실패했습니다 (HTTP ${status})`
+  return STATUS_MESSAGE[status] ?? `요청이 실패했습니다 (HTTP ${status})`
 }
 
 export async function request<T = unknown>(

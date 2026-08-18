@@ -295,6 +295,9 @@ test('단면을 재질로 볼 수 있다', async ({ page }) => {
   const next = page.getByRole('button', { name: /다음/ })
   while (await next.isEnabled()) await next.click()
   await expect(page.getByText(/15\/15/)).toBeVisible()
+  // 번호는 곧바로 바뀌지만 데이터는 멎은 뒤에 온다. 기다리지 않으면 아직
+  // 첫 단계(silicon 하나뿐)의 단면을 보고 재질이 하나라고 판정하게 된다.
+  await expect(page.getByText('불러오는 중')).toBeHidden()
 
   // 물리량으로 갔다가 재질로 돌아오며 요청을 확인한다. 이미 재질인 상태에서
   // 다시 고르면 change 이벤트가 뜨지 않아 응답을 기다릴 수 없다.

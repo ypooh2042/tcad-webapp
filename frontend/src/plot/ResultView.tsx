@@ -28,6 +28,7 @@ import type {
 import { ProfileChart, type Series } from './ProfileChart'
 import { SurfaceView } from './SurfaceView'
 import { useHoldRepeat } from '../components/useHoldRepeat'
+import { useSettled } from '../components/useSettled'
 
 /** 물리량별 선 색. 재질은 배경 띠가 맡으므로 선 색은 전부 물리량 몫이다. */
 const SERIES_COLORS = [
@@ -40,6 +41,10 @@ const SERIES_COLORS = [
 ]
 
 /** 값 대신 재질로 칠하는 보기. 물리량 이름과 겹치지 않는다. */
+//: 단계가 멎었다고 보는 시간. 꾹 누르기 반복 주기(150ms)보다 넉넉히 길어야
+//: 중간 단계를 걸러낸다. 사람이 손을 뗀 뒤 이만큼은 기다려도 느껴지지 않는다.
+const LOAD_SETTLE_MS = 250
+
 const MATERIAL_VIEW = '재질'
 
 interface Props {
@@ -69,7 +74,12 @@ export function ResultView({ jobId, artifacts }: Props) {
   const [error, setError] = useState<string | null>(null)
 
   const current = artifacts[Math.min(step, artifacts.length - 1)]
-  const sequence = current?.sequence ?? null
+
+  //: 화면에 보이는 단계와 **불러오는 단계를 분리한다.** 번호와 파일 이름은
+  //: 곧바로 바뀌어야 누른 것이 느껴지고, 데이터는 멎은 뒤에 한 번만 받으면
+  //: 된다. 지나치는 단계까지 받으면 단계당 요청 4개(요약·물리량·단면)가
+  //: 그대로 곱해져 nginx 레이트 리밋(20 req/s)에 걸려 503 이 난다.
+  const sequence = useSettled(current?.sequence ?? null, LOAD_SETTLE_MS)
 
   const report = useCallback((caught: unknown) => {
     setError(caught instanceof ApiError ? caught.message : '결과를 읽지 못했습니다')
@@ -213,6 +223,11 @@ export function ResultView({ jobId, artifacts }: Props) {
           {artifacts.length > 1 && `${step + 1}/${artifacts.length} · `}
           {current?.filename}
         </span>
+        {/* 번호는 곧바로 바뀌지만 데이터는 멎은 뒤에 온다. 그 사이를 알리지
+            않으면 옛 단계의 그림을 새 단계의 것으로 읽게 된다. */}
+        {current && sequence !== current.sequence && (
+          <span className="muted">불러오는 중…</span>
+        )}
       </div>
 
       <div className="controls">
