@@ -1,6 +1,6 @@
 --- a/src/refine/etch_elem.c
 +++ b/src/refine/etch_elem.c
-@@ -0,0 +1,426 @@
+@@ -0,0 +1,443 @@
 +/*----------------------------------------------------------------------
 + *  etch_elem.c  --  요소 기반(cut-cell) 식각.
 + *
@@ -213,7 +213,15 @@
 +/*절단점이 변 끝에서 이 비율 안쪽이면 자르지 않고 그 끝점의 분류를 바꾼다.
 +  자르면 그만큼 얇은 삼각형이 생기고, 얇은 삼각형이야말로 이 재작성이
 +  없애려는 대상이다. 기하 오차는 그 변 길이의 5% 이하로 국한된다.*/
-+#define SNAP_FRAC 0.05
++/*절단을 접는 기준은 **절대거리**다. 분수로 잡으면 안 된다.
++  sp_edge() 는 mv=FALSE 로 불러도 절단점이 변 끝에서 MIN_GRID_SPACE(2.5e-8 cm
++  = 0.25 nm) 안쪽이면 새 점을 만드는 대신 **기존 점을 옮긴다**(move_edge,
++  refine/sp_edge.c:63-70). move_edge 는 그 점을 공유하는 삼각형이 뒤집히는지
++  확인하지 않아, 면적이 음수인 삼각형이 생기고 do_geom 이 죽는다.
++  그래서 접는 조건을 "sp_edge 가 점을 옮기지 않을 조건"과 정확히 맞춘다.
++  여유로 2 배를 준다. 짧은 변에서도 성립하므로 분수 기준과 달리 빠지는 곳이
++  없고, 기하 오차는 0.5 nm 로 고정된다(실리콘 격자상수 정도).*/
++#define SNAP_DIST (2.0 * 2.5e-8)
 +
 +/*한 삼각형의 두 변을 같은 꼭짓점 근처에서 자르면 그 모서리 조각이 퇴화한다.
 +  길이 비율로는 못 잡는다 — 그 꼭짓점에서 두 변이 거의 일직선이면 비율이
@@ -224,7 +232,12 @@
 +  퇴화한 것은 0 에 수렴한다. 실측한 사망 사례는 1.9e-6 이었다.
 +  **면적 비율이 아니라 이 값으로 재는 이유**: 부모 삼각형이 이미 납작하면
 +  비율 기준은 통과해 버린다(실제로 "triangle is flat" 으로 죽었다).*/
-+#define QUAL_MIN 0.05
++#define QUAL_MIN 1.0e-3
++
++/*자르고 나서 이보다 납작한 삼각형은 걷어낸다. 정삼각형이 0.43 이므로 0.05 는
++  "많이 찌그러졌다" 수준이다. 예방이 아니라 사후 제거라 정확도를 깎지 않는다 —
++  접는 변이 애초에 슬라이버의 짧은 변이라 점이 움직이는 거리가 그만큼 작다.*/
++#define COLLAPSE_QUAL 0.05
 +
 +etch_elem( p, nump, mater )
 +float *p[MAXDIM+1];
@@ -289,12 +302,14 @@
 +	    ncut++;
 +	}
 +
-+	/*(a)*/
++	/*(a) 절단이 변 끝에서 SNAP_DIST 안쪽이면 자르지 않고 접는다*/
 +	for(i = 0; i < ncut; i++) {
-+	    if ( cut[i].t < SNAP_FRAC ) {
++	    double elen = hypot( (double)(cordinate(cut[i].pout,0) - cordinate(cut[i].pin,0)),
++				 (double)(cordinate(cut[i].pout,1) - cordinate(cut[i].pin,1)) );
++	    if ( cut[i].t * elen < SNAP_DIST ) {
 +		if ( gone[ cut[i].pin ] ) { gone[ cut[i].pin ] = 0; made++; }
 +	    }
-+	    else if ( cut[i].t > 1.0 - SNAP_FRAC ) {
++	    else if ( (1.0 - cut[i].t) * elen < SNAP_DIST ) {
 +		if ( !gone[ cut[i].pout ] ) { gone[ cut[i].pout ] = 1; made++; }
 +	    }
 +	}
@@ -350,7 +365,9 @@
 +	    if ( doreg[ reg_tri( ele_edg(e,i) ) ] ) hit = 1;
 +	if ( !hit ) continue;
 +	if ( !edge_cut( e, gone, p, nump, &pin, &pout, &tt, c ) ) continue;
-+	if ( (tt < SNAP_FRAC) || (tt > 1.0 - SNAP_FRAC) ) continue;
++	{   double elen = hypot( (double)(cordinate(pout,0) - cordinate(pin,0)),
++				  (double)(cordinate(pout,1) - cordinate(pin,1)) );
++	    if ( (tt*elen < SNAP_DIST) || ((1.0-tt)*elen < SNAP_DIST) ) continue; }
 +	cut[ncut].edge = e;
 +	cut[ncut].c[0] = c[0];
 +	cut[ncut].c[1] = c[1];
