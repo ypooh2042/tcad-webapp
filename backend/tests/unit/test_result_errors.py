@@ -246,3 +246,72 @@ class TestSimulatorPanics:
         message = describe_abnormal_exit(139, "suprem4 panic: something new\n")
 
         assert "something new" in message
+
+
+class TestPanicNamesTheCommand:
+    """panic 안내는 죽은 커맨드에 맞춰야 한다.
+
+    같은 `not clock wise` 라도 `etch` 중에 죽는 것과 `diffuse` 중에 죽는 것은
+    사용자가 할 일이 다르다. 실측한 사례: 41 단계 흐름이 step 20 의
+    screen oxidation(`diffuse`) 안에서 죽었는데 안내는 `etch dry` 를 짚어,
+    멀쩡한 식각 깊이를 붙들게 만들었다.
+
+    로그는 입력을 되울리지 않지만 `Mesh statistics <단계>:` 를 남긴다
+    (`dbase/geometry.c:63`, 출력 지점이 하나뿐이다). 그 마지막 표지가 어느
+    커맨드였는지 알려 준다.
+    """
+
+    PANIC = "suprem4 panic: triangles are not clock wise, data base corrupted\n"
+
+    def message(self, phase: str) -> str:
+        return describe_abnormal_exit(
+            139, f"Mesh statistics {phase}:\n    Points = 100\tNodes = 110\t\n" + self.PANIC
+        )
+
+    def test_diffusion_does_not_blame_etch(self) -> None:
+        message = self.message("during update of diffusion")
+
+        assert "etch dry" not in message
+        assert "diffuse" in message
+
+    def test_oxide_growth_phases_count_as_diffusion(self) -> None:
+        # 산화 중 격자 갱신은 전부 diffuse 안에서 일어난다.
+        for phase in (
+            "Grid Addition",
+            "after removing silicon nodes",
+            "after native oxide deposit",
+            "native oxide deposition",
+        ):
+            assert "diffuse" in self.message(phase), phase
+
+    def test_etch_still_gets_the_etch_advice(self) -> None:
+        for phase in ("after etch", "after etch cut"):
+            message = self.message(phase)
+            assert "etch" in message, phase
+            assert "깎는 깊이" in message, phase
+
+    def test_deposit_gets_its_own_advice(self) -> None:
+        message = self.message("after deposit")
+
+        assert "deposit" in message
+        assert "깎는 깊이" not in message
+
+    def test_falls_back_when_the_phase_is_unknown(self) -> None:
+        """모르는 단계에서도 panic 문구 자체는 보여준다."""
+        message = describe_abnormal_exit(139, self.PANIC)
+
+        assert "not clock wise" in message
+
+    def test_uses_the_phase_nearest_the_panic(self) -> None:
+        """공정은 여러 단계를 지난다. 죽은 시점의 단계가 알고 싶은 값이다."""
+        log = (
+            "Mesh statistics after etch:\n"
+            "Mesh statistics during update of diffusion:\n" + self.PANIC
+        )
+
+        assert "etch dry" not in describe_abnormal_exit(139, log)
+
+    def test_ignores_markers_printed_after_the_panic(self) -> None:
+        log = self.PANIC + "Mesh statistics after etch:\n"
+
+        assert "etch dry" not in describe_abnormal_exit(139, log)

@@ -55,6 +55,26 @@ _PANIC = re.compile(r"suprem4 panic:\s*(.+?)\s*$", re.MULTILINE)
 #: 뿌리는 `etch()` 가 경계선 클리핑(B-rep)이라는 것이다. 식각선이 재료 경계와
 #: 나란히 겹치면 "교차점"이 정의되지 않아 조각을 이을 수 없다. 상세는
 #: SUPREM4GS/upstream/PROVENANCE.md 참조.
+#: 로그는 입력 커맨드를 되울리지 않는다. 대신 `bd_connect()` 가 단계마다
+#: `Mesh statistics <단계>:` 를 찍는다 — 출력 지점이 `dbase/geometry.c:63`
+#: 하나뿐이라 이 표지가 곧 "지금 무엇을 하던 중인가"다.
+_PHASE_MARKER = re.compile(r"^Mesh statistics (.+?):\s*$", re.MULTILINE)
+
+#: 표지 → 그것을 낸 커맨드. 호출부를 상류 소스에서 따라가 확정했다.
+#: 산화가 격자를 갱신하며 내는 표지가 여럿인데(`oxide/oxgrow.c` 가 `grid_add`
+#: 를 부른다) 전부 `diffuse` 안에서 일어난다.
+_PHASE_COMMAND = {
+    "after deposit": "deposit",              # refine/deposit.c
+    "after etch": "etch",                    # refine/etch.c
+    "after etch cut": "etch",                # refine/etch_elem.c (0005)
+    "Mesh Creation": "initialize",           # dbase/make_db.c
+    "during update of diffusion": "diffuse",  # diffuse/prepare.c
+    "after native oxide deposit": "diffuse",  # diffuse/diffuse.c
+    "native oxide deposition": "diffuse",     # dbase/new_layer.c
+    "Grid Addition": "diffuse",               # dbase/grid_upd.c
+    "after removing silicon nodes": "diffuse",  # dbase/grid_upd.c
+}
+
 _ETCH_PANICS = (
     "malformed boundary",
     "not in any triangle",
@@ -119,26 +139,68 @@ def mesh_points(log: str) -> int | None:
     return int(found[-1]) if found else None
 
 
-def _describe_panic(reason: str) -> str:
+def panic_command(log: str) -> str | None:
+    """panic 시점에 돌던 커맨드. 알 수 없으면 None.
+
+    panic 뒤에 찍힌 표지는 보지 않는다 — 죽은 뒤의 정리 과정이 남긴 것이라
+    원인과 무관하다.
+    """
+    panic = _PANIC.search(log)
+    before = log[: panic.start()] if panic else log
+    found = _PHASE_MARKER.findall(before)
+    return _PHASE_COMMAND.get(found[-1]) if found else None
+
+
+def _describe_panic(reason: str, log: str = "") -> str:
     """`panic:` 뒤에 붙은 문구를 사용자가 할 수 있는 일로 옮긴다.
 
     모르는 문구라도 그대로 보여준다 — 침묵보다 낫고, 검색이라도 할 수 있다.
+
+    **어느 커맨드에서 죽었는지에 따라 할 일이 다르다.** 같은
+    `not clock wise` 라도 식각 중이면 식각선을, 산화 중이면 직전 단계가 남긴
+    격자를 봐야 한다. 실측한 사례: 41 단계 흐름이 screen oxidation 안에서
+    죽었는데 안내가 `etch dry` 를 짚어 멀쩡한 식각 깊이를 붙들게 만들었다.
     """
     opening = (
         f"시뮬레이터가 형상을 처리하지 못하고 스스로 멈췄습니다(panic: {reason})."
     )
-
-    if any(known in reason for known in _ETCH_PANICS):
+    if not any(known in reason for known in _ETCH_PANICS):
         return (
-            f"{opening} `etch dry` 는 식각선이 재료 경계와 나란히 겹치면"
-            " 실패하는데, 겹치는지 여부가 격자와 깎는 깊이의 조합으로 갈립니다."
-            " 그 영역 격자를 촘촘하게 주거나 깎는 깊이를 조금 바꿔 보세요."
-            " 같은 깊이를 여러 번에 걸쳐 깎는 방법은 통하지 않습니다."
+            f"{opening} 입력 문법 문제가 아니라 시뮬레이터 내부에서 멈춘 것입니다."
+            " 직전 커맨드의 형상이나 격자를 조금 바꿔 보세요."
+        )
+
+    command = panic_command(log)
+
+    if command == "etch":
+        return (
+            f"{opening} `etch` 중에 형상이 무너졌습니다. 식각선이 재료 경계와"
+            " 나란히 겹치면 실패하는데, 겹치는지 여부가 격자와 깎는 깊이의"
+            " 조합으로 갈립니다. 그 영역 격자를 촘촘하게 주거나 깎는 깊이를"
+            " 조금 바꿔 보세요. 같은 깊이를 여러 번에 걸쳐 깎는 방법은"
+            " 통하지 않습니다."
+        )
+
+    if command == "diffuse":
+        return (
+            f"{opening} `diffuse` 가 격자를 움직이는 중에 무너졌습니다."
+            " 산화는 노드를 조금씩 옮기므로, 원인은 이 커맨드보다 **직전의"
+            " 식각이나 증착이 남긴 격자**인 경우가 많습니다. 바로 앞 단계의"
+            " 깎는 깊이나 두께를 조금 바꾸거나, 그 영역 격자를 촘촘하게 줘"
+            " 보세요."
+        )
+
+    if command == "deposit":
+        return (
+            f"{opening} `deposit` 중에 형상이 무너졌습니다. 증착 두께가 그"
+            " 자리 곡률보다 크면 표면이 자기 자신과 겹칩니다. 두께를 줄이거나"
+            " `divisions` 를 늘려 여러 번에 나눠 쌓아 보세요."
         )
 
     return (
-        f"{opening} 입력 문법 문제가 아니라 시뮬레이터 내부에서 멈춘 것입니다."
-        " 직전 커맨드의 형상이나 격자를 조금 바꿔 보세요."
+        f"{opening} 식각·증착·산화 중 형상이 무너질 때 나오는 문구입니다."
+        " 직전 커맨드의 두께나 깊이를 조금 바꾸거나, 그 영역 격자를 촘촘하게"
+        " 줘 보세요."
     )
 
 
@@ -162,7 +224,7 @@ def describe_abnormal_exit(exit_code: int, log: str = "") -> str | None:
     # panic 은 격자가 작아도 난다(6,018 점에서 실측). 격자를 탓하면 사용자가
     # 엉뚱한 곳을 고친다.
     if (panic := _PANIC.search(log)) is not None:
-        return _describe_panic(panic.group(1))
+        return _describe_panic(panic.group(1), log)
 
     opening = (
         f"시뮬레이터가 비정상 종료했습니다({name})."
