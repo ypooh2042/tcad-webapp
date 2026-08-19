@@ -45,6 +45,25 @@ _ERROR_PATTERNS = (
     re.compile(r"^/bin/(?:ba)?sh: "),
 )
 
+#: 시뮬레이터가 자기 자료구조가 깨진 것을 스스로 알아채고 멈출 때 쓰는 형식.
+_PANIC = re.compile(r"suprem4 panic:\s*(.+?)\s*$", re.MULTILINE)
+
+#: 식각 형상이 무너졌을 때 나오는 문구들. 깎는 깊이에 따라 어느 것이 나올지
+#: 갈리지만 원인과 대처는 같다. `40_sidewall_oxi_dep.str` 에 깊이를 바꿔 가며
+#: 걸어 본 실측 결과다(0.15 정상 / 0.16 이상은 전부 실패, 문구는 네 가지).
+#:
+#: 뿌리는 `etch()` 가 경계선 클리핑(B-rep)이라는 것이다. 식각선이 재료 경계와
+#: 나란히 겹치면 "교차점"이 정의되지 않아 조각을 이을 수 없다. 상세는
+#: SUPREM4GS/upstream/PROVENANCE.md 참조.
+_ETCH_PANICS = (
+    "malformed boundary",
+    "not in any triangle",
+    "not clock wise",
+    "error in chop",
+    "does not cross the material boundary",
+    "crosses itself",
+)
+
 #: 오류처럼 보이지만 정상인 문구. `^no ` 를 넓게 잡으면 여기에 걸려 성공한
 #: 실행이 실패로 뒤집힌다.
 _NOT_ERRORS = (re.compile(r"^no error in ", re.IGNORECASE),)
@@ -100,6 +119,29 @@ def mesh_points(log: str) -> int | None:
     return int(found[-1]) if found else None
 
 
+def _describe_panic(reason: str) -> str:
+    """`panic:` 뒤에 붙은 문구를 사용자가 할 수 있는 일로 옮긴다.
+
+    모르는 문구라도 그대로 보여준다 — 침묵보다 낫고, 검색이라도 할 수 있다.
+    """
+    opening = (
+        f"시뮬레이터가 형상을 처리하지 못하고 스스로 멈췄습니다(panic: {reason})."
+    )
+
+    if any(known in reason for known in _ETCH_PANICS):
+        return (
+            f"{opening} `etch dry` 는 식각선이 재료 경계와 나란히 겹치면"
+            " 실패하는데, 겹치는지 여부가 격자와 깎는 깊이의 조합으로 갈립니다."
+            " 그 영역 격자를 촘촘하게 주거나 깎는 깊이를 조금 바꿔 보세요."
+            " 같은 깊이를 여러 번에 걸쳐 깎는 방법은 통하지 않습니다."
+        )
+
+    return (
+        f"{opening} 입력 문법 문제가 아니라 시뮬레이터 내부에서 멈춘 것입니다."
+        " 직전 커맨드의 형상이나 격자를 조금 바꿔 보세요."
+    )
+
+
 def describe_abnormal_exit(exit_code: int, log: str = "") -> str | None:
     """신호로 죽은 실행에 붙일 설명. 정상 종료면 None.
 
@@ -115,6 +157,12 @@ def describe_abnormal_exit(exit_code: int, log: str = "") -> str | None:
     name = _SIGNAL_NAMES.get(exit_code - 128)
     if name is None:
         return None
+
+    # panic 이 있으면 그것이 가장 정확한 단서다. 격자 크기는 짚지 않는다 —
+    # panic 은 격자가 작아도 난다(6,018 점에서 실측). 격자를 탓하면 사용자가
+    # 엉뚱한 곳을 고친다.
+    if (panic := _PANIC.search(log)) is not None:
+        return _describe_panic(panic.group(1))
 
     opening = (
         f"시뮬레이터가 비정상 종료했습니다({name})."

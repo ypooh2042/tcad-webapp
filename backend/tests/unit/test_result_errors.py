@@ -184,3 +184,65 @@ class TestGridLimit:
         )
 
         assert "11,500" in describe_abnormal_exit(139, log)
+
+
+class TestSimulatorPanics:
+    """`panic:` 으로 죽은 실행.
+
+    시뮬레이터가 자기 자료구조가 깨진 것을 스스로 알아채고 죽는 경우다.
+    이때는 격자 크기를 탓하면 안 된다 — 격자가 작아도 난다. 실제로
+    6,018 점짜리 격자에서 `etch dry` 가 이 방식으로 죽는 것을 확인했다.
+
+    식각 형상 붕괴는 panic 문구가 네 가지 이상으로 갈리는데(깎는 깊이에 따라
+    `Region has malformed boundary`, `node not in any triangle`,
+    `triangles are not clock wise`, `error in chop`) 원인과 대처는 같다.
+    """
+
+    ETCH_PANICS = (
+        "suprem4 panic: Region has malformed boundary",
+        "suprem4 panic: node not in any triangle",
+        "suprem4 panic: triangles are not clock wise, data base corrupted",
+        "suprem4 panic: error in chop",
+        "suprem4 panic: etch region does not cross the material boundary",
+        "suprem4 panic: Region crosses itself.",
+    )
+
+    def test_names_the_panic_so_the_user_can_search_it(self) -> None:
+        message = describe_abnormal_exit(
+            139, "    Points = 6018\tNodes = 6468\t\nsuprem4 panic: error in chop\n"
+        )
+
+        assert "error in chop" in message
+
+    def test_every_etch_panic_gets_the_etch_explanation(self) -> None:
+        for line in self.ETCH_PANICS:
+            message = describe_abnormal_exit(139, f"{line}\n")
+
+            assert "식각" in message, line
+
+    def test_does_not_blame_the_mesh_size(self) -> None:
+        # panic 은 격자가 작아도 난다. 격자 한계 안내를 붙이면 엉뚱한 곳을 고친다.
+        log = "    Points = 12236\tNodes = 12500\t\nsuprem4 panic: error in chop\n"
+
+        message = describe_abnormal_exit(139, log)
+
+        assert f"{GRID_POINTS_PER_REGION:,}" not in message
+
+    def test_does_not_suggest_splitting_the_etch(self) -> None:
+        """깊이를 나눠 깎는 것은 **통하지 않는다**. 실측으로 확인했다.
+
+        0.1 두 번, 0.05 네 번, 0.15+0.05 모두 죽었다. 통하지 않는 회피법을
+        안내하면 사용자는 그것부터 한참 시도한다.
+        """
+        message = describe_abnormal_exit(139, "suprem4 panic: error in chop\n")
+
+        assert "나눠" not in message
+
+    def test_a_clean_exit_is_still_none(self) -> None:
+        assert describe_abnormal_exit(0, "suprem4 panic: error in chop\n") is None
+
+    def test_unknown_panic_still_gets_named(self) -> None:
+        # 우리가 모르는 panic 도 문구는 그대로 보여준다. 침묵보다 낫다.
+        message = describe_abnormal_exit(139, "suprem4 panic: something new\n")
+
+        assert "something new" in message
