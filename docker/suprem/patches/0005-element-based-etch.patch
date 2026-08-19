@@ -1,0 +1,464 @@
+--- a/src/refine/etch_elem.c
++++ b/src/refine/etch_elem.c
+@@ -0,0 +1,426 @@
++/*----------------------------------------------------------------------
++ *  etch_elem.c  --  요소 기반(cut-cell) 식각.
++ *
++ *  기존 etch() 는 경계선 클리핑(B-rep)이다. 식각 다각형의 변과 영역 경계의
++ *  변이 어디서 만나는지를 edg_crs() 로 하나씩 찾아 조각을 잇는데, 판단이
++ *  전부 변 단위 국소 판단이라 짝을 못 찾으면 고리가 안 닫히고 전역 위상이
++ *  깨진다. 식각선이 재료 경계와 거의 나란해지면(실측: 교차각 2.1 도) 겹친
++ *  변에 교차점이 정의되지 않아 그 일이 실제로 일어난다.
++ *
++ *  여기서는 다각형을 잇지 않는다. 삼각형 하나를 선으로 자르는 것은 교점이
++ *  최대 2 개이고 결과가 1~3 개 삼각형인 완전히 국소적인 연산이라, 전역
++ *  조각 잇기가 아예 없다.
++ *
++ *  절단 기하는 새로 짜지 않았다. sp_edge() 가 이미
++ *    - 영역 계면 변에서는 반대편 물질 노드까지 함께 갱신하고
++ *    - 새 노드의 물성값을 변을 따라 선형 보간하며
++ *    - new_edg_tri() 로 그 변을 쓰는 삼각형 전부를 정합하게 쪼갠다
++ *  이 파일은 "어디를 자르고 무엇을 지울지"만 정한다.
++ *
++ *  절단점이 기존 꼭짓점에 아주 가까우면 자르지 않고 **그 꼭짓점의 분류를
++ *  바꾼다**. sp_edge 에도 비슷한 스냅이 있지만 그쪽은 점의 좌표를 옮기는
++ *  방식이라(move_edge) 그 점을 공유하는 삼각형이 뒤집힐 수 있고, 실제로
++ *  "not clock wise" 로 죽었다. 분류만 바꾸면 기하는 그대로다.
++ *
++ *  자르기와 지우기 **사이에 bd_connect() 를 한 번 돌린다.** 지우는 쪽인
++ *  rem_ele(t,TRUE) 는 neigh_fc() 로 이웃을 찾아 드러난 면을 노출 처리하는데,
++ *  갓 만든 삼각형은 nb[] 가 미정이라 이웃을 못 찾는다. 표면 플래그를 우리가
++ *  직접 유도해 보려 했지만, make_bc() 가 "양 끝점이 표면인 면"을 전부 노출로
++ *  찍기 때문에 얇은 영역을 가로지르는 내부 면까지 표면이 되어 표면선이
++ *  갈라졌다 — find_surf() 가 거기서 죽었다(백트레이스로 확인).
++ *  중간에 bd_connect 를 돌리면 그 뒤로는 코드베이스 자신의 메커니즘이
++ *  그대로 동작한다. 자르기만 한 상태는 삼각형을 쪼갠 것뿐이라 유효한
++ *  메시이므로 자기검사도 통과한다. 점 번호가 바뀌므로 분류는 다시 구한다.
++ *--------------------------------------------------------------------*/
++
++#include <stdio.h>
++#include <math.h>
++#include <stdlib.h>
++#include <global.h>
++#include <constant.h>
++#include <geom.h>
++#include <dbaccess.h>
++#include <material.h>
++#include "refine.h"
++
++/* 잘라낼 곳 한 군데 */
++struct cut_str {
++    int edge;			/* 자를 변 */
++    int pin, pout;		/* 안쪽 끝점 / 바깥쪽 끝점 */
++    double t;			/* 안쪽 끝점에서 잰 매개변수 */
++    float c[MAXDIM];		/* 자를 자리 */
++};
++
++/*-----------------IN_ETCH_POLY-----------------------------------------
++ *  점이 식각 다각형 안인가. crossing number 판정.
++ *
++ *  경계에 정확히 놓인 점은 "밖"으로 본다 — 그 점이 곧 새 식각면이 되므로
++ *  남겨야 한다.
++ *
++ *  **판정은 이 함수 하나뿐이고, 결과는 점마다 한 번만 구해 배열에 담는다.**
++ *  같은 점을 두 곳에서 다르게 판정하는 순간 B-rep 과 같은 병에 걸린다.
++ *--------------------------------------------------------------------*/
++static int in_etch_poly( x, y, px, py, n )
++float x, y;
++float *px, *py;
++int n;
++{
++    int i, j, c = 0;
++
++    if ( mode == ONED ) {
++	/*1 차원에서는 x 가 깊이다. 다각형이 아니라 구간이다.*/
++	float lo = px[0], hi = px[0];
++	for(i = 1; i < n; i++) {
++	    if ( px[i] < lo ) lo = px[i];
++	    if ( px[i] > hi ) hi = px[i];
++	}
++	return( (x > lo) && (x < hi) );
++    }
++
++    for(i = 0, j = n-1; i < n; j = i++) {
++	if ( ((py[i] > y) != (py[j] > y)) &&
++	     (x < (px[j]-px[i]) * (y-py[i]) / (py[j]-py[i]) + px[i]) )
++	    c = !c;
++    }
++    return( c );
++}
++
++
++/*-----------------SEG_CROSS--------------------------------------------
++ *  선분 a->b 와 c->d 가 만나는가. 만나면 a 에서의 매개변수 t 를 준다.
++ *
++ *  edg_crs() 와 달리 여기서는 못 만나도 아무 일이 없다 — 그냥 다음 후보를
++ *  본다. 이 함수의 실패가 전역 위상을 깨뜨릴 수 없다는 것이 이 설계의 요점.
++ *--------------------------------------------------------------------*/
++static int seg_cross( ax, ay, bx, by, cx, cy, dx, dy, t )
++double ax, ay, bx, by, cx, cy, dx, dy;
++double *t;
++{
++    double rx = bx - ax, ry = by - ay;
++    double sx = dx - cx, sy = dy - cy;
++    double den = rx * sy - ry * sx;
++    double tt, uu;
++
++    if ( den == 0.0 ) return( FALSE );		/*평행 — 다음 후보로*/
++
++    tt = ((cx - ax) * sy - (cy - ay) * sx) / den;
++    uu = ((cx - ax) * ry - (cy - ay) * rx) / den;
++
++    if ( (tt < 0.0) || (tt > 1.0) || (uu < 0.0) || (uu > 1.0) ) return( FALSE );
++
++    *t = tt;
++    return( TRUE );
++}
++
++
++/*-----------------EDGE_CUT---------------------------------------------
++ *  변 e 가 식각 경계를 가로지르는가.
++ *
++ *  가로지르면 TRUE 와 함께: 안쪽 끝점 *pin, 바깥쪽 끝점 *pout, 안쪽에서 잰
++ *  매개변수 *tout (0 이면 안쪽 끝점, 1 이면 바깥쪽 끝점), 교점 좌표 c.
++ *
++ *  다각형과 여러 번 만나면 바깥쪽에 가장 가까운 교점을 쓴다 — 덜 남기는
++ *  쪽으로 치우치게 해서 얇은 조각을 만들지 않는다.
++ *--------------------------------------------------------------------*/
++static int edge_cut( e, gone, p, nump, pin, pout, tout, c )
++int e;
++char *gone;
++float *p[MAXDIM+1];
++int nump;
++int *pin, *pout;
++double *tout;
++float c[MAXDIM];
++{
++    int j, i, a, b;
++    double t_at, best = -1.0;
++
++    a = pt_nd( nd_edg(e,0) );
++    b = pt_nd( nd_edg(e,1) );
++    if ( gone[a] == gone[b] ) return( FALSE );
++
++    if ( !gone[a] ) { i = a; a = b; b = i; }	/*a 가 안쪽이 되게*/
++
++    for(j = 0; j < nump; j++) {
++	i = (j + 1) % nump;
++	if ( seg_cross( (double)cordinate(a,0), (double)cordinate(a,1),
++			(double)cordinate(b,0), (double)cordinate(b,1),
++			(double)p[0][j], (double)p[1][j],
++			(double)p[0][i], (double)p[1][i], &t_at ) )
++	    if ( t_at > best ) best = t_at;
++    }
++    if ( best < 0.0 ) return( FALSE );
++
++    *pin = a;  *pout = b;  *tout = best;
++    c[0] = cordinate(a,0) + best * (cordinate(b,0) - cordinate(a,0));
++    c[1] = cordinate(a,1) + best * (cordinate(b,1) - cordinate(a,1));
++    return( TRUE );
++}
++
++
++/*-----------------ON_POLY----------------------------------------------
++ *  점이 식각 다각형 경계 위에 있는가. 허용오차는 skel.c 의 on_bound() 와
++ *  같은 1.0e-8 cm 를 쓴다.
++ *--------------------------------------------------------------------*/
++static int on_poly( x, y, px, py, n )
++float x, y;
++float *px, *py;
++int n;
++{
++    int i, j;
++    double ax, ay, bx, by, dx, dy, len, t, gx, gy;
++
++    for(j = 0; j < n; j++) {
++	i = (j + 1) % n;
++	ax = px[j];  ay = py[j];  bx = px[i];  by = py[i];
++	dx = bx - ax;  dy = by - ay;
++	len = dx*dx + dy*dy;
++	if ( len <= 0.0 ) continue;
++	t = ((x - ax) * dx + (y - ay) * dy) / len;
++	if ( t < 0.0 ) t = 0.0;
++	if ( t > 1.0 ) t = 1.0;
++	gx = ax + t*dx - x;  gy = ay + t*dy - y;
++	if ( gx*gx + gy*gy < 1.0e-16 ) return( TRUE );	/*(1e-8)^2*/
++    }
++    return( FALSE );
++}
++
++
++/*-----------------TRI_QUAL---------------------------------------------
++ *  세 점이 이루는 삼각형의 품질(면적/최장변^2). 퇴화하면 0 에 가깝다.
++ *--------------------------------------------------------------------*/
++static double tri_qual( ax, ay, bx, by, cx, cy )
++double ax, ay, bx, by, cx, cy;
++{
++    double area, l1, l2, l3, lm;
++
++    area = fabs( (bx-ax)*(cy-ay) - (cx-ax)*(by-ay) ) * 0.5;
++    l1 = (bx-ax)*(bx-ax) + (by-ay)*(by-ay);
++    l2 = (cx-bx)*(cx-bx) + (cy-by)*(cy-by);
++    l3 = (ax-cx)*(ax-cx) + (ay-cy)*(ay-cy);
++    lm = (l1 > l2) ? l1 : l2;  if ( l3 > lm ) lm = l3;
++    if ( lm <= 0.0 ) return( 0.0 );
++    return( area / lm );
++}
++
++
++/*-----------------ETCH_ELEM--------------------------------------------
++ *  요소 기반 식각. etch() 와 같은 인자를 받는다.
++ *--------------------------------------------------------------------*/
++
++/*절단점이 변 끝에서 이 비율 안쪽이면 자르지 않고 그 끝점의 분류를 바꾼다.
++  자르면 그만큼 얇은 삼각형이 생기고, 얇은 삼각형이야말로 이 재작성이
++  없애려는 대상이다. 기하 오차는 그 변 길이의 5% 이하로 국한된다.*/
++#define SNAP_FRAC 0.05
++
++/*한 삼각형의 두 변을 같은 꼭짓점 근처에서 자르면 그 모서리 조각이 퇴화한다.
++  길이 비율로는 못 잡는다 — 그 꼭짓점에서 두 변이 거의 일직선이면 비율이
++  넉넉해도 면적이 0 이 된다. 실측한 사망 사례: 변 길이 약 4 nm 인데 세 점이
++  공선이라 면적이 걸맞은 값의 1e-5 배, 부호가 음수가 되어
++  "triangles are not clock wise" 로 죽었다. 그래서 **실제 면적**으로 잰다.*/
++/*삼각형 품질 = 면적 / 최장변^2. 정삼각형이 0.43, 건강한 격자가 0.1~0.4,
++  퇴화한 것은 0 에 수렴한다. 실측한 사망 사례는 1.9e-6 이었다.
++  **면적 비율이 아니라 이 값으로 재는 이유**: 부모 삼각형이 이미 납작하면
++  비율 기준은 통과해 버린다(실제로 "triangle is flat" 으로 죽었다).*/
++#define QUAL_MIN 0.05
++
++etch_elem( p, nump, mater )
++float *p[MAXDIM+1];
++int nump;
++int mater;
++{
++    char *gone, *onln, *doreg;
++    struct cut_str *cut;
++    int ncut, maxcut, nsnap;
++    int *dead, ndead, *ctab;
++    int r, t, e, i, ip, gsize, pass;
++    int pin, pout;
++    double tt;
++    float c[MAXDIM];
++    int hit;
++
++    if ( nump < 2 ) return;
++
++    doreg = salloc( char, nreg );
++    for(r = 0; r < nreg; r++)
++	doreg[r] = ( ((mater == -1) || (mat_reg(r) == mater))
++		     && ask( reg[r], EXPOS ) ) ? 1 : 0;
++
++    maxcut = ned + 16;
++    gsize = np + maxcut + 16;
++    gone = salloc( char, gsize );
++    for(i = 0; i < gsize; i++) gone[i] = 0;
++    for(i = 0; i < np; i++)
++	gone[i] = in_etch_poly( cordinate(i,0), cordinate(i,1),
++				p[0], p[1], nump ) ? 1 : 0;
++
++    /*--- 1 단계: 퇴화를 낳는 절단을 분류 스냅으로 흡수한다 ---
++      두 가지를 본다.
++	(a) 절단이 변 끝에 너무 가까움 — 쪼갠 조각 면적이 t 에 비례하므로
++	    길이 비율로 판정할 수 있다(SNAP_FRAC).
++	(b) 한 삼각형의 여러 변이 잘려 생기는 모서리 조각이 퇴화함 — 두 변이
++	    이루는 각에 따라 면적이 정해지므로 길이 비율로는 못 잡는다.
++	    실제 형상 품질(면적/최장변^2)로 잰다(QUAL_MIN).
++
++      **되풀이한다.** 스냅은 분류를 바꾸고, 분류가 바뀌면 어느 변이 잘리는지가
++      바뀐다. 한 번만 돌면 새로 생긴 퇴화를 놓친다. 스냅이 더 안 나올 때까지
++      돌리되, 분류는 한 방향으로만 움직이므로(안↔밖을 오가지 않는다) 상한을
++      둔다.
++     ---------------------------------------------------------------*/
++    nsnap = 0;
++    ctab = salloc( int, ned );
++    cut  = salloc( struct cut_str, maxcut );
++
++    for(pass = 0; pass < 8; pass++) {
++	int made = 0;
++
++	for(e = 0; e < ned; e++) ctab[e] = -1;
++	ncut = 0;
++	for(e = 0; e < ned && ncut < maxcut; e++) {
++	    for(hit = 0, i = 0; i < num_ele_edg(e) && !hit; i++)
++		if ( doreg[ reg_tri( ele_edg(e,i) ) ] ) hit = 1;
++	    if ( !hit ) continue;
++	    if ( !edge_cut( e, gone, p, nump, &pin, &pout, &tt, c ) ) continue;
++	    cut[ncut].edge = e;  cut[ncut].pin = pin;  cut[ncut].pout = pout;
++	    cut[ncut].t = tt;    cut[ncut].c[0] = c[0];  cut[ncut].c[1] = c[1];
++	    ctab[e] = ncut;
++	    ncut++;
++	}
++
++	/*(a)*/
++	for(i = 0; i < ncut; i++) {
++	    if ( cut[i].t < SNAP_FRAC ) {
++		if ( gone[ cut[i].pin ] ) { gone[ cut[i].pin ] = 0; made++; }
++	    }
++	    else if ( cut[i].t > 1.0 - SNAP_FRAC ) {
++		if ( !gone[ cut[i].pout ] ) { gone[ cut[i].pout ] = 1; made++; }
++	    }
++	}
++
++	/*(b) 잘린 변이 둘 이상인 삼각형의 모든 모서리 조각을 본다.
++	  세 변이 다 잘리는 경우도 여기서 걸린다 — 앞서 그 경우를 빠뜨려
++	  flip() 이 퇴화 삼각형을 만들었다. */
++	for(t = 0; t < ne; t++) {
++	    int fe[MAXSID], nfe = 0, k, m, vv, worstv = -1;
++	    double q, worstq = 1.0e30;
++	    if ( dead_tri(t) ) continue;
++	    if ( !doreg[ reg_tri(t) ] ) continue;
++	    for(i = 0; i < num_face(t); i++) {
++		e = edg_ele(t, i);
++		if ( (e >= 0) && (e < ned) && (ctab[e] != -1) ) fe[nfe++] = e;
++	    }
++	    if ( nfe < 2 ) continue;
++
++	    for(k = 0; k < nfe; k++)
++	      for(m = k+1; m < nfe; m++) {
++		vv = -1;
++		if ( (pt_edg(fe[m],0) == pt_edg(fe[k],0)) ||
++		     (pt_edg(fe[m],0) == pt_edg(fe[k],1)) ) vv = pt_edg(fe[m],0);
++		else if ( (pt_edg(fe[m],1) == pt_edg(fe[k],0)) ||
++			  (pt_edg(fe[m],1) == pt_edg(fe[k],1)) ) vv = pt_edg(fe[m],1);
++		if ( vv == -1 ) continue;
++		q = tri_qual( (double)cordinate(vv,0), (double)cordinate(vv,1),
++			      (double)cut[ ctab[fe[k]] ].c[0],
++			      (double)cut[ ctab[fe[k]] ].c[1],
++			      (double)cut[ ctab[fe[m]] ].c[0],
++			      (double)cut[ ctab[fe[m]] ].c[1] );
++		if ( q < worstq ) { worstq = q; worstv = vv; }
++	      }
++
++	    if ( (worstv != -1) && (worstq < QUAL_MIN) ) {
++		gone[worstv] = gone[worstv] ? 0 : 1;
++		made++;
++	    }
++	}
++
++	nsnap += made;
++	if ( made == 0 ) break;
++    }
++
++    sfree(ctab);
++    sfree(cut);
++
++    /*--- 2 단계: 스냅을 반영해 자를 자리를 다시 모은다 ---*/
++    cut = salloc( struct cut_str, maxcut );
++    ncut = 0;
++    for(e = 0; e < ned && ncut < maxcut; e++) {
++	for(hit = 0, i = 0; i < num_ele_edg(e) && !hit; i++)
++	    if ( doreg[ reg_tri( ele_edg(e,i) ) ] ) hit = 1;
++	if ( !hit ) continue;
++	if ( !edge_cut( e, gone, p, nump, &pin, &pout, &tt, c ) ) continue;
++	if ( (tt < SNAP_FRAC) || (tt > 1.0 - SNAP_FRAC) ) continue;
++	cut[ncut].edge = e;
++	cut[ncut].c[0] = c[0];
++	cut[ncut].c[1] = c[1];
++	ncut++;
++    }
++
++    /*--- 3 단계: 자른다 ---*/
++    for(i = 0; i < ncut; i++) {
++	ip = -1;
++	(void) sp_edge( cut[i].edge, cut[i].c, &ip, FALSE );
++    }
++    sfree(cut);
++    sfree(gone);
++
++    /*자르기만 한 상태를 온전한 메시로 만든다. 여기서 점 번호가 바뀐다.*/
++    if ( ncut > 0 ) bd_connect("after etch cut");
++
++    /*--- 4 단계: 형상만 보고 다시 분류한다 ---
++      번호가 바뀌었으므로 처음부터 구한다. 식각 경계 위의 점(절단점)은
++      따로 표시한다 — 그 점들은 남기지만, "안쪽 꼭짓점이 하나라도 있고
++      바깥 꼭짓점이 없는" 삼각형을 지울 때 안쪽 편으로 세어야 한다. */
++    gone = salloc( char, np );
++    onln = salloc( char, np );
++    for(i = 0; i < np; i++) {
++	onln[i] = on_poly( cordinate(i,0), cordinate(i,1), p[0], p[1], nump ) ? 1 : 0;
++	gone[i] = ( !onln[i] &&
++		    in_etch_poly( cordinate(i,0), cordinate(i,1),
++				  p[0], p[1], nump ) ) ? 1 : 0;
++    }
++    for(r = 0; r < nreg; r++)
++	doreg[r] = ( ((mater == -1) || (mat_reg(r) == mater))
++		     && ask( reg[r], EXPOS ) ) ? 1 : 0;
++
++    /*--- 5 단계: 지운다 ---
++      이제 nb[] 가 유효하므로 rem_ele(t,TRUE) 의 노출 처리가 제대로 돈다. */
++    dead = salloc( int, ne );
++    ndead = 0;
++    for(t = 0; t < ne; t++) {
++	int nin = 0, nout = 0, q;
++	if ( dead_tri(t) ) continue;
++	if ( !doreg[ reg_tri(t) ] ) continue;
++	for(i = 0; i < num_vert(t); i++) {
++	    q = pt_nd( vert_tri(t,i) );
++	    if ( gone[q] ) nin++;
++	    else if ( !onln[q] ) nout++;
++	}
++	if ( (nout == 0) && (nin > 0) ) dead[ndead++] = t;
++    }
++    for(i = 0; i < ndead; i++)
++	if ( !dead_tri(dead[i]) ) rem_ele( dead[i], TRUE );
++
++    /*어느 삼각형도 쓰지 않는 물질 노드를 걷어낸다. mtest1 과 같은 방식으로
++      센다 — 캐시(ltri)는 이 시점에 낡아 있다. */
++    {	char *used = salloc( char, nn );
++	for(i = 0; i < nn; i++) used[i] = 0;
++	for(t = 0; t < ne; t++) {
++	    if ( dead_tri(t) ) continue;
++	    for(i = 0; i < num_vert(t); i++) used[ vert_tri(t,i) ] = 1;
++	}
++	for(i = 0; i < nn; i++) {
++	    if ( dead_nd(i) || (mat_nd(i) == GAS) ) continue;
++	    if ( !used[i] ) rem_1nd(i);
++	}
++	sfree(used);
++    }
++
++    for(r = 0; r < nreg; r++)
++	if ( doreg[r] && !dead_reg(r) && (num_tri_reg(r) == 0) ) rem_reg(r);
++
++    sfree(dead);
++    sfree(onln);
++    sfree(gone);
++    sfree(doreg);
++
++    bd_connect("after etch");
++}
+--- a/src/refine/etch.c
++++ b/src/refine/etch.c
+@@ -282,6 +282,15 @@
+     struct LLedge *bp;
+     int f, n;
+ 
++    /*요소 기반(cut-cell) 경로. 개발 중 두 방식을 견주기 위한 임시 스위치이며,
++      채택하면 이 분기와 아래 B-rep 본체를 함께 지운다.*/
++    {	char *how = getenv("SUP4_ETCH");
++	if ( (how != NULL) && (how[0] == 'e') ) {
++	    etch_elem( p, nump, mater );
++	    return;
++	}
++    }
++
+     for(r = 0; r < nreg; r++) clr(reg[r], ETCHED);
+ 
+     /*for every material that we are worried about...*/
+--- a/src/Makefile.proto
++++ b/src/Makefile.proto
+@@ -231,12 +231,14 @@
+ 	plot/plot_1d.o plot/plot_2d.o plot/print_1d.o plot/select.o
+ 
+ REFINESRCS = refine/bfill.c refine/dbase.c refine/deloop.c \
++	refine/etch_elem.c \
+ 	refine/deposit.c refine/etch.c refine/grid.c refine/hinit.c \
+ 	refine/interp.c refine/offset.c refine/rate.c refine/rect_tri.c \
+ 	refine/skel.c refine/sp_edge.c refine/string_etch.c \
+ 	refine/string_off.c refine/surface.c refine/triang.c \
+ 	refine/tridata.c refine/triheur.c
+ REFINEOBJS = refine/bfill.o refine/dbase.o refine/deloop.o \
++	refine/etch_elem.o \
+ 	refine/deposit.o refine/etch.o refine/grid.o refine/hinit.o \
+ 	refine/interp.o refine/offset.o refine/rate.o refine/rect_tri.o \
+ 	refine/skel.o refine/sp_edge.o refine/string_etch.o \
