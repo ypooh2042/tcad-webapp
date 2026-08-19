@@ -17,6 +17,7 @@ function detail(overrides: Partial<JobDetail> = {}): JobDetail {
     source_path: 'a.in',
     created_at: '2026-08-12T12:00:00+00:00',
     log: null,
+    log_truncated: false,
     exit_code: null,
     artifacts: [],
     ...overrides,
