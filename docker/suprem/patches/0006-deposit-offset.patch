@@ -1,0 +1,180 @@
+--- a/src/refine/offset.c
++++ b/src/refine/offset.c
+@@ -51,6 +51,7 @@
+     double x1,y1, x2,y2;	/*the offset to the line segment*/
+     double x, y;
+     double rot[2][2];
++    double arcstep, arcchord;
+     double err = space * 0.01;
+     int maxop;
+     struct line *op;
+@@ -125,8 +126,22 @@
+ 	}
+ 	else {
+ 	    /*fill in around the aparent corner*/
+-	    rot[0][0] = cos( space / thick );
+-	    rot[0][1] = - sin( space / thick );
++	    /*원래는 회전 단위가 space/thick, 종료 조건이 d > 1.5*space 였다. 둘 다
++	      격자 간격 기준이지 기하 정확도 기준이 아니다. space 는 지정하지 않으면
++	      thick/ndiv 이고 예제는 전부 ndiv=1 이라 space==thick 이 되는데, 그러면
++	        회전 단위 = 1 라디안(57.3도)
++	        종료 거리 1.5*space = 1.5*thick, 반지름 thick 위 두 점의 최대 거리는 2*thick
++	      이 되어 모서리 각이 97 도 미만이면 루프가 첫 회에 끝나고 그 점마저
++	      아래의 nop-- 가 버린다. 결국 볼록 모서리에 아크 점이 하나도 남지 않고
++	      현으로 대체된다. 45 도 모서리의 현 처짐은 thick*(1-cos(22.5도)) = thick 의
++	      7.6% 로, 실측 오차와 일치했다.
++	      회전 단위는 현 처짐이 thick 의 1% 이하가 되게 제한하고, 종료 조건은
++	      "남은 각이 한 단위보다 작을 때"에 해당하는 현 길이로 바꾼다. */
++	    arcstep = space / thick;
++	    if ( arcstep > 2.0 * acos( 0.99 ) ) arcstep = 2.0 * acos( 0.99 );
++	    arcchord = 2.0 * thick * sin( arcstep * 0.5 );
++	    rot[0][0] = cos( arcstep );
++	    rot[0][1] = - sin( arcstep );
+ 	    rot[1][0] = - rot[0][1];
+ 	    rot[1][1] = rot[0][0];
+ 
+@@ -152,7 +167,7 @@
+ 		d = sqrt( ( op[nop-1].x-x1 ) * ( op[nop-1].x-x1 ) +
+ 			  ( op[nop-1].y-y1 ) * ( op[nop-1].y-y1 ) );
+ 
+-	    } while( d > 1.5 * space );
++	    } while( d > arcchord );
+ 	    nop--;
+ 	    add_toline( &nop, op, x1, y1, i, err );
+ 	    if ( nop == maxop ) {
+@@ -182,12 +197,130 @@
+     op[nop].p = -1;
+     nop++;
+ 
+-    /*de_loop the outer line...*/
+-    while( de_loop(&nop, op, err) );
++    /*트리밍 — 고리 제거와 거리 필터를 번갈아 수렴할 때까지.
++      de_loop 은 자기교차를 확실히 없애지만(실측 28쌍->0, 90쌍->0) 첫 교차를
++      찾는 즉시 그 사이를 버리므로 **어느 쪽을 남기느냐가 훑는 순서에
++      좌우된다**. 그래서 재료 안쪽(원본에서 거리 thick 미만) 점이 남는다.
++      거리 필터만 쓰면 반대로 아크가 만든 작은 고리를 못 지운다. 둘을
++      번갈아 돌려야 한다. */
++    {	int pass, changed;
++	double *dv = salloc( double, 2*nop + 8 );
++	struct line *nl = salloc( struct line, 2*nop + 8 );
++
++#define SRCDIST(QX,QY,OUT) { \
++	    int _k; double _d, _ax, _ay, _bx, _by, _t, _l; \
++	    (OUT) = 1.0e30; \
++	    for(_k = 0; _k < nump-1; _k++) { \
++		_ax = p[_k].x; _ay = p[_k].y; \
++		_bx = p[_k+1].x - _ax; _by = p[_k+1].y - _ay; \
++		_l = _bx*_bx + _by*_by; \
++		_t = (_l <= 0.0) ? 0.0 : (((QX)-_ax)*_bx + ((QY)-_ay)*_by)/_l; \
++		if (_t < 0.0) _t = 0.0; if (_t > 1.0) _t = 1.0; \
++		_d = sqrt(((QX)-_ax-_t*_bx)*((QX)-_ax-_t*_bx) \
++			+ ((QY)-_ay-_t*_by)*((QY)-_ay-_t*_by)); \
++		if (_d < (OUT)) (OUT) = _d; } }
++
++	for(pass = 0; pass < 8; pass++) {
++	    int rd, wr = 0, it;
++	    double lo2, hi2, mid, dd, ax, ay, bx, by, mx, my;
++	    double want = thick - thick * 1.0e-4;
++
++	    while( de_loop(&nop, op, err) );
++
++	    for(rd = 0; rd < nop; rd++) SRCDIST(op[rd].x, op[rd].y, dv[rd])
++	    /*양 끝은 아래에서 x 범위로 잘라내므로 여기서는 남긴다*/
++	    dv[0] = dv[nop-1] = thick;
++
++	    changed = 0;
++	    for(rd = 0; rd < nop; rd++) {
++		if ( dv[rd] >= want ) nl[wr++] = op[rd];
++		else changed = 1;
++		if ( rd == nop-1 ) break;
++		if ( (dv[rd] >= want) == (dv[rd+1] >= want) ) continue;
++		lo2 = 0.0; hi2 = 1.0;
++		ax = op[rd].x; ay = op[rd].y;
++		bx = op[rd+1].x - ax; by = op[rd+1].y - ay;
++		for(it = 0; it < 40; it++) {
++		    mid = 0.5*(lo2+hi2);
++		    mx = ax + mid*bx; my = ay + mid*by;
++		    SRCDIST(mx, my, dd)
++		    if ( (dd >= want) == (dv[rd] >= want) ) lo2 = mid; else hi2 = mid;
++		}
++		mid = 0.5*(lo2+hi2);
++		nl[wr].x = ax + mid*bx;  nl[wr].y = ay + mid*by;
++		nl[wr].map = (dv[rd] >= want) ? op[rd].map : op[rd+1].map;
++		nl[wr].p = -1;  wr++;
++	    }
++
++	    /*겹친 점 제거. intang() 은 길이 0 인 변에서 MAXFLOAT 을 돌려주고
++	      그 값이 ck_clock 의 회전각 합을 오염시킨다(dbase/geom.c:142). */
++	    {	int ww = 0, rr;
++		for(rr = 0; rr < wr; rr++) {
++		    if ( ww > 0 ) {
++			double ddx = nl[rr].x - op[ww-1].x, ddy = nl[rr].y - op[ww-1].y;
++			if ( sqrt(ddx*ddx + ddy*ddy) < err ) continue;
++		    }
++		    op[ww++] = nl[rr];
++		}
++		if ( ww != nop ) changed = 1;
++		nop = ww;
++	    }
++	    if ( !changed ) break;
++	}
++#undef SRCDIST
++	sfree(nl); sfree(dv);
++    }
+ 
+-    /*strip the first and last pseudo points*/
+-    del_fromline( 0, &nop, op );
+-    nop--;
++    /*표면의 x 범위로 잘라낸다 — 원래는 가짜 끝점 두 개만 떼어내고
++      나머지는 build_skel 이 **점마다 x 만 클램프**했다(deposit.c:324-333).
++      그 클램프는 기하를 모르는 연산이라, 오프셋이 오른쪽 끝에서 x=hi 를
++      넘나들면 여러 점이 한 수직선 위로 접혀 지그재그가 되고 표면선을
++      관통한다(실측: 조밀 입력에서 범위 밖 점이 4 개, 그 결과 고리에
++      자기교차 1 쌍). 여기서 정확한 교차점을 넣어 잘라내면 클램프가 할 일이
++      없어진다. */
++    {	double lo3 = p[0].x, hi3 = p[nump-1].x, t3;
++	int a3, b3, w3, k3, okL = 0, okR = 0;
++	struct line L3, R3;
++
++	for(a3 = 0; a3 < nop && op[a3].x < lo3; a3++) ;
++	for(b3 = nop-1; b3 >= 0 && op[b3].x > hi3; b3--) ;
++
++	if ( a3 <= b3 ) {
++	    if ( (a3 > 0) && (op[a3].x != op[a3-1].x) ) {
++		t3 = (lo3 - op[a3-1].x) / (op[a3].x - op[a3-1].x);
++		L3.x = lo3;  L3.y = op[a3-1].y + t3*(op[a3].y - op[a3-1].y);
++		L3.map = op[a3].map;  L3.p = -1;  okL = 1;
++		/*끼워 넣을 점이 바로 옆 점과 겹치면 넣지 않는다. 평평한 표면에서는
++		  가짜 끝점 다음 점이 이미 정확히 x=lo 라, 그대로 두면 길이 0 인 변이
++		  생기고 intang() 이 MAXFLOAT 을 돌려 ck_clock 이 죽는다(실측: 예제
++		  세 개가 전부 첫 증착에서 사망). */
++		if ( sqrt( (L3.x-op[a3].x)*(L3.x-op[a3].x)
++			 + (L3.y-op[a3].y)*(L3.y-op[a3].y) ) < err ) okL = 0;
++	    }
++	    if ( (b3 < nop-1) && (op[b3+1].x != op[b3].x) ) {
++		t3 = (hi3 - op[b3].x) / (op[b3+1].x - op[b3].x);
++		R3.x = hi3;  R3.y = op[b3].y + t3*(op[b3+1].y - op[b3].y);
++		R3.map = op[b3].map;  R3.p = -1;  okR = 1;
++		if ( sqrt( (R3.x-op[b3].x)*(R3.x-op[b3].x)
++			 + (R3.y-op[b3].y)*(R3.y-op[b3].y) ) < err ) okR = 0;
++	    }
++	    w3 = 0;
++	    if ( okL ) op[w3++] = L3;
++	    for(k3 = a3; k3 <= b3; k3++) { if (w3 != k3) op[w3] = op[k3]; w3++; }
++	    if ( okR ) op[w3++] = R3;
++	    nop = w3;
++	}
++	else {
++	    /*남는 게 없다 — 원래 동작대로 가짜 끝점만 떼어낸다*/
++	    del_fromline( 0, &nop, op );
++	    nop--;
++	}
++	/*map 은 첨자로 쓰이므로 범위만 지킨다(build_skel 은 map 을 읽지 않는다)*/
++	for(k3 = 0; k3 < nop; k3++) {
++	    if ( op[k3].map < 0 ) op[k3].map = 0;
++	    if ( op[k3].map > nump-1 ) op[k3].map = nump-1;
++	}
++    }
+ 
+     /*get the p maps set up*/
+     p[0].map = 0;
