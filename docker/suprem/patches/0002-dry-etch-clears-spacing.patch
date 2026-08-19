@@ -1,0 +1,21 @@
+--- a/src/refine/etch.c
++++ b/src/refine/etch.c
+@@ -137,6 +137,18 @@
+ 	/*how much do we take off*/
+ 	thick = get_float( param, "thick" ) * 1.0e-4;
+ 
++	/* **점별 격자 간격 배열을 반드시 비운다.**
++	 *
++	 * p[] 는 static 이다 — etch start/continue/done 이 여러 번의 호출에 걸쳐
++	 * 폴리곤을 누적하기 때문이다. 그런데 p[3](점별 간격)을 할당하는 곳은 있어도
++	 * (etch left/right 는 4칸, etch start 는 500칸) NULL 로 되돌리는 곳이 없다.
++	 * 이 분기는 p[3] 을 채우지 않으므로, 앞서 그런 식각을 한 적이 있으면
++	 * 아래 etch() 안의
++	 *     if ( p[3] != NULL && p[3][i] > 0.0 ) set_space(ip, p[3][i]);
++	 * 가 표면 점 수(수백 개)만큼 **배열 밖을 읽어** 쓰레기 간격을 격자에 심는다.
++	 * CMOS 흐름은 dry etch 전에 photoresist 를 left/폴리곤으로 여러 번 깎는다. */
++	p[3] = NULL;
++
+ 	/*find the surface line*/
+ 	nums = find_surf( &surf );
+ 

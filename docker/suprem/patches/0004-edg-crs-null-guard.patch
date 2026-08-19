@@ -1,0 +1,29 @@
+--- a/src/refine/skel.c
++++ b/src/refine/skel.c
+@@ -179,6 +179,8 @@
+ 	    /*add the fragment of the initial edge*/
+ 	    e = bp->edge;
+ 	    bq = edg_crs( e, s2, c );
++	    if ( bq == NULL )
++		panic("etch region does not cross the material boundary");
+ 	    out_node = endpt(bp);
+ 
+ 	    /*shorten the edge*/
+@@ -245,6 +247,8 @@
+ 	    ha = l_edge(e);
+ 	    hsp = min2( get_space(pt_edg(e,0)), get_space(pt_edg(e,0)));
+ 	    bte = edg_crs( e, s2, c );
++	    if ( bte == NULL )
++		panic("etch region does not cross the material boundary");
+ 
+ 	    /*shorten the edge*/
+ 	    enew = sp_edge( e, c, &ip, TRUE );
+@@ -291,6 +295,8 @@
+ 	    hsp = min2( get_space(pt_edg(e,0)), get_space(pt_edg(e,0)));
+ 	    hb = l_edge(e);
+ 	    bts = edg_crs( e, s2, c );
++	    if ( bts == NULL )
++		panic("etch region does not cross the material boundary");
+ 
+ 	    /*shorten the edge*/
+ 	    enew = sp_edge( e, c, &ip, TRUE );

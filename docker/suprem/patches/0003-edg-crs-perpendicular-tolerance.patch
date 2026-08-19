@@ -1,0 +1,54 @@
+--- a/src/refine/skel.c
++++ b/src/refine/skel.c
+@@ -528,6 +528,9 @@
+     struct LLedge *bp, *bnd;
+     float p[MAXDIM], dp[MAXDIM], q[MAXDIM], dq[MAXDIM];
+     float alph[MAXDIM], lp, lq;
++    /* 끝점 접촉 판정용. lil()==0 이면 두 변 모두 길이가 0 이 아니다
++       (길이 0 이면 모든 것과 평행이라 lil() 이 0 을 주지 않는다). */
++    float ex, ey, gap, proj;
+ 
+     p[0] = cordinate( pt_edg(e,0), 0);
+     p[1] = (mode==ONED)?0.0:cordinate( pt_edg(e,0), 1);
+@@ -555,17 +558,37 @@
+ 		    return( bp );
+ 		}
+ 		/*we have the on condition*/
++		/* 한쪽 끝점이 상대 변 위에 놓인 경우다. 원래 코드는 "직선
++		   교차점이 끝점에서 얼마나 떨어졌나"를 **변을 따라** 쟀다.
++		   그 값은 두 변이 얕은 각으로 만나면 1/sin(theta) 배로
++		   부풀어, 끝점이 상대 변 위에 사실상 정확히 놓여 있어도
++		   허용오차를 넘어간다. 실측: 각도 2.1 도에서 수직거리
++		   0.05 nm 가 축방향 1.36 nm 로 27 배 증폭돼 탈락했고,
++		   호출부는 NULL 을 검사하지 않아 무한 루프에 빠졌다.
++
++		   그래서 각도에 무관한 양으로 잰다 — 끝점에서 상대 변까지의
++		   수직거리(gap)와, 그 끝점이 변의 구간 안에 있는지(proj).
++		   허용오차 1.0e-8 cm 는 원래 값 그대로다. 이 판정은 원래
++		   조건의 상위집합이다(gap <= 축방향 거리). */
+ 		else if ( (alph[0] >= 0.0) && (alph[0] <= 1.0) ) {
+-		    if ( ( fabs(alph[1] * lq) < 1.0e-8 ) ||
+-		         ( fabs(alph[1] * lq - lq) < 1.0e-8 ) ) {
++		    if ( alph[1] < 0.0 ) { ex = q[0];  ey = q[1]; }
++		    else { ex = q[0] + dq[0];  ey = q[1] + dq[1]; }
++		    gap  = fabs((ex - p[0]) * dp[1] - (ey - p[1]) * dp[0]) / lp;
++		    proj = ((ex - p[0]) * dp[0] + (ey - p[1]) * dp[1]) / lp;
++		    if ( (gap < 1.0e-8) &&
++			 (proj > -1.0e-8) && (proj < lp + 1.0e-8) ) {
+ 			c[0] = alph[0] * dp[0] + p[0];
+ 			c[1] = alph[0] * dp[1] + p[1];
+ 			return( bp );
+ 		    }
+ 		}
+ 		else if ( (alph[1] >= 0.0) && (alph[1] <= 1.0) ) {
+-		    if ( ( fabs(alph[0] * lp) < 1.0e-8 ) ||
+-		         ( fabs(alph[0] * lp - lp) < 1.0e-8 ) ) {
++		    if ( alph[0] < 0.0 ) { ex = p[0];  ey = p[1]; }
++		    else { ex = p[0] + dp[0];  ey = p[1] + dp[1]; }
++		    gap  = fabs((ex - q[0]) * dq[1] - (ey - q[1]) * dq[0]) / lq;
++		    proj = ((ex - q[0]) * dq[0] + (ey - q[1]) * dq[1]) / lq;
++		    if ( (gap < 1.0e-8) &&
++			 (proj > -1.0e-8) && (proj < lq + 1.0e-8) ) {
+ 			c[0] = alph[0] * dp[0] + p[0];
+ 			c[1] = alph[0] * dp[1] + p[1];
+ 			return( bp );
