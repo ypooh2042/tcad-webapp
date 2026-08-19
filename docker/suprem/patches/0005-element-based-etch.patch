@@ -1,6 +1,6 @@
 --- a/src/refine/etch_elem.c
 +++ b/src/refine/etch_elem.c
-@@ -0,0 +1,443 @@
+@@ -0,0 +1,458 @@
 +/*----------------------------------------------------------------------
 + *  etch_elem.c  --  요소 기반(cut-cell) 식각.
 + *
@@ -414,7 +414,22 @@
 +	    if ( gone[q] ) nin++;
 +	    else if ( !onln[q] ) nout++;
 +	}
-+	if ( (nout == 0) && (nin > 0) ) dead[ndead++] = t;
++	if ( nout > 0 ) continue;		/*밖이 하나라도 있으면 남긴다*/
++	if ( nin > 0 ) { dead[ndead++] = t; continue; }
++
++	/*세 꼭짓점이 전부 식각면 위인 삼각형. 꼭짓점만 봐서는 안팎을 못 정한다.
++	  격자선과 식각 경계가 정확히 겹칠 때 생기는데(직사각형 etch 가 대표적),
++	  남겨 두면 요소 한 겹짜리 벽이 서서 표면선이 되꺾이고 다음 deposit 의
++	  ck_clock() 이 "Region has malformed boundary" 로 죽는다(실측).
++	  무게중심으로 판정한다 — 삼각형 내부의 대표점이므로 애매하지 않다. */
++	{   float cx = 0.0, cy = 0.0;
++	    for(i = 0; i < num_vert(t); i++) {
++		cx += cordinate( pt_nd(vert_tri(t,i)), 0 );
++		cy += cordinate( pt_nd(vert_tri(t,i)), 1 );
++	    }
++	    cx /= (float) num_vert(t);  cy /= (float) num_vert(t);
++	    if ( in_etch_poly( cx, cy, p[0], p[1], nump ) ) dead[ndead++] = t;
++	}
 +    }
 +    for(i = 0; i < ndead; i++)
 +	if ( !dead_tri(dead[i]) ) rem_ele( dead[i], TRUE );
