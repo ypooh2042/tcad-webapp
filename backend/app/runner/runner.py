@@ -23,6 +23,7 @@ from app.runner.sandbox import (
     container_name,
 )
 from app.runner.watchdog import OutputWatchdog
+from app.runner.logfile import write_full_log
 from app.runner.workdir import directory_size, prune_workdir
 
 #: conmon 이 컨테이너를 죽인 뒤 클라이언트가 정리될 여유. 클라이언트 타임아웃이
@@ -31,11 +32,25 @@ _CLIENT_TIMEOUT_MARGIN_SECONDS = 30
 
 DEFAULT_IMAGE = "tcad/suprem:latest"
 
-#: 로그 상한. 사용자 코드는 무한 출력을 낼 수 있고, 그대로 두면 DB 한 행이
-#: 기가바이트가 된다. 앞뒤를 남기는 이유는 오류가 보통 끝에 나오는데 무엇을
-#: 하다가 그랬는지는 앞에 있기 때문이다.
-_MAX_LOG_CHARS = 200_000
-_LOG_HEAD_CHARS = 150_000
+#: DB 에 넣는 로그의 상한. 사용자 코드는 무한 출력을 낼 수 있고(시뮬레이터가
+#: 인식하지 못한 첫 단어를 /bin/bash 로 넘긴다), 그대로 두면 DB 한 행이
+#: 기가바이트가 된다.
+#:
+#: 예전 값 200,000 자는 **평범한 실행까지 잘랐다** — 41 단계 공정 흐름 한 건이
+#: 224,708 자, 번들 CMOS 예제가 182,425 자다. 실측치의 네 배 이상으로 잡아
+#: 현실적인 실행은 손대지 않게 하고, 그래도 넘는 경우를 위해 전문은
+#: `logfile.write_full_log` 로 따로 남긴다.
+_MAX_LOG_CHARS = 1_000_000
+_LOG_HEAD_CHARS = 700_000
+
+#: 잘렸다는 것을 알리는 문구이자 판정 기준. 말없이 자르면 사용자는 로그가
+#: 그게 전부인 줄 알고 없는 원인을 찾는다.
+LOG_TRUNCATION_NOTICE = "로그가 너무 길어 중간을 생략했습니다"
+
+
+def was_truncated(log: str | None) -> bool:
+    """이 로그가 상한에 걸려 잘린 것인지. 전문 내려받기 안내에 쓴다."""
+    return log is not None and LOG_TRUNCATION_NOTICE in log
 
 
 def run_simulation(
@@ -96,6 +111,9 @@ def run_simulation(
             exit_code = -1
             log = _decode_partial(expired.stdout)
 
+    # 전문을 먼저 붙잡아 둔다. 아래에서 log 는 상한에 맞춰 잘린 값으로
+    # 바뀌므로, 여기서 잡아 두지 않으면 파일에도 잘린 것이 남는다.
+    full_log = log
     log = _truncate_log(log)
     errors = list(extract_errors(log))
 
@@ -121,6 +139,11 @@ def run_simulation(
     # 산출물이 아닌 파일은 남길 이유가 없다. 사용자가 만든 임의 파일까지
     # 보관하면 잡이 쌓일수록 디스크가 계속 는다.
     prune_workdir(workdir)
+
+    # 전문은 **정리한 뒤에** 남긴다. prune_workdir 은 `.str` 이 아닌 파일을
+    # 전부 지우므로 먼저 쓰면 방금 쓴 로그가 같이 사라진다. 크기 검사보다도
+    # 뒤여야 한다 — 로그 자신이 출력 상한을 밀어 올리면 안 된다.
+    write_full_log(workdir, full_log)
 
     return SimulationResult(
         exit_code=exit_code,
@@ -175,7 +198,8 @@ def _truncate_log(log: str) -> str:
     omitted = len(log) - _MAX_LOG_CHARS
     return (
         f"{log[:_LOG_HEAD_CHARS]}\n"
-        f"…… 중간 {omitted:,}자 생략 (로그가 상한을 넘었습니다) ……\n"
+        f"…… {LOG_TRUNCATION_NOTICE} — 중간 {omitted:,}자 생략. "
+        f"전문은 내려받을 수 있습니다 ……\n"
         f"{log[-tail_chars:]}"
     )
 

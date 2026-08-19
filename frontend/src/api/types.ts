@@ -43,6 +43,11 @@ export interface Artifact {
 
 export interface JobDetail extends Job {
   log: string | null
+  /**
+   * 위 log 가 상한에 걸려 잘렸는지. 참이면 화면이 전문 내려받기를 안내한다.
+   * 잘렸다는 말 없이 보여 주면 사용자는 로그가 그게 전부인 줄 안다.
+   */
+  log_truncated: boolean
   exit_code: number | null
   /** 제출 시각(시간대 포함). 화면은 잡 번호 대신 이걸로 실행을 가리킨다. */
   created_at: string

@@ -103,6 +103,7 @@ class TestAuthRequired:
             ("get", "/api/projects/1/jobs"),
             ("get", "/api/jobs/1"),
             ("get", "/api/jobs/1/artifacts/1"),
+            ("get", "/api/jobs/1/log"),
         ],
     )
     async def test_anonymous_is_rejected(self, app, method, path) -> None:

@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,8 @@ from app.core.config import Settings
 from app.db.models import Artifact, Job, JobStatus
 from app.jobs.queue import JobQueue
 from app.runner.control import kill_container
+from app.runner.logfile import read_full_log
+from app.runner.runner import was_truncated
 from app.runner.sandbox import container_name
 from app.projects.service import (
     ProjectNotFound,
@@ -48,6 +51,10 @@ class JobResponse(BaseModel):
 
 class JobDetailResponse(JobResponse):
     log: str | None
+    #: 위 log 가 상한에 걸려 잘렸는지. 참이면 화면이 전문 내려받기를 안내한다.
+    #: 잘렸다는 말 없이 보여 주면 사용자는 로그가 그게 전부인 줄 알고 없는
+    #: 원인을 찾는다.
+    log_truncated: bool = False
     exit_code: int | None
     #: 제출 시각. 화면은 잡 번호 대신 이걸로 실행을 가리킨다 — 번호는 전체
     #: 사용자가 공유하는 기본키라 혼자 두 번 돌려도 건너뛴다.
@@ -140,6 +147,7 @@ async def detail(
         source_path=job.source_path,
         created_at=_aware(job.created_at),
         log=job.log,
+        log_truncated=was_truncated(job.log),
         exit_code=job.exit_code,
         artifacts=[
             ArtifactResponse(
@@ -180,6 +188,33 @@ async def cancel(
         id=job.id,
         status=JobStatus.CANCELLED.value,
         source_revision_id=job.source_revision_id,
+    )
+
+
+@router.get("/jobs/{job_id}/log", response_class=PlainTextResponse)
+async def full_log(job: Job = Depends(owned_job)) -> PlainTextResponse:
+    """실행 로그 전문.
+
+    화면에 뿌리는 `log` 는 DB 한 행이 무한정 커지지 않도록 상한을 두고 자른다.
+    잘린 부분은 여기서 되찾는다.
+
+    전문은 잡 작업디렉토리에 있으므로 산출물과 수명이 같다. 세션이 만료돼
+    청소가 돌면 함께 사라지고, 그때는 잘린 미리보기만 남는다.
+    """
+    log = read_full_log(Path(job.workdir)) if job.workdir else None
+    if log is None:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="로그 전문이 정리되어 더 이상 남아 있지 않습니다",
+        )
+    # text/plain 으로 내려야 브라우저가 실행하지 않는다. 로그에는 사용자가 쓴
+    # 코드가 그대로 들어 있어 HTML 로 해석되면 그대로 저장형 XSS 가 된다.
+    return PlainTextResponse(
+        log,
+        headers={
+            "Content-Disposition": f'attachment; filename="job-{job.id}.log"',
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

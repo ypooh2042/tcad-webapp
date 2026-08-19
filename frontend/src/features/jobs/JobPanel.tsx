@@ -88,6 +88,12 @@ export function JobPanel({ jobId }: { jobId: number | null }) {
             중단
           </button>
         )}
+        {job?.log_truncated ? (
+          /* 잘린 경우에만 띄운다. 늘 있으면 안내가 아니라 잡음이 된다. */
+          <a className="link" href={jobs.logUrl(jobId)} download>
+            로그 전문 내려받기
+          </a>
+        ) : null}
         {job?.artifacts.length ? (
           <button className="link" onClick={() => setLogOnly((only) => !only)}>
             {logOnly ? '결과 보기' : '로그만 보기'}

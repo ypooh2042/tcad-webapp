@@ -4,12 +4,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { JobPanel } from './JobPanel'
 import type { JobDetail } from '../../api/types'
 
-const { get, cancel, plot } = vi.hoisted(() => ({
+const { get, cancel, logUrl, plot } = vi.hoisted(() => ({
   get: vi.fn(),
   cancel: vi.fn(),
+  logUrl: (jobId: number) => `/api/jobs/${jobId}/log`,
   plot: { summary: vi.fn(), profile: vi.fn(), surface: vi.fn() },
 }))
-vi.mock('../../api/endpoints', () => ({ jobs: { get, cancel }, plot }))
+vi.mock('../../api/endpoints', () => ({ jobs: { get, cancel, logUrl }, plot }))
 
 function detail(overrides: Partial<JobDetail> = {}): JobDetail {
   return {
@@ -19,6 +20,7 @@ function detail(overrides: Partial<JobDetail> = {}): JobDetail {
     source_path: 'a.in',
     created_at: '2026-08-12T12:00:00+00:00',
     log: null,
+    log_truncated: false,
     exit_code: 0,
     artifacts: [],
     ...overrides,
@@ -285,5 +287,27 @@ describe('실행 중단', () => {
     await userEvent.click(await screen.findByRole('button', { name: '중단' }))
 
     expect(await screen.findByText(/중단하지 못했습니다/)).toBeInTheDocument()
+  })
+})
+
+describe('로그가 잘렸을 때', () => {
+  it('전문 내려받기를 안내한다', async () => {
+    // 잘렸다는 말 없이 보여 주면 사용자는 로그가 그게 전부인 줄 알고
+    // 없는 원인을 찾는다.
+    get.mockResolvedValue(detail({ log: '앞부분…', log_truncated: true }))
+
+    render(<JobPanel jobId={42} />)
+
+    const link = await screen.findByRole('link', { name: /전문 내려받기/ })
+    expect(link).toHaveAttribute('href', '/api/jobs/42/log')
+  })
+
+  it('잘리지 않았으면 안내하지 않는다', async () => {
+    get.mockResolvedValue(detail({ log: '짧은 로그', log_truncated: false }))
+
+    render(<JobPanel jobId={42} />)
+
+    await screen.findByText('짧은 로그')
+    expect(screen.queryByRole('link', { name: /전문 내려받기/ })).toBeNull()
   })
 })

@@ -127,6 +127,13 @@ export const jobs = {
     request<{ filename: string; content: string }>(
       `/api/jobs/${jobId}/artifacts/${sequence}`,
     ),
+
+  /**
+   * 로그 전문의 주소. 본문을 받아 오지 않고 주소만 준다 — 잘릴 만큼 긴
+   * 로그를 다시 메모리에 얹을 이유가 없고, 브라우저에 맡기면 그대로
+   * 파일로 저장된다. 같은 출처라 세션 쿠키가 함께 나간다.
+   */
+  logUrl: (jobId: number) => `/api/jobs/${jobId}/log`,
 }
 
 /** 매뉴얼. 카탈로그와 마찬가지로 인증이 필요 없다. */
