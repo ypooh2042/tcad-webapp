@@ -461,18 +461,34 @@
 +}
 --- a/src/refine/etch.c
 +++ b/src/refine/etch.c
-@@ -282,6 +282,15 @@
+@@ -294,6 +294,31 @@
      struct LLedge *bp;
      int f, n;
  
-+    /*요소 기반(cut-cell) 경로. 개발 중 두 방식을 견주기 위한 임시 스위치이며,
-+      채택하면 이 분기와 아래 B-rep 본체를 함께 지운다.*/
-+    {	char *how = getenv("SUP4_ETCH");
-+	if ( (how != NULL) && (how[0] == 'e') ) {
-+	    etch_elem( p, nump, mater );
-+	    return;
-+	}
-+    }
++    /*식각은 요소 단위(cut-cell)로 한다 — refine/etch_elem.c.
++      여기서 반환하므로 **아래 본체는 실행되지 않는다.**
++
++      아래에 있던 것은 경계선 클리핑(B-rep) 구현이다. 식각 다각형의 변과
++      영역 경계의 변이 어디서 만나는지를 edg_crs() 로 하나씩 찾아 조각을
++      이어 붙이는 방식인데, 판단이 전부 변 단위 국소 판단이라 짝을 못 찾으면
++      고리가 안 닫히고 전역 위상이 깨졌다. 식각선이 재료 경계와 나란히
++      겹치면(측벽 스페이서 식각이 대표적) 겹친 변에 교차점이 정의되지 않아
++      그 일이 실제로 일어났다 — 실측으로 깊이 0.16 um 이상이면 전부 죽었다.
++      요소 단위로 자르면 판단이 삼각형 하나에 갇혀 이 실패가 원리적으로
++      사라진다. 근거와 검증은 SUPREM4GS/upstream/PROVENANCE.md 의 0005~0007
++      항목에 있다.
++
++      **지우지 않고 남긴 이유는 두 가지다.**
++      하나는 기록이다 — 0003, 0004 가 고친 결함이 여기 있고, 무엇이 왜
++      틀렸는지가 코드와 함께 남는 편이 낫다.
++      다른 하나는 링크다. 이 빌드는 오브젝트를 arlib/*.a 로 묶어 한 번만
++      훑는다. 아래 본체가 hinit() 와 skel_reg() 를 참조하는 덕에 그
++      오브젝트들이 refine.a 에서 끌려 나오는데, 본체를 지우면 참조가 없어져
++      뒤에 오는 dbase.a(kill_node, build_reg)와 plot.a(material)가 같은
++      심볼을 찾지 못해 링크가 깨진다(실측). 아카이브 순서를 손대는 것보다
++      도달 불가 코드를 남기는 편이 안전하다. */
++    etch_elem( p, nump, mater );
++    return;
 +
      for(r = 0; r < nreg; r++) clr(reg[r], ETCHED);
  
@@ -494,3 +510,19 @@
  	refine/deposit.o refine/etch.o refine/grid.o refine/hinit.o \
  	refine/interp.o refine/offset.o refine/rate.o refine/rect_tri.o \
  	refine/skel.o refine/sp_edge.o refine/string_etch.o \
+@@ -317,7 +319,14 @@
+ 
+ $(SUPREM): $(MAINOBJS) $(SLIBS)
+ 	date
+-	$(CC) $(LDFLAGS) $(MAINOBJS) $(SLIBS) $(LIBS) -o $@
++#	아카이브를 그룹으로 묶어 심볼 해석이 나열 순서에 좌우되지 않게 한다.
++#	정적 아카이브는 원래 한 번만 훑으므로, 앞선 아카이브가 뒤 아카이브의
++#	심볼을 필요로 하면 링크가 깨진다. 지금까지는 refine.a 안의 etch.c 가
++#	hinit()/skel_reg() 를 참조한 덕에 우연히 순서가 맞았는데, 식각을 요소
++#	기반으로 바꾸며 그 참조가 사라지자 dbase.a(kill_node, build_reg)와
++#	plot.a(material)에서 undefined reference 가 났다. 만들어지는 프로그램은
++#	같고 해석 순서만 자유로워진다.
++	$(CC) $(LDFLAGS) $(MAINOBJS) -Wl,--start-group $(SLIBS) -Wl,--end-group $(LIBS) -o $@
+ 
+ install: $(SUPREM) $(BINDIR) $(DATADIR) $(HELPDIR) suprem.uk
+ 	install -m 755 $(SUPREM) $(HERE)/../bin
