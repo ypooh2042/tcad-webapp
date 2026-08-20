@@ -20,6 +20,10 @@ const ARTIFACTS = [
   { sequence: 2, filename: 'after_diffuse.str', size_bytes: 2048 },
 ]
 
+//: 처음 보여주는 단계. 결과가 오면 **마지막** 단계부터 보여주므로, 단계와
+//: 무관한 시험들이 기대하는 순번도 이것이다.
+const LAST_SEQUENCE = 2
+
 function summary(overrides = {}) {
   return {
     filename: 'a.str',
@@ -66,44 +70,39 @@ describe('산출물이 없을 때', () => {
 })
 
 describe('공정 단계', () => {
-  it('첫 단계부터 보여준다', async () => {
+  it('이전 단계로 돌아가면 그 단계를 읽는다', async () => {
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-
-    expect(await screen.findByText(/after_implant.str/)).toBeInTheDocument()
-  })
-
-  it('다음 단계로 넘어가면 그 단계를 읽는다', async () => {
-    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await waitFor(() => expect(plot.summary).toHaveBeenCalledWith(1, 1))
+    await waitFor(() => expect(plot.summary).toHaveBeenCalledWith(1, 2))
     plot.summary.mockClear()
 
-    await userEvent.click(screen.getByRole('button', { name: /다음/ }))
-
-    await waitFor(() => expect(plot.summary).toHaveBeenCalledWith(1, 2))
-  })
-
-  it('이전 단계로 돌아간다', async () => {
-    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await screen.findByText(/after_implant.str/)
-
-    await userEvent.click(screen.getByRole('button', { name: /다음/ }))
-    await screen.findByText(/2\/2/)
     await userEvent.click(screen.getByRole('button', { name: /이전/ }))
 
-    expect(await screen.findByText(/1\/2/)).toBeInTheDocument()
+    await waitFor(() => expect(plot.summary).toHaveBeenCalledWith(1, 1))
+  })
+
+  it('다시 다음 단계로 간다', async () => {
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await screen.findByText(/after_diffuse.str/)
+
+    await userEvent.click(screen.getByRole('button', { name: /이전/ }))
+    await screen.findByText(/1\/2/)
+    await userEvent.click(screen.getByRole('button', { name: /다음/ }))
+
+    expect(await screen.findByText(/2\/2/)).toBeInTheDocument()
   })
 
   it('첫 단계에서는 이전이 눌리지 않는다', async () => {
     // 슬라이더와 달리 버튼은 끝에서 무엇이 막혔는지 보여줄 수 있다.
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
 
+    await userEvent.click(await screen.findByRole('button', { name: /이전/ }))
+
     expect(await screen.findByRole('button', { name: /이전/ })).toBeDisabled()
   })
 
   it('마지막 단계에서는 다음이 눌리지 않는다', async () => {
+    // 기본이 마지막 단계이므로 처음부터 막혀 있어야 한다.
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-
-    await userEvent.click(await screen.findByRole('button', { name: /다음/ }))
 
     expect(await screen.findByRole('button', { name: /다음/ })).toBeDisabled()
   })
@@ -113,11 +112,11 @@ describe('공정 단계', () => {
     // 여기서는 버튼이 pointerdown 에 반응하는지(= 훅이 붙었는지)만 확인한다.
     // 클릭 대신 pointerdown 으로 한 칸 넘어가야 한다.
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await screen.findByText(/1\/2/)
+    await screen.findByText(/2\/2/)
 
-    fireEvent.pointerDown(screen.getByRole('button', { name: /다음/ }))
+    fireEvent.pointerDown(screen.getByRole('button', { name: /이전/ }))
 
-    expect(await screen.findByText(/2\/2/)).toBeInTheDocument()
+    expect(await screen.findByText(/1\/2/)).toBeInTheDocument()
   })
 
   it('빠르게 훑는 동안 지나친 단계는 불러오지 않는다', async () => {
@@ -125,37 +124,37 @@ describe('공정 단계', () => {
     // 누르기(150ms)에서 초당 27개가 나가 nginx 레이트 리밋(20 req/s)에 걸린다.
     // 실제로 503 이 떴다.
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await screen.findByText(/1\/2/)
+    await screen.findByText(/2\/2/)
     plot.summary.mockClear()
 
     // 멎기 전에 앞뒤로 훑는다. 마지막에 머문 단계만 불러와야 한다.
     const next = screen.getByRole('button', { name: /다음/ })
     const prev = screen.getByRole('button', { name: /이전/ })
-    fireEvent.pointerDown(next)
     fireEvent.pointerDown(prev)
     fireEvent.pointerDown(next)
+    fireEvent.pointerDown(prev)
 
     await waitFor(() => expect(plot.summary).toHaveBeenCalled())
     expect(plot.summary).toHaveBeenCalledTimes(1)
-    expect(plot.summary).toHaveBeenLastCalledWith(1, 2)
+    expect(plot.summary).toHaveBeenLastCalledWith(1, 1)
   })
 
   it('표시는 곧바로 바뀐다', async () => {
     // 불러오기를 늦추더라도 번호는 즉시 움직여야 누른 것이 느껴진다.
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await screen.findByText(/1\/2/)
+    await screen.findByText(/2\/2/)
 
-    fireEvent.pointerDown(screen.getByRole('button', { name: /다음/ }))
+    fireEvent.pointerDown(screen.getByRole('button', { name: /이전/ }))
 
-    expect(await screen.findByText(/2\/2/)).toBeInTheDocument()
+    expect(await screen.findByText(/1\/2/)).toBeInTheDocument()
   })
 
   it('아직 옛 단계를 보고 있으면 그렇다고 알린다', async () => {
     // 번호만 먼저 바뀌면 옛 그림을 새 단계의 것으로 읽게 된다.
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
-    await screen.findByText(/1\/2/)
+    await screen.findByText(/2\/2/)
 
-    fireEvent.pointerDown(screen.getByRole('button', { name: /다음/ }))
+    fireEvent.pointerDown(screen.getByRole('button', { name: /이전/ }))
 
     expect(screen.getByText(/불러오는 중/)).toBeInTheDocument()
     await waitFor(() =>
@@ -169,7 +168,7 @@ describe('공정 단계', () => {
     const { container } = render(
       <ResultView jobId={1} artifacts={ARTIFACTS} />,
     )
-    const name = await screen.findByText('after_implant.str')
+    const name = await screen.findByText('after_diffuse.str')
 
     expect(container.querySelector('.scrubber')).not.toContainElement(name)
     expect(name.closest('.stage-name')).not.toBeNull()
@@ -215,8 +214,8 @@ describe('물리량 선택', () => {
     await userEvent.click(screen.getByLabelText('net_doping'))
 
     await waitFor(() => {
-      expect(plot.profile).toHaveBeenCalledWith(1, 1, 'chem_boron', undefined)
-      expect(plot.profile).toHaveBeenCalledWith(1, 1, 'net_doping', undefined)
+      expect(plot.profile).toHaveBeenCalledWith(1, LAST_SEQUENCE, 'chem_boron', undefined)
+      expect(plot.profile).toHaveBeenCalledWith(1, LAST_SEQUENCE, 'net_doping', undefined)
     })
   })
 
@@ -259,7 +258,7 @@ describe('1D', () => {
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
 
     await waitFor(() =>
-      expect(plot.profile).toHaveBeenCalledWith(1, 1, 'chem_boron', undefined),
+      expect(plot.profile).toHaveBeenCalledWith(1, LAST_SEQUENCE, 'chem_boron', undefined),
     )
   })
 
@@ -285,7 +284,7 @@ describe('2D', () => {
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
 
     await waitFor(() =>
-      expect(plot.profile).toHaveBeenCalledWith(1, 1, 'chem_boron', 2),
+      expect(plot.profile).toHaveBeenCalledWith(1, LAST_SEQUENCE, 'chem_boron', 2),
     )
   })
 
@@ -401,7 +400,7 @@ describe('단면과 수직선 물리량 분리', () => {
     await userEvent.selectOptions(screen.getByLabelText('구조 단면'), 'net_doping')
 
     await waitFor(() =>
-      expect(plot.surface).toHaveBeenCalledWith(1, 1, 'net_doping'),
+      expect(plot.surface).toHaveBeenCalledWith(1, LAST_SEQUENCE, 'net_doping'),
     )
     // 프로파일은 다시 읽지 않는다.
     expect(plot.profile).not.toHaveBeenCalled()
@@ -417,7 +416,7 @@ describe('단면과 수직선 물리량 분리', () => {
     await userEvent.click(screen.getByLabelText('net_doping'))
 
     await waitFor(() =>
-      expect(plot.profile).toHaveBeenCalledWith(1, 1, 'net_doping', 2),
+      expect(plot.profile).toHaveBeenCalledWith(1, LAST_SEQUENCE, 'net_doping', 2),
     )
     expect(plot.surface).not.toHaveBeenCalled()
   })
@@ -463,7 +462,7 @@ describe('재질만 보기', () => {
     // 물리량을 끼워 보내면 서버가 해 없는 요소를 버려서 층이 사라진다.
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
 
-    await waitFor(() => expect(plot.surface).toHaveBeenCalledWith(1, 1, null))
+    await waitFor(() => expect(plot.surface).toHaveBeenCalledWith(1, LAST_SEQUENCE, null))
   })
 
   it('물리량으로 바꿨다가 돌아올 수 있다', async () => {
@@ -472,11 +471,11 @@ describe('재질만 보기', () => {
 
     await userEvent.selectOptions(screen.getByLabelText('구조 단면'), 'net_doping')
     await waitFor(() =>
-      expect(plot.surface).toHaveBeenCalledWith(1, 1, 'net_doping'),
+      expect(plot.surface).toHaveBeenCalledWith(1, LAST_SEQUENCE, 'net_doping'),
     )
 
     await userEvent.selectOptions(screen.getByLabelText('구조 단면'), '재질')
-    await waitFor(() => expect(plot.surface).toHaveBeenCalledWith(1, 1, null))
+    await waitFor(() => expect(plot.surface).toHaveBeenCalledWith(1, LAST_SEQUENCE, null))
   })
 
   it('재질 보기에서도 수직선 그래프는 그대로다', async () => {
@@ -487,7 +486,7 @@ describe('재질만 보기', () => {
 
     await userEvent.selectOptions(screen.getByLabelText('구조 단면'), '재질')
 
-    await waitFor(() => expect(plot.surface).toHaveBeenCalledWith(1, 1, null))
+    await waitFor(() => expect(plot.surface).toHaveBeenCalledWith(1, LAST_SEQUENCE, null))
     expect(plot.profile).not.toHaveBeenCalled()
   })
 
@@ -503,7 +502,7 @@ describe('재질만 보기', () => {
 
     render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
 
-    await waitFor(() => expect(plot.surface).toHaveBeenCalledWith(1, 1, null))
+    await waitFor(() => expect(plot.surface).toHaveBeenCalledWith(1, LAST_SEQUENCE, null))
   })
 })
 
@@ -549,5 +548,61 @@ describe('체크박스 위치', () => {
       surface.compareDocumentPosition(quantities) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
+  })
+})
+
+describe('처음 보여줄 단계', () => {
+  it('마지막 단계부터 보여준다', async () => {
+    // 사용자가 보려는 것은 보통 공정이 끝난 모습이다. 15단계짜리 흐름에서
+    // 거기까지 '다음' 을 열네 번 눌러 가는 것은 번거롭다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+
+    expect(await screen.findByText('after_diffuse.str')).toBeInTheDocument()
+    expect(screen.getByText(/2\/2/)).toBeInTheDocument()
+  })
+
+  it('마지막 단계만 불러온다', async () => {
+    // 첫 단계를 한 번 그렸다가 마지막으로 뛰면 요청이 두 벌 나간다.
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+
+    await waitFor(() => expect(plot.summary).toHaveBeenCalled())
+    expect(plot.summary).toHaveBeenCalledTimes(1)
+    expect(plot.summary).toHaveBeenCalledWith(1, 2)
+  })
+
+  it('새 실행 결과가 오면 다시 마지막으로 간다', async () => {
+    const { rerender } = render(
+      <ResultView jobId={1} artifacts={ARTIFACTS} />,
+    )
+    await screen.findByText(/2\/2/)
+    await userEvent.click(screen.getByRole('button', { name: /이전/ }))
+    await screen.findByText(/1\/2/)
+
+    rerender(
+      <ResultView
+        jobId={2}
+        artifacts={[
+          ...ARTIFACTS,
+          { sequence: 3, filename: 'after_etch.str', size_bytes: 512 },
+        ]}
+      />,
+    )
+
+    expect(await screen.findByText(/3\/3/)).toBeInTheDocument()
+  })
+
+  it('같은 실행을 다시 그려도 보던 단계를 빼앗지 않는다', async () => {
+    // 폴링은 1.5초마다 새 배열을 만든다. 그때마다 마지막으로 끌려가면
+    // 앞 단계를 들여다볼 수가 없다.
+    const { rerender } = render(
+      <ResultView jobId={1} artifacts={ARTIFACTS} />,
+    )
+    await screen.findByText(/2\/2/)
+    await userEvent.click(screen.getByRole('button', { name: /이전/ }))
+    await screen.findByText(/1\/2/)
+
+    rerender(<ResultView jobId={1} artifacts={[...ARTIFACTS]} />)
+
+    expect(screen.getByText(/1\/2/)).toBeInTheDocument()
   })
 })

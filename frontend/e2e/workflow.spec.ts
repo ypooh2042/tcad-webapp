@@ -294,13 +294,12 @@ test('단면을 재질로 볼 수 있다', async ({ page }) => {
   const picker = page.getByLabel('구조 단면')
   await expect(picker).toHaveValue('재질')
 
-  // 층이 여럿인 단계로 옮긴다. 첫 단계(substrate)는 silicon 하나뿐이라
-  // 재질 구분을 확인할 수 없다. 마지막까지 눌러 간다 — 다 가면 비활성이 된다.
-  const next = page.getByRole('button', { name: /다음/ })
-  while (await next.isEnabled()) await next.click()
+  // 층이 여럿인 마지막 단계에서 시작한다. 첫 단계(substrate)는 silicon
+  // 하나뿐이라 재질 구분을 확인할 수 없다.
   await expect(page.getByText(/15\/15/)).toBeVisible()
-  // 번호는 곧바로 바뀌지만 데이터는 멎은 뒤에 온다. 기다리지 않으면 아직
-  // 첫 단계(silicon 하나뿐)의 단면을 보고 재질이 하나라고 판정하게 된다.
+  await expect(page.getByRole('button', { name: /다음/ })).toBeDisabled()
+  // 데이터가 도착할 때까지 기다린다. 기다리지 않으면 아직 그려지지 않은
+  // 단면을 보고 재질이 하나라고 판정하게 된다.
   await expect(page.getByText('불러오는 중')).toBeHidden()
 
   // 물리량으로 갔다가 재질로 돌아오며 요청을 확인한다. 이미 재질인 상태에서
@@ -496,21 +495,22 @@ test('오래 도는 잡을 중단할 수 있다', async ({ page }) => {
   await expect(stop).toBeHidden()
 })
 
-test('다음 버튼을 꾹 누르면 단계가 연달아 넘어간다', async ({ page }) => {
+test('이전 버튼을 꾹 누르면 단계가 연달아 넘어간다', async ({ page }) => {
   // 마우스를 누른 채 유지하는 동작은 E2E 로만 확인된다. 단위 테스트는 가짜
   // 타이머로 반복 로직만 볼 뿐, 실제 버튼이 누른 상태로 남는지는 못 본다.
   await createProject(page, 'holdstep')
   await setSource(page, TWO_DIMENSIONAL_SOURCE)
   await page.getByRole('button', { name: '실행' }).click()
   await expect(page.locator('canvas.surface')).toBeVisible({ timeout: 120_000 })
-  await expect(page.getByText(/1\/15/)).toBeVisible()
+  // 결과는 마지막 단계에서 시작한다. 되짚어 올라가며 확인한다.
+  await expect(page.getByText(/15\/15/)).toBeVisible()
 
-  const next = page.getByRole('button', { name: /다음/ })
-  const box = (await next.boundingBox())!
+  const prev = page.getByRole('button', { name: /이전/ })
+  const box = (await prev.boundingBox())!
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
   await page.mouse.down()
   // 뜸(400ms) + 반복 몇 번. 한 칸씩이면 이 시간에 다 못 간다.
-  await expect(page.getByText(/[5-9]\/15|1[0-5]\/15/)).toBeVisible({
+  await expect(page.getByText(/^([1-9]|10)\/15$/)).toBeVisible({
     timeout: 15_000,
   })
   await page.mouse.up()
@@ -547,8 +547,7 @@ test('단계 이름이 길어도 버튼 줄이 흐트러지지 않는다', async
   // 버튼이 실제로 떠야 의미가 있다.
   await expect(page.getByRole('button', { name: /다음/ })).toBeVisible()
 
-  // 긴 이름이 걸린 단계로 옮긴다.
-  await page.getByRole('button', { name: /다음/ }).click()
+  // 긴 이름이 걸린 마지막 단계에서 시작한다.
   await expect(name).toContainText('a_very_long_process_stage_name')
 
   const nameBox = (await name.boundingBox())!

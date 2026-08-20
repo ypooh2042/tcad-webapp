@@ -52,8 +52,17 @@ interface Props {
   artifacts: Artifact[]
 }
 
+/** 마지막 단계의 번호. 산출물이 없으면 0. */
+function lastStep(artifacts: Artifact[]): number {
+  return Math.max(0, artifacts.length - 1)
+}
+
 export function ResultView({ jobId, artifacts }: Props) {
-  const [step, setStep] = useState(0)
+  //: **마지막 단계부터 보여준다.** 사용자가 보려는 것은 보통 공정이 끝난
+  //: 모습이고, 25단계짜리 흐름에서 거기까지 '다음' 을 스물네 번 눌러 가는 것은
+  //: 번거롭다. 실패한 실행에서도 마지막 산출물이 곧 마지막으로 성공한 단계다.
+  //: 앞 단계는 필요할 때 되돌아가면 된다.
+  const [step, setStep] = useState(() => lastStep(artifacts))
   const [summary, setSummary] = useState<StructureSummary | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   //: 구조 단면에 무엇을 칠할지. 수직선 프로파일과 따로 둔다 — 묶으면 단면 색을
@@ -74,6 +83,16 @@ export function ResultView({ jobId, artifacts }: Props) {
   const [error, setError] = useState<string | null>(null)
 
   const current = artifacts[Math.min(step, artifacts.length - 1)]
+
+  // 새 실행 결과가 오면 다시 마지막 단계로 간다. 위 초기값은 처음 붙을 때
+  // 한 번뿐이라, 다음 실행이 끝나도 보던 단계에 그대로 머문다.
+  //
+  // **의존성은 배열이 아니라 길이와 잡 번호다.** 폴링은 1.5초마다 같은 내용의
+  // 새 배열을 만들므로, 배열을 걸면 앞 단계를 볼 때마다 마지막으로 끌려간다.
+  useEffect(() => {
+    setStep(lastStep(artifacts))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId, artifacts.length])
 
   //: 화면에 보이는 단계와 **불러오는 단계를 분리한다.** 번호와 파일 이름은
   //: 곧바로 바뀌어야 누른 것이 느껴지고, 데이터는 멎은 뒤에 한 번만 받으면

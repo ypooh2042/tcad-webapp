@@ -104,12 +104,13 @@ describe('결과', () => {
 
     render(<JobPanel jobId={42} />)
 
-    // 첫 단계가 먼저 보인다.
-    expect(await screen.findByText(/after_implant.str/)).toBeInTheDocument()
-    expect(screen.getByText(/1\/2/)).toBeInTheDocument()
-    // 첫 단계이므로 뒤로는 못 가고 앞으로만 갈 수 있다.
-    expect(screen.getByRole('button', { name: /이전/ })).toBeDisabled()
-    expect(screen.getByRole('button', { name: /다음/ })).toBeEnabled()
+    // 마지막 단계가 먼저 보인다. 이름순이면 a_final 이 1번이 되어 여기서
+    // after_implant 가 보였을 것이다.
+    expect(await screen.findByText(/a_final.str/)).toBeInTheDocument()
+    expect(screen.getByText(/2\/2/)).toBeInTheDocument()
+    // 마지막 단계이므로 앞으로는 못 가고 뒤로만 갈 수 있다.
+    expect(screen.getByRole('button', { name: /다음/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /이전/ })).toBeEnabled()
   })
 
   it('산출물이 하나여도 파일 이름을 보여준다', async () => {
