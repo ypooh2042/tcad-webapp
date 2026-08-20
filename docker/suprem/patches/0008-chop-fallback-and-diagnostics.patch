@@ -1,0 +1,102 @@
+--- a/src/dbase/geometry.c	2026-08-20 14:20:11.554137372 +0900
++++ b/src/dbase/geometry.c	2026-08-20 14:25:05.504477265 +0900
+@@ -204,8 +204,9 @@
+     /*calculate the denominator for the coupling*/
+     den = xki * yjk - yki * xjk;
+     if (den == 0) {
+-	char buf[120];
+-	sprintf(buf, "triangle %d is flat\n", ie);
++	char buf[240];
++	sprintf(buf, "triangle %d is flat ((%g,%g) (%g,%g) (%g,%g))",
++		ie, xi, yi, xj, yj, xk, yk);
+ 	panic(buf);
+     }
+ 
+@@ -214,7 +215,16 @@
+ 
+     /*if area is less than 0, reorder the points and repeat*/
+     if (s < 0.0) {
+-	    panic("triangles are not clock wise, data base corrupted");
++	    /*repair_degenerate() 가 손대지 못한 것만 여기 온다. 즉 넓이가
++	      뚜렷한데 뒤집힌 것 — 격자가 엉킨 경우다. 어느 삼각형인지 좌표를
++	      실어, 다음 추적을 gdb 없이 시작할 수 있게 한다.
++	      **문구 앞부분은 바꾸지 않는다** — 화면의 오류 안내가 이것으로
++	      경우를 가른다.*/
++	    char buf[240];
++	    sprintf(buf,
++	      "triangles are not clock wise, data base corrupted (tri %d, area %g, (%g,%g) (%g,%g) (%g,%g))",
++	      ie, s, xi, yi, xj, yj, xk, yk);
++	    panic(buf);
+     } 
+ 
+     /*we want one half of the cotangent*/
+--- a/src/refine/etch_elem.c	2026-08-20 14:20:11.572137223 +0900
++++ b/src/refine/etch_elem.c	2026-08-20 14:24:40.820715506 +0900
+@@ -268,11 +268,6 @@
+   비율 기준은 통과해 버린다(실제로 "triangle is flat" 으로 죽었다).*/
+ #define QUAL_MIN 1.0e-3
+ 
+-/*자르고 나서 이보다 납작한 삼각형은 걷어낸다. 정삼각형이 0.43 이므로 0.05 는
+-  "많이 찌그러졌다" 수준이다. 예방이 아니라 사후 제거라 정확도를 깎지 않는다 —
+-  접는 변이 애초에 슬라이버의 짧은 변이라 점이 움직이는 거리가 그만큼 작다.*/
+-#define COLLAPSE_QUAL 0.05
+-
+ static int etch_elem_pass( p, nump, mater )
+ float *p[MAXDIM+1];
+ int nump;
+--- a/src/refine/triheur.c	2026-08-20 14:20:11.561137314 +0900
++++ b/src/refine/triheur.c	2026-08-20 14:40:33.838720119 +0900
+@@ -33,13 +33,14 @@
+     struct sreg_str *r;		/* Region to split. */
+     int must;			/* Is some split necessary? */
+ {
+-    struct LLedge *bestp,*bp,*mina, *bq;
++    struct LLedge *bestp,*bp,*mina, *bq, *fallback;
+     int f,i,j,k, l, triok;
+     double h,h1,h2,lej,m,g,best,mgeo, angM,sk_cross(),good_tri(),dmin();
+     float p[MAXDIM], dp[MAXDIM], q[MAXDIM], dq[MAXDIM], alp[MAXDIM];
+ 
+     bestp = 0;
+     best = 0;
++    fallback = 0;
+     if (must) {	      /* If some split is necessary... */
+ 	angM = PI-EPS;	  /* Consider any triangle angle up to PI */
+ 	mgeo = EPS ;      /* Don't be fussy about geometry. */
+@@ -80,6 +81,10 @@
+ 	}
+ 
+ 	if (triok) {
++	    /*자를 수 있는 후보를 하나 붙잡아 둔다. 아래 품질 기준을 통과한
++	      것이 하나도 없어도, must 면 이것으로 전진한다.*/
++	    if ( must && !fallback ) fallback = bp;
++
+ 	    if ((g=good_tri(i,j,k)) > mgeo) {
+ 
+ 		/*...Is it too big? */
+@@ -105,6 +110,26 @@
+ 		}
+ 	    }
+ 	}
++
++    /*must 인데 품질 기준을 통과한 후보가 없으면, 다른 꼭짓점을 품지 않는
++      후보(triok) 중 각이 가장 작은 것을 그냥 돌려준다.
++
++      **여기서 NULL 을 돌려주면 호출부가 panic("error in chop") 한다.**
++      넓이 0 인 다각형에서는 good_tri 가 0 이라 어떤 후보도 기준을 통과하지
++      못하므로, 예전에는 그런 다각형을 만나는 순간 무조건 죽었다(실측: 한
++      직선 위의 다섯 점). 퇴화한 삼각형이 나오더라도 일단 전진하는 편이
++      낫다 — 그것은 bd_connect 의 repair_degenerate() 가 걷어낸다.
++
++      좋은 후보가 있을 때의 동작은 그대로다. 오늘 NULL 을 돌려주는 자리,
++      즉 오늘 죽는 자리에서만 달라진다.
++
++      후보조차 없을 수 있다. 위 루프는 `bp->ang > angM` 이면 그 자리에서
++      멈추는데, 한 직선 위의 다각형은 내각이 전부 pi 라 첫 바퀴에 멈춰
++      아무것도 못 본다(실측: len=5 인 다각형에서 bestp 도 fallback 도 NULL).
++      그때는 각이 가장 작은 꼭짓점(mina)을 그냥 돌려준다. 호출부는 거기서
++      귀를 하나 잘라내므로 len 이 1 줄고, 반드시 끝난다.*/
++    if ( must && !bestp ) return( fallback ? fallback : mina );
++
+     return(bestp);
+ }
+ 
