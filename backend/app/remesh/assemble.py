@@ -75,7 +75,9 @@ def _elements(old: Structure, mesh: Mesh, reach: float) -> tuple[Element, ...]:
             owner.setdefault((min(a, b), max(a, b)), []).append((t, i))
 
     outer = tuple(s for s in constrained_segments(old) if s.is_outer)
-    old_coords = old.coordinates
+    # 경계 변마다 옛 경계 전체를 훑으면 O(새 경계 × 옛 경계)다. 실측 구조에서
+    # 그것만으로 이송 시간의 10% 를 먹었다. 격자 칸으로 후보를 줄인다.
+    index = _BoundaryIndex(outer, old.coordinates, reach)
 
     elements: list[Element] = []
     for t, tri in enumerate(mesh.triangles):
@@ -92,7 +94,7 @@ def _elements(old: Structure, mesh: Mesh, reach: float) -> tuple[Element, ...]:
                 (mesh.points[a][0] + mesh.points[b][0]) / 2,
                 (mesh.points[a][1] + mesh.points[b][1]) / 2,
             )
-            neighbors.append(_boundary_code(mid, outer, old_coords, reach))
+            neighbors.append(index.code_at(mid))
 
         elements.append(
             Element(
@@ -107,21 +109,49 @@ def _elements(old: Structure, mesh: Mesh, reach: float) -> tuple[Element, ...]:
     return tuple(elements)
 
 
-def _boundary_code(mid, outer, coords, reach: float) -> int:
-    """바깥 변의 경계 조건. 옛 경계 선분 중 가장 가까운 것에서 가져온다."""
-    best = None
-    best_distance = reach
-    for segment in outer:
-        a, b = coords[segment.a], coords[segment.b]
-        distance = _point_to_segment(mid, (a.x, a.y), (b.x, b.y))
-        if distance <= best_distance:
-            best_distance = distance
-            best = segment
-    if best is None:
-        raise ValueError(
-            f"바깥 변 {mid} 이 어느 옛 경계에도 놓여 있지 않습니다"
-        )
-    return best.bc
+class _BoundaryIndex:
+    """옛 바깥 경계를 격자 칸에 담아 둔다."""
+
+    def __init__(self, outer, coords, reach: float) -> None:
+        self._reach = reach
+        self._seg = [
+            (coords[s.a].x, coords[s.a].y, coords[s.b].x, coords[s.b].y, s.bc)
+            for s in outer
+        ]
+        if not self._seg:
+            self._cell = 1.0
+            self._buckets = {}
+            return
+
+        # 칸 크기는 선분 길이의 중앙값 정도. 너무 잘면 한 선분이 여러 칸에
+        # 걸리고, 너무 크면 후보가 줄지 않는다.
+        lengths = sorted(hypot(x2 - x1, y2 - y1) for x1, y1, x2, y2, _ in self._seg)
+        self._cell = max(lengths[len(lengths) // 2], reach, 1e-12)
+
+        self._buckets: dict[tuple[int, int], list[int]] = {}
+        for i, (x1, y1, x2, y2, _) in enumerate(self._seg):
+            for gx in range(self._g(min(x1, x2) - reach), self._g(max(x1, x2) + reach) + 1):
+                for gy in range(self._g(min(y1, y2) - reach), self._g(max(y1, y2) + reach) + 1):
+                    self._buckets.setdefault((gx, gy), []).append(i)
+
+    def _g(self, v: float) -> int:
+        return int(v // self._cell)
+
+    def code_at(self, mid) -> int:
+        gx, gy = self._g(mid[0]), self._g(mid[1])
+        best, best_distance = None, self._reach
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for i in self._buckets.get((gx + dx, gy + dy), ()):
+                    x1, y1, x2, y2, bc = self._seg[i]
+                    d = _point_to_segment(mid, (x1, y1), (x2, y2))
+                    if d <= best_distance:
+                        best_distance, best = d, bc
+        if best is None:
+            raise ValueError(
+                f"바깥 변 {mid} 이 어느 옛 경계에도 놓여 있지 않습니다"
+            )
+        return best
 
 
 def _point_to_segment(p, a, b) -> float:

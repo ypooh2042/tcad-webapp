@@ -21,7 +21,10 @@
 FROM debian:bookworm AS builder
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc gfortran make patch \
+ # libsuitesparse-dev 는 AMD 순서화(patch 0010) 때문이다. **빌더에만** 깔린다 —
+ # 정적 링크하므로 실행 이미지에는 libamd.so 가 필요 없고, 최소 구성 원칙이
+ # 그대로 유지된다(ldd 로 확인: libc, libm 뿐).
+ && apt-get install -y --no-install-recommends gcc gfortran make patch libsuitesparse-dev \
  && rm -rf /var/lib/apt/lists/*
 
 COPY SUPREM4GS/upstream/ /build/
