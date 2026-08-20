@@ -131,7 +131,8 @@ structure outfile = result.str
 
 
 /**
- * 검증된 2D 예제(SUPREM4GS/examples/mosfet/CMOS.in 그대로).
+ * 검증된 2D 예제. 예전 examples/mosfet/CMOS.in 을 그대로 옮겨 둔 것이라,
+ * 그 파일이 레포에서 사라진 뒤에도 이 사본이 기준으로 남는다.
  *
  * 2D 는 손으로 쓰기 어렵다 — 경계 조건을 조금만 잘못 써도 시뮬레이터가
  * SIGSEGV 로 죽는다(실측). 레포에 든 예제를 그대로 쓴다. 3초쯤 걸린다.

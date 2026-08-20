@@ -30,7 +30,7 @@ from app.workspace.service import (
 
 router = APIRouter(prefix="/files", tags=["files"])
 
-#: 소스 길이 상한. 예제 중 가장 긴 CMOS.in 이 약 3KB 라 넉넉하다.
+#: 소스 길이 상한. 예제 중 가장 긴 nmos.in 이 약 4KB 라 넉넉하다.
 _MAX_SOURCE_CHARS = 200_000
 
 #: 경로 길이 상한. 이보다 길면 어차피 파일시스템이 받지 않는다.

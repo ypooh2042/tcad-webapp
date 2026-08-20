@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from app.runner.results import collect_structure_files
+from app.runner.results import STRUCTURE_OUT_RE, collect_structure_files
 
 #: 레포 루트 기준으로 찾는다. 절대 경로를 박으면 다른 환경에서 못 돌고
 #: 레포에 개인 경로가 남는다.
@@ -113,30 +113,60 @@ class TestUnlistedFiles:
 
 
 class TestRealExample:
-    def test_cmos_example_order_matches_process_flow(self, workdir) -> None:
-        """실제 CMOS 공정 흐름 15단계로 확인한다."""
-        cmos = SUPREM_EXAMPLES / "mosfet" / "CMOS.in"
-        if not cmos.exists():
-            pytest.skip("CMOS.in 예제를 찾을 수 없습니다")
-        source = cmos.read_text()
+    def test_nmos_example_order_matches_process_flow(self, workdir) -> None:
+        """실제 nMOS 공정 흐름 25단계로 확인한다.
+
+        이 예제의 이름은 숫자 접두사를 쓰므로 **이름순과 공정순이 실제로
+        다르다** — 이름순이면 1, 10, 11 … 19, 2, 20 … 이 되어 흐름이
+        뒤집힌다. 소스 순서를 따르는지 보기에 이보다 나은 표본이 없다.
+        """
+        example = SUPREM_EXAMPLES / "mosfet" / "nmos.in"
+        if not example.exists():
+            pytest.skip("nmos.in 예제를 찾을 수 없습니다")
+        source = example.read_text()
 
         expected = [
-            "substrate.str",
-            "oxidation.str",
-            "nitride.str",
-            "nitride_etch.str",
-            "field_oxide.str",
-            "nitride_remove.str",
-            "vth_implant.str",
-            "oxide_etch.str",
-            "gate_oxide.str",
-            "poly_gate.str",
-            "poly_etch.str",
-            "ldd.str",
-            "sidewall.str",
-            "source.str",
-            "ild.str",
+            "1_substrate.str",
+            "2_oxidation.str",
+            "3_nitride.str",
+            "4_nitride_mask_litho.str",
+            "5_nitride_etch.str",
+            "6_pr_strip.str",
+            "7_field_oxide.str",
+            "8_nitride_remove.str",
+            "9_pts_implant.str",
+            "10_vth_implant.str",
+            "11_oxide_etch.str",
+            "12_gate_oxide.str",
+            "13_poly_gate.str",
+            "14_gate_litho.str",
+            "15_gate_etch.str",
+            "16_pr_strip.str",
+            "17_ldd.str",
+            "18_sidewall.str",
+            "19_sd_implant.str",
+            "20_ild.str",
+            "21_planarization.str",
+            "22_via_mask_litho.str",
+            "23_via_etch.str",
+            "24_pr_strip.str",
+            "25_metal_contact.str",
         ]
         touch(workdir, *expected)
 
         assert [p.name for p in collect_structure_files(workdir, source)] == expected
+
+    def test_name_order_would_get_it_wrong(self, workdir) -> None:
+        """이름순 정렬이 실제로 다른 답을 낸다는 것을 못 박는다.
+
+        표본이 이름순과 우연히 같으면 이 시험은 아무것도 지키지 못한다.
+        """
+        example = SUPREM_EXAMPLES / "mosfet" / "nmos.in"
+        if not example.exists():
+            pytest.skip("nmos.in 예제를 찾을 수 없습니다")
+
+        names = [
+            m.group(1) for m in STRUCTURE_OUT_RE.finditer(example.read_text())
+        ]
+
+        assert names != sorted(names)

@@ -51,6 +51,11 @@ n <node_id (0-based)> <material_id> <col1> <col2> <col3> <col4> <col5> <col6>
 
 ### 다중 도펀트 / 2D 케이스 검증 결과 (`examples/mosfet/CMOS.in`)
 
+> `CMOS.in` 은 2026-08-21 에 `examples/mosfet/nmos.in` 으로 대체됐다. 아래 검증은
+> 그 파일로 한 것이고, 결론(컬럼 규칙)은 파일과 무관하게 유효하다. 당시 산출물은
+> `backend/tests/fixtures/` 의 `2d_cmos_source.str` 로 남아 있으며 지금도 시험이
+> 그것을 쓴다.
+
 `CMOS.in`(2D, boron+phosphorus+arsenic 3종 도펀트, silicon/oxide/poly 3개 물질)을
 실행해서 나온 `source.str`(소스/드레인 arsenic implant 이후 최종 구조)로 재검증함.
 결과: **컬럼 개수·순서는 도펀트 구성에 따라 달라지지만, 항상 `s` 라인이 선언한

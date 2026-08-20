@@ -1,0 +1,193 @@
+# 참고 코드: 강교수의 반도체이야기 네이버 블로그
+# nmos 예제
+
+##1. substrate
+#the x dimension definition
+line x loc=0 spacing=0.2 tag=left
+line x loc=2 spacing=0.06
+line x loc=4 spacing=0.2 tag=right
+#the y dimension definition
+line y loc=0 spacing=0.02 tag=top
+line y loc=0.4 spacing=0.04
+line y loc=0.8 spacing=0.1
+line y loc=1.5 spacing=0.2
+line y loc=2 spacing=1 tag=bottom
+#the silicon wafer
+region silicon xlo=left xhi=right ylo=top yhi=bottom
+#set up the exposed surfaces
+bound exposed  xlo=left xhi=right ylo=top  yhi=top
+bound backside xlo=left xhi=right ylo=bottom yhi=bottom
+#Initialize the Si substrate
+initialize boron conc=1.0e15 ori=100
+structure out=1_substrate.str
+
+
+##2. oxidation
+diffuse time=30 temp=1050 dryo2
+structure out=2_oxidation.str
+
+
+##3. nitride deposition
+deposit nitride thick=0.2
+structure out=3_nitride.str
+
+
+##4. nitride etch mask photolitho
+deposit photoresist thick=0.4
+etch photoresist left p1.x=0.5
+etch photoresist right p1.x=3.5
+structure out=4_nitride_mask_litho.str
+
+
+##5. nitride etch
+etch nitride left p1.x=0.5
+etch nitride right p1.x=3.5
+structure out=5_nitride_etch.str
+
+
+##6. Photoresist strip
+etch photoresist all
+structure out=6_pr_strip.str
+
+
+##7. field oxide
+diffuse time=400 temp=1000 dryo2 pressure=5
+structure out=7_field_oxide.str
+
+
+##8. nitride remove
+etch nitride all
+structure out=8_nitride_remove.str
+
+
+##9. Punch-through stop implant
+implant boron energy=45 dose=5e12
+structure out=9_pts_implant.str
+
+
+##10. Vth adjust implant
+implant boron energy=30 dose=6e12
+#insitu oxidation and activation
+diffuse time=500 temp=1100 dryo2 pressure=0.02
+structure out=10_vth_implant.str
+
+
+##11. oxide etch
+etch dry oxide thick=0.05
+structure out=11_oxide_etch.str
+
+
+##12. gate oxide
+diffuse time=30 temp=1000 dryo2
+structure out=12_gate_oxide.str
+
+
+##13. poly gate deposition
+deposit poly thick=0.4
+#poly phosphor implant
+implant phosphorus energy=120 dose=5e14
+structure out=13_poly_gate.str
+
+
+##14. poly gate etch photolitho
+deposit photoresist thick=0.4
+etch photoresist left p1.x=1.75
+etch photoresist right p1.x=2.25
+structure out=14_gate_litho.str
+
+
+##15. poly gate etch
+etch poly left p1.x=1.75
+etch poly right p1.x=2.25
+structure out=15_gate_etch.str
+
+
+##16. photoresist strip
+etch photoresist all
+structure out=16_pr_strip.str
+
+
+##17. LDD implant
+implant phosphorus energy=50 dose=4e13
+structure out=17_ldd.str
+
+
+##18. gate sidewall oxide
+deposit oxide thick=0.2
+etch dry oxide thick=0.195
+structure out=18_sidewall.str
+
+
+##19. source and drain implant
+implant arsenic energy=80 dose=6e15
+# activation and drive-in (RTA)
+diffuse time=10 temp=950
+structure out=19_sd_implant.str
+
+
+##20. ILD deposition
+deposit oxide thick=1.0
+structure out=20_ild.str
+
+
+##21. planarization
+etch oxide start x=-1 y=-0.8
+etch continue x=5 y=-0.8
+etch continue x=5 y=-2
+etch done x=-1 y=-2
+structure out=21_planarization.str
+
+
+##22. via etch mask photolitho
+deposit photoresist thick=0.4
+# source via
+etch photoresist start x=1.2 y=0
+etch continue x=1.5 y=0
+etch continue x=1.5 y=-3
+etch done x=1.2 y=-3
+# gate via
+etch photoresist start x=1.85 y=0
+etch continue x=2.15 y=0
+etch continue x=2.15 y=-3
+etch done x=1.85 y=-3
+# drain via
+etch photoresist start x=2.5 y=0
+etch continue x=2.8 y=0
+etch continue x=2.8 y=-3
+etch done x=2.5 y=-3
+structure out=22_via_mask_litho.str
+
+
+##23. via etch
+# source via
+etch oxide start x=1.2 y=0.5
+etch continue x=1.5 y=0.5
+etch continue x=1.5 y=-3
+etch done x=1.2 y=-3
+# gate via
+etch oxide start x=1.85 y=-0.3
+etch continue x=2.15 y=-0.3
+etch continue x=2.15 y=-3
+etch done x=1.85 y=-3
+# drain via
+etch oxide start x=2.5 y=0.5
+etch continue x=2.8 y=0.5
+etch continue x=2.8 y=-3
+etch done x=2.5 y=-3
+structure out=23_via_etch.str
+
+
+##24. photoresit strip
+etch photoresist all
+structure out=24_pr_strip.str
+
+
+##25. metal contact
+deposit aluminum thick=1.0
+#planarize
+etch aluminum start x=-1 y=-0.8
+etch continue x=5 y=-0.8
+etch continue x=5 y=-2
+etch done x=-1 y=-2
+structure out=25_metal_contact.str
+

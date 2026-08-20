@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
-#: 소스 길이 상한. 예제 중 가장 긴 CMOS.in 이 약 3KB 라 넉넉하다. 상한이 없으면
+#: 소스 길이 상한. 예제 중 가장 긴 nmos.in 이 약 4KB 라 넉넉하다. 상한이 없으면
 #: 한 번의 요청으로 DB 를 채울 수 있다.
 _MAX_SOURCE_CHARS = 200_000
 
