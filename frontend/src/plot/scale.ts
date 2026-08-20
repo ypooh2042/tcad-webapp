@@ -82,18 +82,25 @@ const RAMP: readonly [number, number, number][] = [
 ]
 
 /** 로그 축에 못 올리는 값(0·음수)의 색. 투명하게 두면 메시에 구멍처럼 보인다. */
-const NON_POSITIVE_COLOR = '#3a3f4a'
+export const NON_POSITIVE_COLOR = '#3a3f4a'
 
 export function colorFor(value: number, min: number, max: number): string {
   if (!(value > 0)) return NON_POSITIVE_COLOR
+  return colorForLog(Math.log10(value), min, max)
+}
 
+/**
+ * 이미 log10 을 취한 값으로 색을 고른다.
+ *
+ * 삼각형 음영은 로그 공간에서 보간한다(shading.ts). 색을 얻자고 10**x 로
+ * 되돌리면 큰 지수에서 정밀도를 잃고, 조각마다 왕복 비용도 든다.
+ */
+export function colorForLog(value: number, min: number, max: number): string {
   const low = Math.log10(min)
   const high = Math.log10(max)
   // 정의역이 한 점이면 어디에 놓을지 정할 수 없다. 배색 중앙을 쓴다.
   const t =
-    high === low
-      ? 0.5
-      : Math.min(1, Math.max(0, (Math.log10(value) - low) / (high - low)))
+    high === low ? 0.5 : Math.min(1, Math.max(0, (value - low) / (high - low)))
 
   const position = t * (RAMP.length - 1)
   const index = Math.min(RAMP.length - 2, Math.floor(position))

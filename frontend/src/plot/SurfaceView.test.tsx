@@ -12,6 +12,8 @@ import { SurfaceView } from './SurfaceView'
 import type { SurfaceResponse } from '../api/types'
 import { solidOf } from './materials'
 import { MESH_COLOR } from './SurfaceView'
+import { subdivisionDepth } from './shading'
+import { colorFor } from './scale'
 
 /** 도메인 x=[0,4], y=[0,3] 짜리 삼각형 두 개. */
 const SURFACE: SurfaceResponse = {
@@ -87,11 +89,37 @@ beforeEach(() => {
 })
 
 describe('그리기', () => {
-  it('삼각형마다 경로를 만든다', () => {
+  it('삼각형을 잘게 나눠 칠한다', () => {
+    // 단색으로 칠하면 격자가 성긴 곳에서 삼각형 무늬가 그대로 드러나,
+    // 데이터에 없는 조각남을 만들어 낸다. 나눈 만큼 fill 이 늘어난다.
     render(<SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} />)
 
-    // beginPath 는 눈금선도 쓴다. 삼각형 개수는 fill 로 센다.
-    expect(context.fill).toHaveBeenCalledTimes(2)
+    const shards = 4 ** subdivisionDepth(SURFACE.triangles.length)
+    expect(context.fill).toHaveBeenCalledTimes(2 * shards)
+    expect(shards).toBeGreaterThan(1)
+  })
+
+  it('도핑된 정점 하나로 삼각형 전체를 물들이지 않는다', () => {
+    // 산술평균이면 (1e5+1e5+1e20)/3 = 3.3e19 로 사실상 최댓값이 된다.
+    // 실측: 그 탓에 증착 산화막의 저농도 영역이 통째로 메워져 사라졌다.
+    const spike: SurfaceResponse = {
+      ...SURFACE,
+      x: [0, 4, 0],
+      y: [0, 0, 3],
+      triangles: [[0, 1, 2]],
+      values: [[1e5, 1e5, 1e20]],
+      materials: ['oxide'],
+      value_min: 1e5,
+      value_max: 1e20,
+    }
+
+    render(<SurfaceView surface={spike} cutX={null} onPickCut={vi.fn()} />)
+
+    const hottest = colorFor(1e20, 1e5, 1e20)
+    const painted = fills.filter((c) => c === hottest).length
+    const shards = 4 ** subdivisionDepth(1)
+    // 최고 농도 색은 그 꼭짓점 근처 몇 조각에만 나와야 한다.
+    expect(painted).toBeLessThan(shards / 2)
   })
 
   it('가로 눈금 숫자를 찍는다', () => {
@@ -208,6 +236,7 @@ describe('재질 보기', () => {
     // 값 기준으로 색을 고르려 들면 여기서 터지거나 아무것도 안 그린다.
     render(<SurfaceView surface={BY_MATERIAL} cutX={null} onPickCut={vi.fn()} />)
 
+    // 재질 보기는 삼각형 안에서 색이 변하지 않으므로 나눌 이유가 없다.
     expect(context.fill).toHaveBeenCalledTimes(2)
   })
 

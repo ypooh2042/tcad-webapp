@@ -8,7 +8,7 @@
  * 없다. 그렇다고 버리면 접합 위치가 그림에서 사라진다.
  */
 import { describe, expect, it } from 'vitest'
-import { colorFor, linearTicks, logTicks, toLogDomain } from './scale'
+import { colorFor, colorForLog, linearTicks, logTicks, toLogDomain } from './scale'
 
 describe('로그 축 정의역', () => {
   it('양수만 있으면 최소·최대를 그대로 쓴다', () => {
@@ -151,5 +151,22 @@ describe('선형 눈금 (깊이 축)', () => {
 
   it('뒤집힌 범위는 빈 배열이다', () => {
     expect(linearTicks(2, 1)).toEqual([])
+  })
+})
+
+describe('colorForLog', () => {
+  it('colorFor 와 같은 색을 준다', () => {
+    // 음영은 로그 공간에서 보간하므로 10**x 로 되돌리지 않고 바로 색을 뽑는다.
+    expect(colorForLog(Math.log10(3e17), 1e15, 1e20)).toBe(colorFor(3e17, 1e15, 1e20))
+  })
+
+  it('정의역 밖은 양 끝에 붙인다', () => {
+    expect(colorForLog(Math.log10(1e10), 1e15, 1e20)).toBe(colorFor(1e15, 1e15, 1e20))
+    expect(colorForLog(Math.log10(1e25), 1e15, 1e20)).toBe(colorFor(1e20, 1e15, 1e20))
+  })
+
+  it('바닥값도 색을 준다', () => {
+    // 로그를 못 취한 자리를 투명하게 두면 메시에 구멍처럼 보인다.
+    expect(colorForLog(-30, 1e15, 1e20)).toMatch(/^rgb\(/)
   })
 })

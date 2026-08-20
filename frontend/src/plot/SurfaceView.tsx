@@ -5,8 +5,17 @@
  * 동안 브라우저가 버티지 못한다.
  *
  * 값은 삼각형마다 정점 3개가 따로 온다. 계면 정점은 물질에 따라 값이 다르기
- * 때문이다. 여기서는 세 값의 평균으로 삼각형을 단색 칠한다 — 메시가 촘촘해서
- * 육안으로는 연속으로 보이고, 정점 보간을 흉내 내려다 계면을 뭉개는 것보다 낫다.
+ * 때문이다.
+ *
+ * 한동안 세 값의 **산술평균으로 단색** 칠했다. 두 가지가 틀렸다.
+ *   - 도핑은 자릿수를 오간다. (1e5 + 1e5 + 1e20)/3 은 3.3e19 로 사실상
+ *     최댓값이라, 도핑된 정점 하나에 닿기만 해도 삼각형 전체가 최고 농도로
+ *     칠해졌다. 실측: 증착 산화막 안의 저농도 영역이 통째로 메워져 사라졌다.
+ *   - 단색이라 격자가 성긴 곳에서는 삼각형 무늬가 그대로 드러나, 데이터에
+ *     없는 조각남을 만들어 냈다.
+ *
+ * 그래서 로그 공간에서 정점 보간을 하고(shading.ts), 캔버스 2D 에 그런 기능이
+ * 없으므로 삼각형을 잘게 나눠 흉내 낸다.
  *
  * **두 가지 보기가 있다.** 서버가 무엇을 보냈는지로 구분한다:
  *     quantity 가 있으면 → 값을 색으로 칠한다(컨투어).
@@ -21,7 +30,8 @@
 import { useEffect, useRef } from 'react'
 import type { SurfaceResponse } from '../api/types'
 import { solidOf } from './materials'
-import { colorFor, toLogDomain } from './scale'
+import { colorForLog, NON_POSITIVE_COLOR, toLogDomain } from './scale'
+import { logOf, shadeTriangle, subdivisionDepth, type Corners } from './shading'
 import { surfaceGeometry } from './surfaceGeometry'
 
 interface Props {
@@ -81,28 +91,58 @@ export function SurfaceView({
       ? { min: 0, max: 0 }
       : toLogDomain(surface.values.flat())
 
-    surface.triangles.forEach((triangle, index) => {
-      context.beginPath()
-      const [a, b, c] = triangle
-      context.moveTo(g.px(surface.x[a]!), g.py(surface.y[a]!))
-      context.lineTo(g.px(surface.x[b]!), g.py(surface.y[b]!))
-      context.lineTo(g.px(surface.x[c]!), g.py(surface.y[c]!))
-      context.closePath()
+    // 재질 보기는 삼각형 안에서 색이 변하지 않으므로 나눌 이유가 없다.
+    const depth = byMaterial ? 0 : subdivisionDepth(surface.triangles.length)
+    // 배색 전체 폭의 1/80 보다 좁은 차이는 화면에서 구분되지 않는다. 그보다
+    // 고른 삼각형은 나누지 않아, 균일한 구간이 넓은 실제 구조에서 비용이
+    // 실제로 색이 변하는 곳에만 든다.
+    const tolerance =
+      byMaterial || !(domain.min > 0) || !(domain.max > 0)
+        ? Number.POSITIVE_INFINITY
+        : (Math.log10(domain.max) - Math.log10(domain.min)) / 80
 
-      let color: string
-      if (byMaterial) {
-        color = solidOf(surface.materials[index] ?? '')
-      } else {
-        const triple = surface.values[index]!
-        const mean = (triple[0] + triple[1] + triple[2]) / 3
-        color = colorFor(mean, domain.min, domain.max)
-      }
+    const paint = (s: Corners, color: string) => {
+      context.beginPath()
+      context.moveTo(s.ax, s.ay)
+      context.lineTo(s.bx, s.by)
+      context.lineTo(s.cx, s.cy)
+      context.closePath()
       context.fillStyle = color
-      // 삼각형 사이에 배경색 실선이 비쳐 격자무늬로 보이는 것을 막는다.
+      // 조각 사이에 배경색 실선이 비쳐 격자무늬로 보이는 것을 막는다.
       context.strokeStyle = color
       context.lineWidth = 0.5
       context.fill()
       context.stroke()
+    }
+
+    surface.triangles.forEach((triangle, index) => {
+      const [a, b, c] = triangle
+      const corners: Corners = {
+        ax: g.px(surface.x[a]!),
+        ay: g.py(surface.y[a]!),
+        bx: g.px(surface.x[b]!),
+        by: g.py(surface.y[b]!),
+        cx: g.px(surface.x[c]!),
+        cy: g.py(surface.y[c]!),
+      }
+
+      if (byMaterial) {
+        paint(corners, solidOf(surface.materials[index] ?? ''))
+        return
+      }
+
+      const triple = surface.values[index]!
+      // 세 값이 모두 로그 축에 못 올라가면 그 자리를 따로 표시한다. 배색의 맨
+      // 아래로 칠하면 "농도가 낮다"로 잘못 읽힌다.
+      if (triple.every((value) => !(value > 0))) {
+        paint(corners, NON_POSITIVE_COLOR)
+        return
+      }
+
+      const logs = [logOf(triple[0]!), logOf(triple[1]!), logOf(triple[2]!)]
+      for (const shard of shadeTriangle(corners, logs, depth, tolerance)) {
+        paint(shard, colorForLog(shard.logValue, domain.min, domain.max))
+      }
     })
 
     // 격자는 삼각형을 **다 칠한 뒤에** 얹는다. 먼저 그리면 덮인다.
