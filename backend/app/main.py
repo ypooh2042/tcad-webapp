@@ -50,7 +50,9 @@ async def lifespan(app: FastAPI):
 def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="TCAD Web", lifespan=lifespan)
     app.state.settings = settings or get_settings()
-    app.state.session_policy = SessionPolicy()
+    app.state.session_policy = SessionPolicy(
+        max_concurrent=app.state.settings.max_concurrent_sessions
+    )
 
     app.include_router(routes_auth.router, prefix="/api")
     app.include_router(routes_admin.router, prefix="/api")

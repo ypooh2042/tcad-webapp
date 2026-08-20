@@ -1,5 +1,11 @@
 import { expect, test } from '@playwright/test'
-import { createProject, setSource, signUp, uniqueEmail } from './fixtures'
+import { createProject, logOut, setSource, signUp, uniqueEmail } from './fixtures'
+
+// 세션은 브라우저를 닫아도 서버에 남는다(유휴 30분). 정리하지 않으면 테스트가
+// 쌓일수록 동시 접속 정원에 부딪힌다.
+test.afterEach(async ({ page }) => {
+  await logOut(page)
+})
 
 test('탭을 눌러 파일을 전환한다', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])

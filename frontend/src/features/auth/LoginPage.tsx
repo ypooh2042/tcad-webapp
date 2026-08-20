@@ -20,7 +20,7 @@ export function LoginPage() {
         ? login(email, password)
         : register(email, password, inviteCode))
     } catch (caught) {
-      // 503 은 동시 접속 정원(10명)이 찼다는 뜻이다. 자격 증명 문제로
+      // 503 은 동시 접속 정원이 찼다는 뜻이다. 자격 증명 문제로
       // 오해하지 않게 그대로 보여 준다.
       setError(
         caught instanceof ApiError ? caught.message : '알 수 없는 오류입니다',

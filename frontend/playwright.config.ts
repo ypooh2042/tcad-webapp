@@ -18,7 +18,7 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
-  // 동시 접속 정원(10명)과 잡 큐를 공유하므로 병렬로 돌리면 서로를 방해한다.
+  // 동시 접속 정원과 잡 큐를 공유하므로 병렬로 돌리면 서로를 방해한다.
   workers: 1,
   reporter: process.env.CI ? 'github' : 'list',
   globalSetup: './e2e/global-setup.ts',

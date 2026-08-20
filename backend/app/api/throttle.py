@@ -14,7 +14,7 @@ from fastapi import HTTPException, Request, status
 
 from app.api.rate_limit import RateLimiter
 
-#: 로그인(IP 기준). **동시 접속 정원(10명)보다 넉넉해야 한다.**
+#: 로그인(IP 기준). **동시 접속 정원보다 넉넉해야 한다.**
 #:
 #: 처음에 10회/분으로 잡았다가 테스트에서 걸렸다. 연구실 사람들은 같은 NAT
 #: 뒤에 있으므로 서버가 보는 IP 가 하나다. 정원만큼 로그인하면 정원을 채우기도

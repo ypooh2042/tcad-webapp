@@ -95,11 +95,13 @@ prop 으로 내려보내는 것으로 충분하다.
 ### `src/features/` — 도메인별 화면
 
 ```
-auth/       AuthContext (로그인 상태), LoginPage (로그인 + 초대 가입)
+auth/       AuthContext (로그인 상태), LoginPage (로그인 + 초대 가입),
+            useOccupancy (접속 현황 30초 폴링)
 workspace/  WorkspacePage (본체), panelLayout, usePanelWidth
 files/      FileBrowser (모달, 드래그 이동 지원), tabLabels
 editor/     SupremEditor (Monaco 래퍼)
-jobs/       JobPanel (상태·로그·중단), useJob (폴링)
+jobs/       JobPanel (상태·실행시간·공정진행·로그·중단), useJob (폴링),
+            useElapsed (실행 시간 이어 세기), duration (시간 표기)
 docs/       DocsPanel (매뉴얼/파라미터/레퍼런스 3탭), ParameterTable, ReferenceBrowser
 admin/      AdminPanel (초대 발급·회수)
 ```
@@ -120,6 +122,17 @@ admin/      AdminPanel (초대 발급·회수)
   이름이 안 보인다.
 - **`JobPanel.runLabel`** — 잡 번호는 전체 사용자가 공유하는 기본키라 혼자 두 번
   돌려도 건너뛴다(#23 다음이 #27). 그래서 "경로 · 제출 시각"으로 가리킨다.
+- **`useElapsed`** — 실행 시간의 **시작값은 서버가 계산해서 준다.** 브라우저가
+  제출 시각과 자기 시계를 빼서 구하면 시계가 어긋난 만큼 그대로 틀린다. 화면은
+  그 값에 흐른 시간만 더하고(차이만 쓰므로 시계 오차와 무관), 다음 폴링이 다시
+  맞춘다. 끝난 잡은 멈춰야 총 실행 시간이 고정된다.
+- **공정 진행** — 로그는 실행이 끝나야 도착한다. 그때까지 "실행 중" 세 글자만
+  보이면 53단계 흐름이 도는 것인지 멈춘 것인지 알 수 없다. 서버가 작업디렉토리의
+  `.str` 을 세어 "oxidation.str 완료 · 7/15" 를 준다. **끝난 잡에는 주지 않으므로**
+  화면에서 따로 지울 필요가 없다.
+- **`useOccupancy`** — 접속 현황은 30초마다 본다. 사람이 드나드는 빈도라 잡
+  상태(1.5초)만큼 자주 볼 이유가 없다. 실패해도 마지막 값을 지우지 않는다 —
+  잠깐 끊겼다고 숫자가 사라지면 화면이 깜빡인다.
 - **중단 버튼** — 대기/실행 중일 때만 뜬다. 서버 응답을 기다리지 않고
   `applyStatus` 로 상태를 먼저 반영한다 — 다음 폴링(1.5초)까지 "실행 중"으로
   보이면 눌린 것인지 알 수 없다. 폴링이 곧 같은 값을 확인해 준다.
@@ -242,7 +255,7 @@ e2e/*.spec.ts         Playwright. 진짜 브라우저로 진짜 백엔드를 친
 
 `e2e/global-setup.ts` 가 **임시 PostgreSQL DB 를 만들어 마이그레이션을 걸고**
 API 와 워커를 띄운다. 개발 DB 를 쓰면 테스트가 남긴 계정·잡이 쌓이고 반대로
-개발 데이터가 결과를 흔든다. `workers: 1` 인 이유는 동시 접속 정원(10명)과 잡
+개발 데이터가 결과를 흔든다. `workers: 1` 인 이유는 동시 접속 정원과 잡
 큐를 공유하기 때문이다. 캔버스는 jsdom 에서 그릴 수 없어 그리기 자체는 단위
 테스트가 안 되고, 그래서 좌표 수식만 `surfaceGeometry.ts` 로 떼어 두었다.
 

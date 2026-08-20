@@ -15,6 +15,11 @@ import { files as fileApi } from '../../api/endpoints'
 import { FileBrowser } from '../files/FileBrowser'
 import { tabLabels } from '../files/tabLabels'
 import { useAuth } from '../auth/AuthContext'
+import {
+  occupancyLabel,
+  occupancyTitle,
+  useOccupancy,
+} from '../auth/useOccupancy'
 import { AdminPanel } from '../admin/AdminPanel'
 import { DocsPanel } from '../docs/DocsPanel'
 import { SupremEditor } from '../editor/SupremEditor'
@@ -64,6 +69,9 @@ export function WorkspacePage() {
   const [resultWidth, setResultWidth] = usePanelWidth('tcad.width.result', 400)
   const [docsWidth, setDocsWidth] = usePanelWidth('tcad.width.docs', 360)
   const viewport = useViewportWidth()
+  //: 지금 몇 명이 쓰고 있는지. 정원이 차면 다음 사람이 못 들어오므로, 자리를
+  //: 비워 줄지 판단하려면 들어와 있는 사람이 볼 수 있어야 한다.
+  const occupancy = useOccupancy()
 
   // 저장된 폭이 지금 창에 맞는다는 보장이 없다. 창을 줄였거나, 매뉴얼을 함께
   // 열었거나, 예전 버전이 과한 값을 저장해 뒀을 수 있다. 그리는 폭은 늘 다시
@@ -214,6 +222,16 @@ export function WorkspacePage() {
           파일 열기
         </button>
         <div className="spacer" />
+        {occupancy && (
+          <span
+            className={occupancy.occupied >= occupancy.capacity
+              ? 'muted occupancy full'
+              : 'muted occupancy'}
+            title={occupancyTitle(occupancy)}
+          >
+            {occupancyLabel(occupancy)}
+          </span>
+        )}
         <span className="muted">{user?.email}</span>
         {/* 관리자에게만 보인다. 일반 사용자가 눌러 봐야 서버가 403 을 준다. */}
         {user?.role === 'admin' && (

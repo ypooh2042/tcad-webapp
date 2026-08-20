@@ -90,6 +90,10 @@ test('시뮬레이션이 실제로 돌고 결과가 그려진다', async ({ page
   // 범위를 좁힌다.
   await expect(page.locator('.panel').getByText('result.str')).toBeVisible()
 
+  // 끝난 실행에는 총 걸린 시간이 남는다. 서버가 started_at/finished_at 으로
+  // 계산해 주는 값이라, 여기까지 와야 실제로 채워지는지 확인된다.
+  await expect(page.locator('.elapsed')).toHaveText(/^총 \d/)
+
   // 깊이 프로파일이 그려져야 한다. 서버가 .str 을 풀어 보낸 것이다.
   const chart = page.getByRole('img', { name: /깊이 프로파일/ })
   await expect(chart).toBeVisible()

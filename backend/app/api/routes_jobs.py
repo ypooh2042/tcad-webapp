@@ -25,6 +25,7 @@ from app.api.deps import (
 from app.auth.models import Session
 from app.core.config import Settings
 from app.db.models import Artifact, Job, JobStatus
+from app.jobs.progress import scan_progress
 from app.jobs.queue import JobQueue
 from app.runner.control import kill_container
 from app.runner.logfile import read_full_log
@@ -59,7 +60,26 @@ class JobDetailResponse(JobResponse):
     #: 제출 시각. 화면은 잡 번호 대신 이걸로 실행을 가리킨다 — 번호는 전체
     #: 사용자가 공유하는 기본키라 혼자 두 번 돌려도 건너뛴다.
     created_at: datetime
+    #: 실행에 걸린 시간(초). 도는 중이면 지금까지, 끝났으면 총 실행 시간이다.
+    #: 아직 큐에서 기다리는 중이면 None — 대기 시간은 실행 시간이 아니다.
+    #:
+    #: **서버가 계산해서 내려준다.** 브라우저가 제출 시각과 자기 시계를 빼서
+    #: 구하면 시계가 어긋난 만큼 그대로 틀린다. 화면은 이 값에서 이어 세기만
+    #: 하면 되고, 다음 조회가 다시 맞춰 준다.
+    elapsed_seconds: float | None = None
+    #: 도는 동안의 공정 진행. 끝난 잡에는 없다 — 그때는 산출물 목록이 곧
+    #: 결과이고, 진행 문구가 남으면 지워지지 않는 안내가 된다.
+    progress: "JobProgressResponse | None" = None
     artifacts: list["ArtifactResponse"]
+
+
+class JobProgressResponse(BaseModel):
+    """소스가 적어 둔 `structure out=` 중 몇 개가 저장됐는지."""
+
+    done: int
+    total: int
+    #: 마지막으로 저장된 구조 파일 이름. 아직 하나도 없으면 None.
+    latest: str | None
 
 
 class ArtifactResponse(BaseModel):
@@ -76,6 +96,32 @@ def _aware(moment: datetime) -> datetime:
     어긋난 시각을 보여준다.
     """
     return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def _elapsed_seconds(job: Job) -> float | None:
+    """실행에 걸린 시간. 아직 시작하지 않았으면 None.
+
+    끝난 잡은 `finished_at` 에서 멈춘다. 지금 시각을 쓰면 이미 끝난 실행의
+    "총 실행 시간"이 화면을 열어 둔 동안 계속 늘어난다.
+    """
+    if job.started_at is None:
+        return None
+    end = _aware(job.finished_at) if job.finished_at else datetime.now(UTC)
+    # 워커와 API 의 시계가 조금 어긋나면 음수가 나올 수 있다. 음수 시간을
+    # 그대로 내보내면 화면이 "-3s" 를 센다.
+    return max(0.0, (end - _aware(job.started_at)).total_seconds())
+
+
+def _progress(job: Job) -> JobProgressResponse | None:
+    """도는 동안의 공정 진행. 끝났거나 셀 근거가 없으면 None."""
+    if job.status is not JobStatus.RUNNING or not job.source or not job.workdir:
+        return None
+    found = scan_progress(Path(job.workdir), job.source)
+    if found is None:
+        return None
+    return JobProgressResponse(
+        done=found.done, total=found.total, latest=found.latest
+    )
 
 
 @router.post(
@@ -146,6 +192,8 @@ async def detail(
         source_revision_id=job.source_revision_id,
         source_path=job.source_path,
         created_at=_aware(job.created_at),
+        elapsed_seconds=_elapsed_seconds(job),
+        progress=_progress(job),
         log=job.log,
         log_truncated=was_truncated(job.log),
         exit_code=job.exit_code,

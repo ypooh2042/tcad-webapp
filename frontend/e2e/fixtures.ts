@@ -76,7 +76,7 @@ export async function signUp(page: Page, email: string): Promise<void> {
  * 세션을 반납한다.
  *
  * 브라우저를 닫아도 서버 세션은 남는다(유휴 30분). 테스트마다 새 계정을 만들면
- * 세션이 쌓여 동시 접속 정원(10명)에 부딪힌다.
+ * 세션이 쌓여 동시 접속 정원에 부딪힌다.
  */
 export async function logOut(page: Page): Promise<void> {
   const button = page.getByRole('button', { name: '로그아웃' })

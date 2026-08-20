@@ -12,7 +12,13 @@ import { WorkspacePage } from './WorkspacePage'
 import { AuthProvider } from '../auth/AuthContext'
 
 const { auth, projects, files, jobs, plot, admin, docs } = vi.hoisted(() => ({
-  auth: { me: vi.fn(), login: vi.fn(), register: vi.fn(), logout: vi.fn() },
+  auth: {
+    me: vi.fn(),
+    login: vi.fn(),
+    register: vi.fn(),
+    logout: vi.fn(),
+    occupancy: vi.fn(),
+  },
   projects: {
     list: vi.fn(),
     create: vi.fn(),
@@ -79,6 +85,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   auth.me.mockResolvedValue({ id: 1, email: 'a@example.com', role: 'user' })
   auth.logout.mockResolvedValue(null)
+  auth.occupancy.mockResolvedValue({ occupied: 2, capacity: 5, admins: 0 })
   admin.listInvites.mockResolvedValue([])
   docs.forCommand.mockRejectedValue(new Error('없음'))
   docs.search.mockResolvedValue({ query: '', hits: [] })
@@ -465,5 +472,30 @@ describe('탭 전환', () => {
 
     expect(confirm).not.toHaveBeenCalled()
     confirm.mockRestore()
+  })
+})
+
+describe('접속 현황', () => {
+  it('정원과 현재 인원을 머리말에 보여준다', async () => {
+    renderWorkspace()
+
+    expect(await screen.findByText('접속 2/5')).toBeInTheDocument()
+  })
+
+  it('가득 차면 눈에 띄게 표시한다', async () => {
+    // 자리를 비워 줄지 판단하려면 가득 찼다는 것이 보여야 한다.
+    auth.occupancy.mockResolvedValue({ occupied: 5, capacity: 5, admins: 0 })
+
+    renderWorkspace()
+
+    expect(await screen.findByText('접속 5/5')).toHaveClass('full')
+  })
+
+  it('현황을 못 가져와도 화면은 뜬다', async () => {
+    auth.occupancy.mockRejectedValue(new Error('연결 실패'))
+
+    renderWorkspace()
+
+    expect(await screen.findByRole('button', { name: '실행' })).toBeInTheDocument()
   })
 })

@@ -22,6 +22,8 @@ function detail(overrides: Partial<JobDetail> = {}): JobDetail {
     log: null,
     log_truncated: false,
     exit_code: 0,
+    elapsed_seconds: null,
+    progress: null,
     artifacts: [],
     ...overrides,
   }
@@ -309,5 +311,83 @@ describe('로그가 잘렸을 때', () => {
 
     await screen.findByText('짧은 로그')
     expect(screen.queryByRole('link', { name: /전문 내려받기/ })).toBeNull()
+  })
+})
+
+describe('실행 시간', () => {
+  it('도는 동안 지금까지 걸린 시간을 보여준다', async () => {
+    get.mockResolvedValue(
+      detail({ status: 'running', elapsed_seconds: 70, exit_code: null }),
+    )
+
+    render(<JobPanel jobId={42} />)
+
+    expect(await screen.findByText(/1min 10s/)).toBeInTheDocument()
+  })
+
+  it('끝나면 총 실행 시간을 보여준다', async () => {
+    get.mockResolvedValue(detail({ status: 'succeeded', elapsed_seconds: 95 }))
+
+    render(<JobPanel jobId={42} />)
+
+    expect(await screen.findByText(/총 1min 35s/)).toBeInTheDocument()
+  })
+
+  it('아직 대기 중이면 시간을 보여주지 않는다', async () => {
+    // 큐에서 기다린 시간은 실행 시간이 아니다. 0s 를 띄우면 이미 돌기
+    // 시작한 것처럼 보인다.
+    get.mockResolvedValue(
+      detail({ status: 'queued', elapsed_seconds: null, exit_code: null }),
+    )
+
+    render(<JobPanel jobId={42} />)
+
+    await screen.findByText('대기 중')
+    expect(screen.queryByText(/0s/)).not.toBeInTheDocument()
+  })
+})
+
+describe('공정 진행', () => {
+  it('마지막으로 끝난 단계를 보여준다', async () => {
+    get.mockResolvedValue(
+      detail({
+        status: 'running',
+        exit_code: null,
+        elapsed_seconds: 12,
+        progress: { done: 7, total: 15, latest: 'oxidation.str' },
+      }),
+    )
+
+    render(<JobPanel jobId={42} />)
+
+    expect(await screen.findByText(/oxidation\.str 완료/)).toBeInTheDocument()
+    expect(screen.getByText(/7\s*\/\s*15/)).toBeInTheDocument()
+  })
+
+  it('아직 저장된 단계가 없으면 그렇게 말한다', async () => {
+    get.mockResolvedValue(
+      detail({
+        status: 'running',
+        exit_code: null,
+        elapsed_seconds: 2,
+        progress: { done: 0, total: 15, latest: null },
+      }),
+    )
+
+    render(<JobPanel jobId={42} />)
+
+    expect(await screen.findByText(/첫 단계/)).toBeInTheDocument()
+  })
+
+  it('끝나면 진행 문구가 사라진다', async () => {
+    // 서버가 끝난 잡에는 진행을 주지 않는다. 화면도 그에 맞춰 지워야 한다.
+    get.mockResolvedValue(
+      detail({ status: 'succeeded', elapsed_seconds: 30, progress: null }),
+    )
+
+    render(<JobPanel jobId={42} />)
+
+    await screen.findByText('성공')
+    expect(screen.queryByText(/완료 ·/)).not.toBeInTheDocument()
   })
 })

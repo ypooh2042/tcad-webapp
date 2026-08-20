@@ -19,6 +19,8 @@ function detail(overrides: Partial<JobDetail> = {}): JobDetail {
     log: null,
     log_truncated: false,
     exit_code: null,
+    elapsed_seconds: null,
+    progress: null,
     artifacts: [],
     ...overrides,
   }

@@ -16,7 +16,7 @@ from pathlib import Path
 from app.str_parser.models import Structure
 from app.str_parser.parser import parse_structure
 
-#: 동시 접속 10명이 각자 몇 단계씩 훑어볼 수 있는 정도. 하나가 수 MB 이므로
+#: 접속한 사람들이 각자 몇 단계씩 훑어볼 수 있는 정도. 하나가 수 MB 이므로
 #: 무한정 늘리면 워커 메모리를 잠식한다.
 _CACHE_SIZE = 32
 

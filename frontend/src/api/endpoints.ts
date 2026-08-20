@@ -12,6 +12,7 @@ import type { JobStatus,
   IssuedInvite,
   InviteSummary,
   JobDetail,
+  Occupancy,
   ProfileResponse,
   Project,
   Revision,
@@ -39,6 +40,9 @@ export const auth = {
   logout: () => request<null>('/api/auth/logout', { method: 'POST' }),
 
   me: () => request<User>('/api/auth/me'),
+
+  /** 지금 몇 명이 접속해 있는지. 로그인한 사람만 볼 수 있다. */
+  occupancy: () => request<Occupancy>('/api/auth/occupancy'),
 }
 
 export const projects = {
@@ -214,6 +218,7 @@ export type {
   IssuedInvite,
   InviteSummary,
   JobDetail,
+  Occupancy,
   ProfileResponse,
   Project,
   Revision,

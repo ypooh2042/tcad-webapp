@@ -196,35 +196,145 @@ class TestProtectedRoutes:
         assert (await client.get("/api/auth/me")).status_code == 401
 
 
-class TestConcurrentLimitOverHttp:
-    async def test_eleventh_login_is_refused(self, app_and_state) -> None:
-        """정원이 차면 503 으로 거절한다."""
-        transport = ASGITransport(app=app_and_state)
+#: 이 앱 인스턴스의 동시 접속 정원. 숫자를 테스트에 박아 두면 정원을 바꿀 때
+#: 여기만 옛 값으로 남아 통과한다.
+CAP = SessionPolicy().max_concurrent
 
-        # 계정은 DB 에 직접 심는다. HTTP 가입을 11번 하면 가입 빈도 제한에
-        # 먼저 걸리는데, 이 테스트가 보려는 것은 **세션 정원**이다.
-        await seed_users(app_and_state, 11)
 
-        for i in range(10):
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as user_client:
-                response = await user_client.post(
-                    "/api/auth/login",
-                    json={"email": f"user{i}@example.com", "password": PASSWORD},
-                )
-                assert response.status_code == 200
+async def fill_every_slot(app) -> None:
+    """정원을 일반 사용자로 가득 채운다.
 
+    계정은 DB 에 직접 심는다. HTTP 로 그만큼 가입하면 가입 빈도 제한에 먼저
+    걸리는데, 여기서 보려는 것은 **세션 정원**이다.
+    """
+    transport = ASGITransport(app=app)
+    await seed_users(app, CAP)
+    for i in range(CAP):
         async with AsyncClient(
             transport=transport, base_url="http://test"
+        ) as user_client:
+            response = await user_client.post(
+                "/api/auth/login",
+                json={"email": f"user{i}@example.com", "password": PASSWORD},
+            )
+            assert response.status_code == 200, response.text
+
+
+class TestConcurrentLimitOverHttp:
+    async def test_one_past_the_cap_is_refused(self, app_and_state) -> None:
+        """정원이 차면 503 으로 거절한다."""
+        await fill_every_slot(app_and_state)
+        await seed_users_named(app_and_state, "extra@example.com", role="user")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app_and_state), base_url="http://test"
         ) as extra_client:
             response = await extra_client.post(
                 "/api/auth/login",
-                json={"email": "user10@example.com", "password": PASSWORD},
+                json={"email": "extra@example.com", "password": PASSWORD},
             )
 
         assert response.status_code == 503
         assert "정원" in response.json()["detail"]
+
+    async def test_admin_gets_in_even_when_full(self, app_and_state) -> None:
+        """관리자는 정원 밖이다. 가득 찼을 때 들어갈 수 없으면 손쓸 방법이 없다."""
+        await fill_every_slot(app_and_state)
+        await make_admin(app_and_state, "root@example.com")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app_and_state), base_url="http://test"
+        ) as admin_client:
+            response = await admin_client.post(
+                "/api/auth/login",
+                json={"email": "root@example.com", "password": PASSWORD},
+            )
+
+        assert response.status_code == 200
+
+    async def test_admin_does_not_take_a_slot_from_users(
+        self, app_and_state
+    ) -> None:
+        """관리자가 먼저 들어와 있어도 일반 사용자 정원은 그대로여야 한다."""
+        await make_admin(app_and_state, "root@example.com")
+        async with AsyncClient(
+            transport=ASGITransport(app=app_and_state), base_url="http://test"
+        ) as admin_client:
+            await admin_client.post(
+                "/api/auth/login",
+                json={"email": "root@example.com", "password": PASSWORD},
+            )
+
+        await fill_every_slot(app_and_state)
+
+
+class TestOccupancyEndpoint:
+    """지금 몇 명이 쓰고 있는지.
+
+    503 을 받고 나서야 정원이 찼다는 것을 아는 것과, 들어오기 전에 알 수 있는
+    것은 다르다.
+    """
+
+    async def test_requires_login(self, client) -> None:
+        assert (await client.get("/api/auth/occupancy")).status_code == 401
+
+    async def test_reports_capacity_and_occupancy(self, client) -> None:
+        await register(client, "a@example.com")
+        await login(client, "a@example.com")
+
+        body = (await client.get("/api/auth/occupancy")).json()
+
+        assert body == {"occupied": 1, "capacity": CAP, "admins": 0}
+
+    async def test_admin_is_not_counted_in_the_cap(
+        self, client, app_and_state
+    ) -> None:
+        await make_admin(app_and_state, "root@example.com")
+        await login(client, "root@example.com")
+
+        body = (await client.get("/api/auth/occupancy")).json()
+
+        assert body["occupied"] == 0
+        assert body["admins"] == 1
+
+    async def test_matches_what_the_login_gate_allows(self, app_and_state) -> None:
+        """현황이 "가득참"이라고 말하면 실제로 거절되어야 한다.
+
+        두 곳이 따로 세면 화면이 자리가 있다고 말한 순간 서버가 거절한다.
+        """
+        await fill_every_slot(app_and_state)
+        await seed_users_named(app_and_state, "extra@example.com", role="user")
+        await make_admin(app_and_state, "root@example.com")
+
+        transport = ASGITransport(app=app_and_state)
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as admin_client:
+            await admin_client.post(
+                "/api/auth/login",
+                json={"email": "root@example.com", "password": PASSWORD},
+            )
+            body = (await admin_client.get("/api/auth/occupancy")).json()
+
+        assert body["occupied"] == body["capacity"]
+
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as extra_client:
+            refused = await extra_client.post(
+                "/api/auth/login",
+                json={"email": "extra@example.com", "password": PASSWORD},
+            )
+        assert refused.status_code == 503
+
+
+async def seed_users_named(app, email: str, role: str = "user") -> None:
+    """계정 하나를 DB 에 직접 만든다."""
+    async with app.state.sessionmaker() as session:
+        session.add(
+            User(email=email, password_hash=hash_password(PASSWORD), role=role)
+        )
+        await session.commit()
 
 
 async def make_admin(app, email: str) -> None:

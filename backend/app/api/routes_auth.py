@@ -69,6 +69,16 @@ class UserResponse(BaseModel):
     role: str
 
 
+class OccupancyResponse(BaseModel):
+    """동시 접속 정원 사용 현황."""
+
+    #: 정원을 차지하고 있는 **사람** 수(세션 수가 아니다).
+    occupied: int
+    capacity: int
+    #: 접속 중인 관리자 수. 정원 밖이라 occupied 에 섞지 않는다.
+    admins: int
+
+
 @router.post(
     "/register",
     status_code=status.HTTP_201_CREATED,
@@ -174,6 +184,25 @@ async def me(
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
     return UserResponse(id=user.id, email=user.email, role=user.role)
+
+
+@router.get("/occupancy")
+async def occupancy(
+    _session: Session = Depends(current_session),
+    store: SessionStore = Depends(get_session_store),
+    policy: SessionPolicy = Depends(get_session_policy),
+) -> OccupancyResponse:
+    """지금 몇 명이 접속해 있는지.
+
+    로그인한 사람에게만 알려준다. 정원이 몇 명이고 얼마나 찼는지는 이 서버를
+    쓰는 사람에게 필요한 정보지, 밖에서 문 두드리는 쪽에 줄 것은 아니다.
+    """
+    found = await policy.occupancy(store, datetime.now(timezone.utc))
+    return OccupancyResponse(
+        occupied=found.occupied,
+        capacity=found.capacity,
+        admins=found.admins,
+    )
 
 
 def _invite_message(error: InviteError) -> str:

@@ -72,6 +72,18 @@ input:focus { outline: none; border-color: var(--accent); }
 }
 .workspace header nav { display: flex; gap: 4px; }
 
+/* 접속 현황. 자리가 남아 있을 때는 조용히 있다가, 가득 차면 눈에 띄어야 한다
+   — 그때부터는 자리를 비워 줄지 판단해야 하는 정보다. */
+.occupancy {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.occupancy.full { color: var(--error); border-color: var(--error); }
+
 .toolbar {
   display: flex;
   align-items: center;
@@ -102,6 +114,20 @@ input:focus { outline: none; border-color: var(--accent); }
 .status-succeeded { color: var(--ok); border-color: var(--ok); }
 .status-failed, .status-timed_out { color: var(--error); border-color: var(--error); }
 .status-running, .status-queued { color: var(--accent); border-color: var(--accent); }
+
+/* 실행 시간. 1초마다 숫자가 바뀌므로 tabular-nums 로 폭을 고정한다. 그러지
+   않으면 옆의 문구가 초마다 조금씩 밀린다. */
+.elapsed { font-variant-numeric: tabular-nums; font-size: 12px; }
+
+/* 공정 진행. 도는 동안에만 있다가 끝나면 사라진다. */
+.progress {
+  font-size: 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg);
+}
 
 .artifacts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .artifacts li { display: flex; align-items: center; gap: 8px; font-size: 13px; }

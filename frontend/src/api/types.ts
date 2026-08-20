@@ -51,7 +51,25 @@ export interface JobDetail extends Job {
   exit_code: number | null
   /** 제출 시각(시간대 포함). 화면은 잡 번호 대신 이걸로 실행을 가리킨다. */
   created_at: string
+  /**
+   * 실행에 걸린 시간(초). 도는 중이면 지금까지, 끝났으면 총 실행 시간.
+   * 아직 큐에서 기다리는 중이면 null — 대기 시간은 실행 시간이 아니다.
+   *
+   * **서버가 계산해서 준다.** 브라우저가 제출 시각과 자기 시계를 빼서 구하면
+   * 시계가 어긋난 만큼 그대로 틀린다.
+   */
+  elapsed_seconds: number | null
+  /** 도는 동안의 공정 진행. 끝난 잡에는 없다. */
+  progress: JobProgress | null
   artifacts: Artifact[]
+}
+
+/** 소스가 적어 둔 `structure out=` 중 몇 개가 저장됐는지. */
+export interface JobProgress {
+  done: number
+  total: number
+  /** 마지막으로 저장된 구조 파일 이름. 아직 하나도 없으면 null. */
+  latest: string | null
 }
 
 /** 더 이상 상태가 바뀌지 않는 잡. 폴링을 멈출 시점이다. */
@@ -93,6 +111,15 @@ export interface SurfaceResponse {
   materials: string[]
   value_min: number
   value_max: number
+}
+
+/** 동시 접속 정원 사용 현황. */
+export interface Occupancy {
+  /** 정원을 차지하고 있는 **사람** 수(세션 수가 아니다). */
+  occupied: number
+  capacity: number
+  /** 접속 중인 관리자 수. 정원 밖이라 occupied 에 섞이지 않는다. */
+  admins: number
 }
 
 export interface IssuedInvite {

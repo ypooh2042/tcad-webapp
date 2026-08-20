@@ -6,7 +6,13 @@
  * 매뉴얼 손잡이가 매뉴얼을 왼쪽 끝에 붙여 놓던 버그가 그랬다.
  */
 import { expect, test, type Page } from '@playwright/test'
-import { createProject, signUp, uniqueEmail } from './fixtures'
+import { createProject, logOut, signUp, uniqueEmail } from './fixtures'
+
+// 세션은 브라우저를 닫아도 서버에 남는다(유휴 30분). 정리하지 않으면 테스트가
+// 쌓일수록 동시 접속 정원에 부딪힌다.
+test.afterEach(async ({ page }) => {
+  await logOut(page)
+})
 
 async function widthOf(page: Page, selector: string): Promise<number> {
   const box = await page.locator(selector).boundingBox()

@@ -1,7 +1,7 @@
 """세션 정책.
 
 요구사항 그대로:
-  - 동시 로그인 10명 제한
+  - 동시 로그인 5명 제한
   - 로그인 후 30분간 동작이 없으면 강제 로그아웃
   - 관리자 계정은 위 두 제한을 모두 면제
 
@@ -27,8 +27,30 @@ class SessionLimitExceeded(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class Occupancy:
+    """지금 정원을 얼마나 쓰고 있는지.
+
+    `occupied` 의 단위는 **세션이 아니라 사람**이다. 로그인 판정이 사람 단위로
+    이뤄지므로(한 사람이 다시 로그인해도 자리를 두 번 차지하지 않는다), 화면에
+    보여주는 수도 같은 기준이어야 한다. 기준이 다르면 "4/5" 를 보고 들어오려던
+    사람이 거절당한다.
+    """
+
+    occupied: int
+    capacity: int
+    #: 접속 중인 관리자 수. 정원 **밖**이라 occupied 에 섞지 않는다. 그래도
+    #: 세어서 알려주는 이유는, 섞지 않으면 "1/5" 인데 실제로는 세 명이 쓰고
+    #: 있는 상황을 설명할 길이 없기 때문이다.
+    admins: int
+
+    @property
+    def is_full(self) -> bool:
+        return self.occupied >= self.capacity
+
+
+@dataclass(frozen=True, slots=True)
 class SessionPolicy:
-    max_concurrent: int = 10
+    max_concurrent: int = 5
     idle_timeout: timedelta = timedelta(minutes=30)
     #: 관리자 쿠키 수명. 관리자는 유휴 만료를 면제받아 서버 세션이 죽지 않는데,
     #: 쿠키에까지 유휴 상한을 걸면 브라우저 쪽에서만 30분마다 끊겨 면제가
@@ -81,7 +103,7 @@ class SessionPolicy:
             await self._require_free_slot(store, user_id, now)
 
         # 1인 1세션. 재로그인하면 이전 세션을 무효화한다. 그러지 않으면 한
-        # 사용자가 세션을 무한히 쌓을 수 있고, "동시 접속 10명"의 기준도
+        # 사용자가 세션을 무한히 쌓을 수 있고, 동시 접속 정원의 기준도
         # 세션 수인지 사람 수인지 모호해진다.
         await self._revoke_existing(store, user_id, now)
 
@@ -119,6 +141,24 @@ class SessionPolicy:
         """로그아웃. 관리자 세션도 닫을 수 있다(면제는 자동 만료에 한정)."""
         await store.delete(session_id)
 
+    async def occupancy(self, store: SessionStore, now: datetime) -> Occupancy:
+        """정원 사용 현황.
+
+        로그인 판정(`_require_free_slot`)과 **같은 셈법을 써야 한다.** 다르게
+        세면 화면이 자리가 있다고 말한 순간에 서버가 거절한다.
+        """
+        active = await store.active_sessions(now, self.idle_timeout)
+        admins = {
+            session.user_id
+            for session in active
+            if session.role.is_exempt_from_limits
+        }
+        return Occupancy(
+            occupied=len(_occupants(active)),
+            capacity=self.max_concurrent,
+            admins=len(admins),
+        )
+
     async def _revoke_existing(
         self, store: SessionStore, user_id: str, now: datetime
     ) -> None:
@@ -129,11 +169,9 @@ class SessionPolicy:
     async def _require_free_slot(
         self, store: SessionStore, user_id: str, now: datetime
     ) -> None:
-        occupants = {
-            session.user_id
-            for session in await store.active_sessions(now, self.idle_timeout)
-            if not session.role.is_exempt_from_limits
-        }
+        occupants = _occupants(
+            await store.active_sessions(now, self.idle_timeout)
+        )
         # 이미 접속 중인 사용자의 재로그인은 새 자리를 차지하지 않는다.
         if user_id in occupants:
             return
@@ -141,3 +179,18 @@ class SessionPolicy:
             raise SessionLimitExceeded(
                 f"동시 접속 정원({self.max_concurrent}명)이 찼습니다"
             )
+
+
+def _occupants(sessions: tuple[Session, ...]) -> set[str]:
+    """정원을 차지하고 있는 사람들.
+
+    로그인 판정과 현황 표시가 **이 함수 하나를 공유해야 한다.** 각자 세면 언젠가
+    어긋나고, 그때 화면은 자리가 있다고 말하는데 서버는 거절한다.
+
+    세션이 아니라 사용자 id 를 모은다. 관리자는 정원 밖이라 빠진다.
+    """
+    return {
+        session.user_id
+        for session in sessions
+        if not session.role.is_exempt_from_limits
+    }

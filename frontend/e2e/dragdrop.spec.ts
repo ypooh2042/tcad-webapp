@@ -1,5 +1,11 @@
 import { expect, test } from '@playwright/test'
-import { createProject, signUp, uniqueEmail } from './fixtures'
+import { createProject, logOut, signUp, uniqueEmail } from './fixtures'
+
+// 세션은 브라우저를 닫아도 서버에 남는다(유휴 30분). 정리하지 않으면 테스트가
+// 쌓일수록 동시 접속 정원에 부딪힌다.
+test.afterEach(async ({ page }) => {
+  await logOut(page)
+})
 
 test('파일을 끌어서 폴더에 넣는다', async ({ page, context }) => {
   // jsdom 은 실제 드래그를 하지 않는다. HTML5 드래그가 진짜로 붙는지는

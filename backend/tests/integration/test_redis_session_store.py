@@ -72,26 +72,36 @@ class TestRoundTrip:
         assert (await store.get(created.id)).role is Role.ADMIN
 
 
+async def fill(store, policy) -> list:
+    """정원을 일반 사용자로 가득 채운다. 만든 세션들을 돌려준다."""
+    return [
+        await policy.open_session(store, f"user{i}", Role.USER, T0)
+        for i in range(policy.max_concurrent)
+    ]
+
+
 class TestConcurrentLimit:
-    async def test_enforces_ten_user_limit(self, store, policy) -> None:
-        for i in range(10):
-            await policy.open_session(store, f"user{i}", Role.USER, T0)
+    async def test_enforces_the_cap(self, store, policy) -> None:
+        await fill(store, policy)
         with pytest.raises(SessionLimitExceeded):
-            await policy.open_session(store, "user10", Role.USER, T0)
+            await policy.open_session(store, "extra", Role.USER, T0)
 
     async def test_admin_bypasses_full_house(self, store, policy) -> None:
-        for i in range(10):
-            await policy.open_session(store, f"user{i}", Role.USER, T0)
+        await fill(store, policy)
         admin = await policy.open_session(store, "root", Role.ADMIN, T0)
         assert admin.role is Role.ADMIN
 
     async def test_logout_frees_slot(self, store, policy) -> None:
-        sessions = [
-            await policy.open_session(store, f"user{i}", Role.USER, T0)
-            for i in range(10)
-        ]
+        sessions = await fill(store, policy)
         await policy.close_session(store, sessions[0].id)
-        await policy.open_session(store, "user10", Role.USER, T0)
+        await policy.open_session(store, "extra", Role.USER, T0)
+
+    async def test_occupancy_matches_the_gate(self, store, policy) -> None:
+        """Redis 저장소에서도 현황과 로그인 판정이 같은 답을 내야 한다."""
+        await fill(store, policy)
+        occupancy = await policy.occupancy(store, T0)
+        assert occupancy.is_full
+        assert occupancy.occupied == policy.max_concurrent
 
 
 class TestTimeToLive:

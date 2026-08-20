@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useJob } from './useJob'
+import { useElapsed } from './useElapsed'
+import { formatDuration } from './duration'
 import { ResultView } from '../../plot/ResultView'
 import { jobs } from '../../api/endpoints'
-import { isFinished, type JobStatus } from '../../api/types'
+import { isFinished, type JobProgress, type JobStatus } from '../../api/types'
 
 /**
  * 어느 실행인지 가리키는 이름.
@@ -26,6 +28,18 @@ function runLabel(
   return `${sourcePath} · ${at}`
 }
 
+/**
+ * 지금 어느 단계까지 갔는지.
+ *
+ * 로그는 실행이 끝나야 도착한다. 그때까지 "실행 중" 세 글자만 보이면 사용자는
+ * 멈춘 것인지 도는 것인지 알 수 없다 — 53단계 흐름은 몇 분씩 걸린다.
+ */
+function progressLabel(progress: JobProgress): string {
+  const counted = `${progress.done}/${progress.total}`
+  if (progress.latest === null) return `첫 단계 진행 중 · ${counted}`
+  return `${progress.latest} 완료 · ${counted}`
+}
+
 const STATUS_LABEL: Record<JobStatus, string> = {
   queued: '대기 중',
   running: '실행 중',
@@ -47,6 +61,13 @@ export function JobPanel({ jobId }: { jobId: number | null }) {
   //: 대기 중이거나 실행 중일 때만 멈출 수 있다. 끝난 잡에 버튼을 두면 눌러도
   //: 서버가 409 로 거절할 뿐이다.
   const live = job !== null && !isFinished(job.status)
+
+  //: 서버가 준 값에서 이어 센다. 조회는 1.5초마다 오므로 그것만 쓰면 시계가
+  //: 뚝뚝 끊겨 보이고, 브라우저 시계로 직접 계산하면 서버와 어긋난 만큼 틀린다.
+  const elapsed = useElapsed(
+    job?.elapsed_seconds ?? null,
+    job?.status === 'running',
+  )
 
   async function stop() {
     if (jobId === null) return
@@ -78,6 +99,14 @@ export function JobPanel({ jobId }: { jobId: number | null }) {
         <span className="muted" title={`잡 #${jobId}`}>
           {runLabel(jobId, job?.source_path, job?.created_at)}
         </span>
+        {elapsed !== null && (
+          /* 도는 동안에는 늘어나는 시간을, 끝난 뒤에는 총 실행 시간을 보여준다. */
+          <span className="muted elapsed">
+            {job?.status === 'running'
+              ? `${formatDuration(elapsed)}…`
+              : `총 ${formatDuration(elapsed)}`}
+          </span>
+        )}
         {error && <span className="error">연결이 불안정합니다</span>}
         {cancelError && (
           <span className="error">중단하지 못했습니다: {cancelError}</span>
@@ -100,6 +129,12 @@ export function JobPanel({ jobId }: { jobId: number | null }) {
           </button>
         ) : null}
       </div>
+
+      {/* 진행 문구는 **도는 동안에만** 있다. 서버가 끝난 잡에는 주지 않으므로
+          여기서 따로 지울 필요가 없다. */}
+      {job?.progress && (
+        <div className="muted progress">{progressLabel(job.progress)}</div>
+      )}
 
       {job?.artifacts.length && !logOnly ? (
         <ResultView jobId={jobId} artifacts={job.artifacts} />

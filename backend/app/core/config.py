@@ -30,8 +30,12 @@ class Settings(BaseSettings):
     jobs_root: Path = Path("var/jobs")
 
     #: 동시에 돌릴 시뮬레이션 수. 6코어 홈서버에서 다른 서비스와 공존해야 하므로
-    #: 코어 수보다 넉넉히 낮게 잡는다. 로그인 정원(10명)과는 별개의 값이다.
+    #: 코어 수보다 넉넉히 낮게 잡는다. 로그인 정원과는 별개의 값이다.
     max_concurrent_jobs: int = 4
+
+    #: 동시 접속 정원(사람 수). 관리자는 여기서 면제된다 — 가득 찼을 때 관리자가
+    #: 못 들어오면 자리를 비울 방법이 없다.
+    max_concurrent_sessions: int = Field(default=5, gt=0)
 
     session_cookie_name: str = "tcad_session"
     #: 운영에서는 반드시 True. HTTPS 로만 쿠키를 보내게 한다.

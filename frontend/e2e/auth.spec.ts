@@ -8,7 +8,7 @@ import { expect, test } from '@playwright/test'
 import { PASSWORD, issueInviteCode, logOut, signUp, uniqueEmail } from './fixtures'
 
 // 세션은 브라우저를 닫아도 서버에 남는다(유휴 30분). 정리하지 않으면 테스트가
-// 쌓일수록 동시 접속 정원(10명)에 부딪힌다.
+// 쌓일수록 동시 접속 정원에 부딪힌다.
 test.afterEach(async ({ page }) => {
   await logOut(page)
 })
@@ -103,7 +103,7 @@ test('사용 횟수를 다 쓴 초대 코드는 거절된다', async ({ page, br
   await firstPage.getByLabel('초대 코드').fill(code)
   await firstPage.getByRole('button', { name: '가입하고 시작' }).click()
   await expect(firstPage.getByRole('button', { name: '실행' })).toBeVisible()
-  // 세션을 반납한다. 동시 접속 정원(10명)은 브라우저를 닫아도 풀리지 않는다.
+  // 세션을 반납한다. 동시 접속 정원은 브라우저를 닫아도 풀리지 않는다.
   await firstPage.getByRole('button', { name: '로그아웃' }).click()
   await first.close()
 
@@ -115,4 +115,12 @@ test('사용 횟수를 다 쓴 초대 코드는 거절된다', async ({ page, br
   await page.getByRole('button', { name: '가입하고 시작' }).click()
 
   await expect(page.getByRole('alert')).toContainText('사용된')
+})
+
+test('머리말에 접속 현황이 보인다', async ({ page }) => {
+  // 정원이 차면 다음 사람이 못 들어온다. 들어와 있는 사람이 자리를 비워
+  // 줄지 판단하려면 지금 몇 명인지 보여야 한다.
+  await signUp(page, uniqueEmail('occupancy'))
+
+  await expect(page.locator('.occupancy')).toHaveText(/^접속 \d+\/\d+$/)
 })
