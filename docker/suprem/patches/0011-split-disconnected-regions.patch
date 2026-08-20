@@ -8,7 +8,7 @@
  #include <material.h>	/* So we can set nmat to 0 - want this? */
  
  
-@@ -125,3 +126,107 @@
+@@ -125,3 +126,117 @@
      reg[r]->sreg = skel_reg(r);
  }
  
@@ -104,6 +104,16 @@
 +			MAXREG);
 +		else {
 +		    newr = mk_reg( mat_reg(r) );
++		    /*플래그를 물려받는다. 이 조각은 원래 그 영역의 일부였으므로
++		      영역에 대해 참인 것은 조각에도 참이다. 특히 ETCHED —
++		      요소 식각은 새로 드러난 층을 깎으려고 패스를 여러 번 도는데,
++		      갓 만든 영역은 mk_reg 가 flags=0 으로 두므로 물려받지 않으면
++		      "아직 안 깎은 영역"으로 보여 **한 번 더 깎인다**. 실측:
++		      buffer oxide 를 0.1 um 깎는 단계에서 산화막이 세 조각으로
++		      갈라지자 그 조각들이 다음 패스에 또 깎였고, 다음 산화가
++		      "not clock wise" 로 죽었다.
++		      EXPOS 는 build_reg 가 다시 계산하므로 물려줘도 무해하다.*/
++		    reg[newr]->flags = reg[r]->flags;
 +		    for(k = 0; k < nmemb; k++) reg_tri( memb[k] ) = newr;
 +		    made++;
 +		}
