@@ -17,7 +17,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from app.remesh.assemble import assemble
-from app.remesh.geo import build_geo
+from app.remesh.geo import BACKGROUND_FILE, build_geo
 from app.remesh.msh import read_msh
 from app.remesh.transfer import Sampler  # noqa: F401 - 의존 관계를 드러낸다
 from app.runner.sandbox import SandboxLimits, build_sandbox_argv
@@ -40,8 +40,22 @@ class RemeshResult:
     new_elements: int
 
 
+#: 경계에서 걷어낼 점의 허용 이동 거리.
+#:
+#: **단위는 µm 다.** `.str` 좌표가 µm 이기 때문이다(`ig2_write` 가 cm 를
+#: scale 로 나눠 쓴다. models.py 에 "oxide 0.075um 증착 → x=-0.075" 로
+#: 적혀 있다). 시뮬레이터 내부는 cm 라 헷갈리기 쉽다 — 처음에 cm 로 넣었다가
+#: 0.0001 nm 가 되어 단순화가 아무것도 하지 않았다.
+#:
+#: 값은 1 nm. refine/etch_elem.c 의 SNAP_DIST 와 같고, 실리콘 격자상수
+#: (0.543 nm)의 두 배쯤이다. 그보다 잘게 놓인 경계 점은 형상이 아니라 격자
+#: 연산의 부산물이다.
+SIMPLIFY_TOLERANCE = 1.0e-3
+
+
 def remesh(source: str, image: str = DEFAULT_IMAGE,
-           limits: SandboxLimits | None = None) -> RemeshResult:
+           limits: SandboxLimits | None = None,
+           simplify_tolerance: float = SIMPLIFY_TOLERANCE) -> RemeshResult:
     """`.str` 텍스트를 받아 메시만 새로 짠 `.str` 텍스트를 돌려준다.
 
     형상은 그대로다 — 바깥 경계와 물질 계면을 제약으로 고정하고 안쪽만 다시
@@ -52,11 +66,12 @@ def remesh(source: str, image: str = DEFAULT_IMAGE,
             나아진 줄 알고 넘어간다.
     """
     old = parse_structure(source)
-    model = build_geo(old)
+    model = build_geo(old, simplify_tolerance)
 
     with TemporaryDirectory(prefix="remesh-") as tmp:
         workdir = Path(tmp).resolve()
         (workdir / _GEO).write_text(model.to_text())
+        (workdir / BACKGROUND_FILE).write_text(model.background)
 
         argv = list(
             build_sandbox_argv(
@@ -77,7 +92,7 @@ def remesh(source: str, image: str = DEFAULT_IMAGE,
             )
         mesh = read_msh(produced.read_text())
 
-    built = assemble(old, mesh)
+    built = assemble(old, mesh, simplify_tolerance)
     return RemeshResult(
         text=write_structure(built, source),
         old_points=len(old.coordinates),

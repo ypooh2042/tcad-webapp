@@ -58,23 +58,55 @@ class Sampler:
                 for gy in range(self._cell_y(min(py)), self._cell_y(max(py)) + 1):
                     self._buckets.setdefault((material, gx, gy), []).append(index)
 
-    def at(self, x: float, y: float, material: int) -> tuple[float, ...] | None:
-        """(x, y) 에서 그 물질의 값. 그 물질이 거기 없으면 None."""
-        candidates = self._buckets.get(
-            (material, self._cell_x(x), self._cell_y(y))
-        )
-        if not candidates:
-            return None
+    def at(
+        self, x: float, y: float, material: int, reach: float = 0.0
+    ) -> tuple[float, ...] | None:
+        """(x, y) 에서 그 물질의 값. 그 물질이 거기 없으면 None.
 
+        Args:
+            reach: 삼각형 안에 들어가지 않을 때 이 거리까지는 가장 가까운
+                삼각형으로 물러선다. 경계를 단순화하면 새 점이 옛 물질에서
+                허용오차만큼 벗어나기 때문이다. 0 이면 물러서지 않는다.
+        """
         coords = self._s.coordinates
-        for index in candidates:
+        cx, cy = self._cell_x(x), self._cell_y(y)
+        candidates = self._buckets.get((material, cx, cy))
+
+        for index in candidates or ():
             element = self._s.elements[index]
             a, b, c = (coords[i] for i in element.vertices)
             weights = _barycentric(x, y, a, b, c)
-            if weights is None:
-                continue
-            return self._blend(element.vertices, material, weights)
-        return None
+            if weights is not None:
+                blended = self._blend(element.vertices, material, weights)
+                if blended is not None:
+                    return blended
+
+        if reach <= 0:
+            return None
+        return self._nearest(x, y, material, reach)
+
+    def _nearest(self, x, y, material, reach) -> tuple[float, ...] | None:
+        """가장 가까운 삼각형에 투영해 값을 뽑는다. 이웃 칸까지만 본다."""
+        coords = self._s.coordinates
+        cx, cy = self._cell_x(x), self._cell_y(y)
+        best = None
+        best_distance = reach
+        for gx in range(cx - 1, cx + 2):
+            for gy in range(cy - 1, cy + 2):
+                for index in self._buckets.get((material, gx, gy), ()):
+                    element = self._s.elements[index]
+                    p = [coords[i] for i in element.vertices]
+                    for i in range(3):
+                        d = _point_to_segment(
+                            (x, y), (p[i].x, p[i].y), (p[(i + 1) % 3].x, p[(i + 1) % 3].y)
+                        )
+                        if d < best_distance:
+                            best_distance, best = d, element
+        if best is None:
+            return None
+        a, b, c = (coords[i] for i in best.vertices)
+        weights = _barycentric(x, y, a, b, c, clamp=True)
+        return self._blend(best.vertices, material, weights) if weights else None
 
     def _blend(
         self, vertices: Sequence[int], material: int, weights: tuple[float, float, float]
@@ -98,13 +130,27 @@ class Sampler:
         return min(self._n - 1, max(0, int(floor((y - self._y0) / self._dy))))
 
 
-def _barycentric(x, y, a, b, c) -> tuple[float, float, float] | None:
+def _barycentric(x, y, a, b, c, clamp: bool = False) -> tuple[float, float, float] | None:
     den = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y)
     if den == 0:
         return None
     wa = ((b.y - c.y) * (x - c.x) + (c.x - b.x) * (y - c.y)) / den
     wb = ((c.y - a.y) * (x - c.x) + (a.x - c.x) * (y - c.y)) / den
     wc = 1.0 - wa - wb
+    if clamp:
+        # 삼각형 밖이면 안으로 눌러 담는다. 값이 바깥으로 발산하지 않게 한다.
+        wa, wb, wc = max(wa, 0.0), max(wb, 0.0), max(wc, 0.0)
+        total = wa + wb + wc
+        return (wa / total, wb / total, wc / total) if total > 0 else None
     if wa < -_INSIDE_TOL or wb < -_INSIDE_TOL or wc < -_INSIDE_TOL:
         return None
     return (wa, wb, wc)
+
+
+def _point_to_segment(p, a, b) -> float:
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length = dx * dx + dy * dy
+    if length == 0:
+        return ((p[0] - a[0]) ** 2 + (p[1] - a[1]) ** 2) ** 0.5
+    t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length))
+    return ((p[0] - (a[0] + t * dx)) ** 2 + (p[1] - (a[1] + t * dy)) ** 2) ** 0.5

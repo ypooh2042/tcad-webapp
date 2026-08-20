@@ -23,12 +23,16 @@ from app.str_parser.models import Coordinate, Element, NodeSolution, Structure
 
 _VERTICES = 3
 
-#: 새 경계 변의 중점이 옛 경계 선분에서 이만큼 안쪽이면 그 선분 위로 본다.
-#: 좌표는 cm 이고 `%g` 6 자리로 저장되므로 1e-9 cm(0.01 nm)면 넉넉하다.
+#: 새 경계 변이 옛 경계에서 이만큼까지 떨어져 있어도 같은 경계로 본다.
+#:
+#: 경계를 그대로 보존하면 0 이어도 되지만, 단순화를 켜면 새 변이 모서리를
+#: 가로지르는 현이라 허용오차만큼 떨어진다. 그래서 호출부가 쓴 단순화
+#: 허용오차를 받아 그 몇 배까지 허용한다.
 _ON_SEGMENT = 1.0e-9
+_SIMPLIFY_MARGIN = 4.0
 
 
-def assemble(old: Structure, mesh: Mesh) -> Structure:
+def assemble(old: Structure, mesh: Mesh, boundary_tolerance: float = 0.0) -> Structure:
     """옛 구조의 물성값을 새 메시에 실어 새 구조를 만든다.
 
     Raises:
@@ -40,8 +44,9 @@ def assemble(old: Structure, mesh: Mesh) -> Structure:
     coordinates = tuple(
         Coordinate(id=i + 1, x=x, y=y) for i, (x, y) in enumerate(mesh.points)
     )
-    elements = _elements(old, mesh)
-    solutions = _solutions(old, mesh, material_of, coordinates, elements)
+    reach = max(_ON_SEGMENT, boundary_tolerance * _SIMPLIFY_MARGIN)
+    elements = _elements(old, mesh, reach)
+    solutions = _solutions(old, mesh, material_of, coordinates, elements, reach)
 
     return Structure(
         version=old.version,
@@ -59,7 +64,7 @@ def assemble(old: Structure, mesh: Mesh) -> Structure:
     )
 
 
-def _elements(old: Structure, mesh: Mesh) -> tuple[Element, ...]:
+def _elements(old: Structure, mesh: Mesh, reach: float) -> tuple[Element, ...]:
     """삼각형마다 이웃을 잇고, 바깥 변에는 옛 경계 조건을 물려준다."""
     # 변 → 그 변을 가진 (삼각형, 맞은편 정점) 목록.
     owner: dict[tuple[int, int], list[tuple[int, int]]] = {}
@@ -87,7 +92,7 @@ def _elements(old: Structure, mesh: Mesh) -> tuple[Element, ...]:
                 (mesh.points[a][0] + mesh.points[b][0]) / 2,
                 (mesh.points[a][1] + mesh.points[b][1]) / 2,
             )
-            neighbors.append(_boundary_code(mid, outer, old_coords))
+            neighbors.append(_boundary_code(mid, outer, old_coords, reach))
 
         elements.append(
             Element(
@@ -102,10 +107,10 @@ def _elements(old: Structure, mesh: Mesh) -> tuple[Element, ...]:
     return tuple(elements)
 
 
-def _boundary_code(mid, outer, coords) -> int:
-    """바깥 변의 경계 조건. 옛 경계 선분 중 이 변이 놓인 것에서 가져온다."""
+def _boundary_code(mid, outer, coords, reach: float) -> int:
+    """바깥 변의 경계 조건. 옛 경계 선분 중 가장 가까운 것에서 가져온다."""
     best = None
-    best_distance = _ON_SEGMENT
+    best_distance = reach
     for segment in outer:
         a, b = coords[segment.a], coords[segment.b]
         distance = _point_to_segment(mid, (a.x, a.y), (b.x, b.y))
@@ -136,7 +141,7 @@ _AMBIENT_BOUNDARIES = frozenset(
 )
 
 
-def _solutions(old, mesh, material_of, coordinates, elements) -> tuple[NodeSolution, ...]:
+def _solutions(old, mesh, material_of, coordinates, elements, reach) -> tuple[NodeSolution, ...]:
     """점마다, 그 점에 닿는 물질마다 한 줄씩 값을 만든다.
 
     바깥과 접하는 점에는 ambient(물질 0) 줄이 하나 더 붙는다. 영역 표에는
@@ -174,7 +179,7 @@ def _solutions(old, mesh, material_of, coordinates, elements) -> tuple[NodeSolut
                     )
                 )
                 continue
-            values = sampler.at(x, y, material)
+            values = sampler.at(x, y, material, reach=reach)
             if values is None:
                 raise ValueError(
                     f"점 {point} ({x:g}, {y:g}) 의 물질 {material} 값을 "

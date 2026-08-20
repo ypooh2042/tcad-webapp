@@ -1,0 +1,35 @@
+--- a/src/dbase/list.c	2026-08-20 16:12:02.177527800 +0900
++++ b/src/dbase/list.c	2026-08-20 16:12:02.229527106 +0900
+@@ -37,7 +37,10 @@
+ 	    l->list = salloc( int, l->all );
+ 	}
+ 	else {
+-	    l->all += 10;
++	    /*10 씩 늘리면 목록이 길어질수록 재할당이 선형으로 는다 —
++	      3 만 개짜리 목록이면 3 천 번이다. 배로 늘려 로그로 만든다.
++	      메모리는 최대 2 배지만 목록 하나가 수백 KB 를 넘지 않는다.*/
++	    l->all *= 2;
+ 	    l->list = sralloc(int, l->all, l->list);
+ 	}
+     }
+--- a/src/include/geom.h	2026-08-20 16:12:02.181527746 +0900
++++ b/src/include/geom.h	2026-08-20 16:12:02.229527106 +0900
+@@ -55,9 +55,16 @@
+  ************************************************************************/
+ 
+ /*a structure to hold connectivity*/
++/*개수를 short 로 세면 영역 하나가 32,767 개를 넘는 순간 카운터가 음수로
++  뒤집히고, add_list 는 그때부터 버퍼를 늘리지 않은 채 계속 쓴다. 삼각형
++  격자에서 변은 점의 약 3배이므로 **영역당 약 10,900 점**이 실질 상한이었다.
++
++  1993 년에는 메모리를 아끼려는 합리적인 선택이었다. 지금은 int 로 바꿔도
++  리스트 하나에 4 바이트가 늘 뿐이다. 격자를 촘촘하게 쓸 수 있게 상한을
++  걷어낸다.*/
+ struct list_str {
+-    short num;		/*the number in the list*/
+-    short all;		/*the amount allocated*/
++    int num;		/*the number in the list*/
++    int all;		/*the amount allocated*/
+     int *list;		/*the number in the list*/
+ };
+ 

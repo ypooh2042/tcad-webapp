@@ -51,8 +51,26 @@ class TestRemesh:
 
         assert parse_structure(result.text).elements
 
-    def test_keeps_every_material_area(self) -> None:
-        """형상이 그대로라는 직접 증거."""
+    def test_keeps_every_material_area_exactly_without_simplification(self) -> None:
+        """경계를 손대지 않으면 형상이 **정확히** 그대로다."""
+        require_image()
+        source = (FIXTURES / "2d_cmos_source.str").read_text()
+
+        rebuilt = parse_structure(remesh(source, simplify_tolerance=0.0).text)
+
+        before = areas(parse_structure(source))
+        after = areas(rebuilt)
+        assert set(after) == set(before)
+        for material, value in before.items():
+            assert after[material] == pytest.approx(value, rel=1e-6)
+
+    def test_bounds_the_area_change_when_simplifying(self) -> None:
+        """단순화를 켜면 경계가 허용오차만큼 움직인다. 그 대가는 유한해야 한다.
+
+        경계 점을 걷어내지 않으면 식각이 남긴 촘촘한 점이 새 메시의 품질을
+        끌어내린다. 그래서 켜 두되, 형상 변화가 눈에 띄지 않을 만큼인지를
+        여기서 못 박는다.
+        """
         require_image()
         source = (FIXTURES / "2d_cmos_source.str").read_text()
 
@@ -62,7 +80,7 @@ class TestRemesh:
         after = areas(rebuilt)
         assert set(after) == set(before)
         for material, value in before.items():
-            assert after[material] == pytest.approx(value, rel=1e-6)
+            assert abs(after[material] - value) / value < 0.005
 
     def test_keeps_the_boundary_conditions(self) -> None:
         # 노출면·뒷면을 잃으면 산화가 엉뚱해진다.

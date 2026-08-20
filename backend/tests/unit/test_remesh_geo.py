@@ -117,3 +117,67 @@ class TestNesting:
         groups = nest_loops([outer, hole, island])
 
         assert sorted(len(g) for g in groups) == [1, 2]
+
+
+class TestSizeField:
+    """안쪽 크기를 따로 정한다.
+
+    경계 점 크기만 주면 gmsh 가 그것을 안쪽까지 퍼뜨려, 경계가 촘촘한 구조에서
+    점이 폭발한다(실측: 6,277 → 11,071). 경계는 경계대로 두고 안쪽은 **옛 메시의
+    안쪽 밀도**를 목표로 삼는다 — 밀도는 그대로, 품질만 올리는 것이 목적이다.
+    """
+
+    def test_lets_boundary_sizes_grade_inward(self) -> None:
+        text = build_geo(load("2d_cmos_source.str")).to_text()
+
+        assert "Mesh.MeshSizeExtendFromBoundary = 1" in text
+
+    def test_grades_size_away_from_the_boundary(self) -> None:
+        text = build_geo(load("2d_cmos_source.str")).to_text()
+
+        assert "Field[1] = Distance" in text
+        assert "Field[2] = Threshold" in text
+        # 최종 배경장은 기하 등급과 도핑 기울기 중 **작은 쪽**이다.
+        assert "Field[4] = Min" in text
+        assert "Background Field = 4" in text
+
+    def test_carries_a_doping_driven_background(self) -> None:
+        """기하만 보고 성기게 만들면 접합이 뭉개진다(실측: 비소 13.6% 오차)."""
+        model = build_geo(load("2d_cmos_source.str"))
+
+        assert model.background.startswith('View "sizes"')
+        assert "ST(" in model.background
+        assert "Field[3] = PostView" in model.to_text()
+
+    def test_interior_target_comes_from_the_old_mesh(self) -> None:
+        structure = load("2d_cmos_source.str")
+
+        model = build_geo(structure)
+
+        # 옛 안쪽 변 길이의 중앙값 언저리여야 한다.
+        import statistics
+        from app.remesh.geometry import constrained_segments
+        from math import hypot
+
+        fixed = {
+            (min(s.a, s.b), max(s.a, s.b)) for s in constrained_segments(structure)
+        }
+        c = structure.coordinates
+        interior = []
+        seen = set()
+        for e in structure.elements:
+            v = e.vertices
+            for i in range(3):
+                key = (min(v[i], v[(i + 1) % 3]), max(v[i], v[(i + 1) % 3]))
+                if key in fixed or key in seen:
+                    continue
+                seen.add(key)
+                interior.append(hypot(c[key[0]].x - c[key[1]].x, c[key[0]].y - c[key[1]].y))
+
+        assert model.interior_size == statistics.median(interior)
+
+    def test_falls_back_when_there_is_no_interior(self) -> None:
+        """모든 변이 경계인 아주 성긴 구조도 있다. 0 을 크기로 주면 gmsh 가 멈춘다."""
+        model = build_geo(load("2d_substrate.str"))
+
+        assert model.interior_size > 0

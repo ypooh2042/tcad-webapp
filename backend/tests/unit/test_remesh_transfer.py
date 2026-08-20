@@ -82,3 +82,27 @@ class TestSampler:
         got = sampler.at((a.x + b.x + c.x) / 3, (a.y + b.y + c.y) / 3, material)
 
         assert got is not None
+
+
+class TestNearestFallback:
+    """경계를 단순화하면 새 점이 옛 물질 밖으로 조금 벗어난다.
+
+    단순화 허용오차만큼(1 nm) 어긋날 뿐이므로, 가장 가까운 삼각형의 값을 쓰면
+    된다. 없다고 포기하면 재메시 자체가 실패한다.
+    """
+
+    def test_samples_just_outside_the_material(self, structure) -> None:
+        sampler = Sampler(structure)
+        material = structure.regions[0].material_id
+        node = next(s for s in structure.solutions if s.material_id == material)
+        c = structure.coordinates[node.coordinate_index]
+
+        # 경계에서 아주 조금 벗어난 자리.
+        got = sampler.at(c.x + 1e-7, c.y + 1e-7, material, reach=1e-6)
+
+        assert got is not None
+
+    def test_still_refuses_a_faraway_point(self, structure) -> None:
+        sampler = Sampler(structure)
+
+        assert sampler.at(-1e6, -1e6, structure.regions[0].material_id, reach=1e-6) is None
