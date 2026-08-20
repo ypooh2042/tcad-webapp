@@ -26,7 +26,12 @@ from app.auth.policy import SessionPolicy
 from app.auth.redis_store import RedisSessionStore
 from app.core.config import Settings, get_settings
 from app.jobs.queue import JobQueue
-from app.jobs.sweeper import run_sweeper, sweep_idle_artifacts
+from app.jobs.sweeper import (
+    run_sweeper,
+    sweep_idle_artifacts,
+    sweep_orphan_workdirs,
+    sweep_over_quota,
+)
 from app.jobs.worker import Worker
 from app.runner.sandbox import SandboxLimits
 
@@ -92,12 +97,24 @@ async def run_worker(settings: Settings, stop: asyncio.Event) -> None:
             settings.max_concurrent_jobs,
             settings.sandbox_image,
         )
-        # 산출물 청소를 워커에 얹는다. **로그아웃만으로는 부족하다** — 브라우저를
-        # 그냥 닫으면 `.str` 이 그대로 남아 디스크를 먹는다.
+        # 산출물 청소를 워커에 얹는다. 세 갈래를 한 주기에서 함께 돈다:
+        #
+        #   1. 유휴 사용자 — **로그아웃만으로는 부족하다.** 브라우저를 그냥
+        #      닫으면 `.str` 이 그대로 남는다.
+        #   2. 총량 상한 — 1번은 접속 중인 사용자를 건드리지 않으므로, 한 사람이
+        #      접속한 채 계속 실행하면 아무도 치우지 않는다. 잡 하나가 최대
+        #      256MB 라 그 경로로 디스크가 찬다.
+        #   3. 고아 디렉토리 — 사용자를 지우면 잡 행은 CASCADE 로 사라지지만
+        #      디스크의 디렉토리는 남아 아무도 다시 찾지 않는다.
+        quota_bytes = settings.storage_quota_mb * 1024 * 1024
+
         async def sweep() -> int:
-            return await sweep_idle_artifacts(
+            freed = await sweep_idle_artifacts(
                 sessionmaker, store, SessionPolicy().idle_timeout
             )
+            freed += await sweep_over_quota(sessionmaker, quota_bytes)
+            freed += await sweep_orphan_workdirs(sessionmaker, settings.jobs_root)
+            return freed
 
         await asyncio.gather(
             run_loops(worker, stop, settings.max_concurrent_jobs),

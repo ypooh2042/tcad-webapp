@@ -13,6 +13,7 @@ import type { JobStatus,
   InviteSummary,
   JobDetail,
   Occupancy,
+  PersistedEditorState,
   ProfileResponse,
   Project,
   Revision,
@@ -76,6 +77,19 @@ export const projects = {
 
   submit: (projectId: number) =>
     request<Job>(`/api/projects/${projectId}/jobs`, { method: 'POST' }),
+}
+
+/**
+ * 편집기에 열어 둔 것. 세션이 끊겨도 하던 자리로 돌아오게 한다.
+ *
+ * 저장하지 않은 내용까지 서버가 맡아 둔다 — 브라우저에 두면 컴퓨터를 옮겼을 때
+ * 따라오지 않고, 한 컴퓨터를 여럿이 쓰면 섞인다.
+ */
+export const editor = {
+  state: () => request<PersistedEditorState>('/api/editor/state'),
+
+  save: (state: PersistedEditorState) =>
+    request<null>('/api/editor/state', { method: 'PUT', body: state }),
 }
 
 /** 사용자 작업공간. 폴더와 `.in` 파일만 다룬다. */
@@ -219,6 +233,7 @@ export type {
   InviteSummary,
   JobDetail,
   Occupancy,
+  PersistedEditorState,
   ProfileResponse,
   Project,
   Revision,

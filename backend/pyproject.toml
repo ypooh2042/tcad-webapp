@@ -25,6 +25,12 @@ dependencies = [
 [tool.setuptools.packages.find]
 include = ["app*"]
 
+# 새 작업공간에 넣어 주는 예제(app/workspace/examples/*.in). 파이썬 파일이
+# 아니라서 선언하지 않으면 설치본에서 빠지고, 그때는 조용히 아무것도 넣지
+# 않는다 — 실패가 아니라 "예제가 없는 것처럼" 보이므로 알아채기 어렵다.
+[tool.setuptools.package-data]
+"app.workspace" = ["examples/*.in"]
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspacePage } from './WorkspacePage'
 import { AuthProvider } from '../auth/AuthContext'
 
-const { auth, projects, files, jobs, plot, admin, docs } = vi.hoisted(() => ({
+const { auth, projects, files, jobs, plot, admin, docs, editor } = vi.hoisted(() => ({
   auth: {
     me: vi.fn(),
     login: vi.fn(),
@@ -40,6 +40,7 @@ const { auth, projects, files, jobs, plot, admin, docs } = vi.hoisted(() => ({
     run: vi.fn(),
   },
   jobs: { get: vi.fn(), artifact: vi.fn() },
+  editor: { state: vi.fn(), save: vi.fn() },
   plot: { summary: vi.fn(), profile: vi.fn(), surface: vi.fn() },
   admin: { issueInvite: vi.fn(), listInvites: vi.fn(), revokeInvite: vi.fn() },
   docs: {
@@ -59,6 +60,7 @@ vi.mock('../../api/endpoints', () => ({
   plot,
   admin,
   docs,
+  editor,
 }))
 
 // Monaco 는 jsdom 에서 뜨지 않는다. 편집 동작 자체는 E2E 의 몫이고, 여기서는
@@ -86,6 +88,9 @@ beforeEach(() => {
   auth.me.mockResolvedValue({ id: 1, email: 'a@example.com', role: 'user' })
   auth.logout.mockResolvedValue(null)
   auth.occupancy.mockResolvedValue({ occupied: 2, capacity: 5, admins: 0 })
+  // 편집기 상태는 서버가 맡아 둔다. 기본은 '열어 둔 것이 없음'.
+  editor.state.mockResolvedValue({ tabs: [], active: null })
+  editor.save.mockResolvedValue(null)
   admin.listInvites.mockResolvedValue([])
   docs.forCommand.mockRejectedValue(new Error('없음'))
   docs.search.mockResolvedValue({ query: '', hits: [] })
@@ -427,51 +432,145 @@ describe('탭 전환', () => {
     expect(await screen.findByDisplayValue(/저장된 소스/)).toBeInTheDocument()
   })
 
-  it('탭을 누르면 그 파일을 읽는다', async () => {
+  it('탭을 누르면 그 파일 내용이 뜬다', async () => {
     // 이게 안 되면 탭만 강조되고 편집기에는 이전 내용이 남는다.
+    files.read.mockImplementation(async (path: string) => ({
+      path,
+      content: `${path} 의 내용\n`,
+    }))
     await openTwo()
-    files.read.mockClear()
 
     await userEvent.click(screen.getByRole('tab', { name: 'boron.in' }))
 
-    await waitFor(() => expect(files.read).toHaveBeenCalledWith('boron.in'))
+    expect(
+      await screen.findByDisplayValue(/boron.in 의 내용/),
+    ).toBeInTheDocument()
   })
 
-  it('저장하지 않은 편집이 있으면 먼저 묻는다', async () => {
-    // 말없이 덮어쓰면 사용자는 방금 쓴 것을 잃고 이유도 모른다.
+  it('저장하지 않은 편집이 있어도 묻지 않고 옮긴다', async () => {
+    // 저장은 곧 "실행 대상이 바뀐다"는 뜻이라, 잠깐 다른 파일을 들춰 보려고
+    // 시킬 일이 아니다.
     await openTwo()
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
-    await userEvent.type(screen.getByLabelText('소스'), 'x')
-    files.read.mockClear()
-
-    await userEvent.click(screen.getByRole('tab', { name: 'boron.in' }))
-
-    expect(confirm).toHaveBeenCalled()
-    expect(files.read).not.toHaveBeenCalled()
-    confirm.mockRestore()
-  })
-
-  it('버리기로 하면 이동한다', async () => {
-    await openTwo()
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
-    await userEvent.type(screen.getByLabelText('소스'), 'x')
-    files.read.mockClear()
-
-    await userEvent.click(screen.getByRole('tab', { name: 'boron.in' }))
-
-    await waitFor(() => expect(files.read).toHaveBeenCalledWith('boron.in'))
-    confirm.mockRestore()
-  })
-
-  it('같은 탭을 다시 눌러도 묻지 않는다', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
-    await openFile()
     await userEvent.type(screen.getByLabelText('소스'), 'x')
 
     await userEvent.click(screen.getByRole('tab', { name: 'boron.in' }))
 
     expect(confirm).not.toHaveBeenCalled()
+    expect(screen.getByRole('tab', { name: /boron.in/ })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
     confirm.mockRestore()
+  })
+
+  it('돌아오면 고치던 내용이 그대로 있다', async () => {
+    // 이것이 탭 전환을 묻지 않는 근거다. 버리는 것이 아니라 들고 있는다.
+    await openTwo()
+    await userEvent.type(screen.getByLabelText('소스'), '고치던 중')
+
+    await userEvent.click(screen.getByRole('tab', { name: 'boron.in' }))
+    await userEvent.click(screen.getByRole('tab', { name: /arsenic.in/ }))
+
+    expect(
+      await screen.findByDisplayValue(/고치던 중/),
+    ).toBeInTheDocument()
+  })
+
+  it('고친 탭에는 저장 안 됨 표시가 뜬다', async () => {
+    // 옮길 때 묻지 않으므로 이 표시가 유일한 단서다.
+    await openTwo()
+
+    await userEvent.type(screen.getByLabelText('소스'), 'x')
+
+    const tab = screen.getByRole('tab', { name: /arsenic.in/ })
+    expect(within(tab).getByLabelText('저장되지 않음')).toBeInTheDocument()
+  })
+
+  it('저장하지 않은 탭을 닫을 때는 묻는다', async () => {
+    // 전환과 달리 닫기는 버퍼를 버린다. 되돌릴 수 없으므로 여기서만 묻는다.
+    await openFile()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await userEvent.type(screen.getByLabelText('소스'), 'x')
+
+    await userEvent.click(screen.getByRole('button', { name: /탭 닫기/ }))
+
+    expect(confirm).toHaveBeenCalled()
+    expect(screen.getByRole('tab', { name: /boron.in/ })).toBeInTheDocument()
+    confirm.mockRestore()
+  })
+
+  it('고친 것이 없으면 닫을 때 묻지 않는다', async () => {
+    await openFile()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    await userEvent.click(screen.getByRole('button', { name: /탭 닫기/ }))
+
+    expect(confirm).not.toHaveBeenCalled()
+    confirm.mockRestore()
+  })
+})
+
+describe('열어 둔 파일이 없을 때', () => {
+  it('무엇을 해야 하는지 알려준다', async () => {
+    renderWorkspace()
+
+    expect(await screen.findByText(/열어 둔 파일이 없습니다/)).toBeInTheDocument()
+  })
+
+  it('편집기를 띄우지 않는다', async () => {
+    // 예제 소스가 든 편집기를 띄우면 어느 파일을 고치는 것인지 알 수 없고,
+    // 저장을 눌러도 "먼저 파일을 열어 주세요"만 나온다.
+    renderWorkspace()
+
+    await screen.findByText(/열어 둔 파일이 없습니다/)
+    expect(screen.queryByLabelText('소스')).not.toBeInTheDocument()
+  })
+
+  it('마지막 탭을 닫으면 다시 빈 화면이 된다', async () => {
+    await openFile()
+
+    await userEvent.click(screen.getByRole('button', { name: /탭 닫기/ }))
+
+    expect(await screen.findByText(/열어 둔 파일이 없습니다/)).toBeInTheDocument()
+  })
+})
+
+describe('세션 되살리기', () => {
+  it('지난번에 열어 둔 탭이 그대로 뜬다', async () => {
+    editor.state.mockResolvedValue({
+      tabs: [{ path: 'boron.in', draft: null, cursor: null }],
+      active: 'boron.in',
+    })
+
+    renderWorkspace()
+
+    expect(await screen.findByRole('tab', { name: /boron.in/ })).toBeInTheDocument()
+  })
+
+  it('저장하지 않았던 내용까지 되살아난다', async () => {
+    editor.state.mockResolvedValue({
+      tabs: [{ path: 'boron.in', draft: '지난번에 고치던 중\n', cursor: null }],
+      active: 'boron.in',
+    })
+
+    renderWorkspace()
+
+    expect(
+      await screen.findByDisplayValue(/지난번에 고치던 중/),
+    ).toBeInTheDocument()
+  })
+
+  it('되살아난 초안은 저장 안 됨으로 보인다', async () => {
+    editor.state.mockResolvedValue({
+      tabs: [{ path: 'boron.in', draft: '지난번에 고치던 중\n', cursor: null }],
+      active: 'boron.in',
+    })
+
+    renderWorkspace()
+
+    const tab = await screen.findByRole('tab', { name: /boron.in/ })
+    expect(within(tab).getByLabelText('저장되지 않음')).toBeInTheDocument()
   })
 })
 

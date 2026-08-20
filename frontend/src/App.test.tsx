@@ -2,12 +2,26 @@ import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 
-const { auth, projects } = vi.hoisted(() => ({
-  auth: { me: vi.fn(), login: vi.fn(), register: vi.fn(), logout: vi.fn() },
+const { auth, projects, files, editor } = vi.hoisted(() => ({
+  auth: {
+    me: vi.fn(),
+    login: vi.fn(),
+    register: vi.fn(),
+    logout: vi.fn(),
+    occupancy: vi.fn(),
+  },
   projects: { list: vi.fn(), create: vi.fn(), saveSource: vi.fn(), submit: vi.fn(), jobs: vi.fn() },
+  files: { tree: vi.fn(), usage: vi.fn(), read: vi.fn() },
+  editor: { state: vi.fn(), save: vi.fn() },
 }))
 
-vi.mock('./api/endpoints', () => ({ auth, projects, jobs: { get: vi.fn() } }))
+vi.mock('./api/endpoints', () => ({
+  auth,
+  projects,
+  files,
+  editor,
+  jobs: { get: vi.fn() },
+}))
 vi.mock('./features/editor/SupremEditor', () => ({
   SupremEditor: () => <div>편집기</div>,
 }))
@@ -15,6 +29,10 @@ vi.mock('./features/editor/SupremEditor', () => ({
 beforeEach(() => {
   vi.clearAllMocks()
   projects.list.mockResolvedValue([])
+  auth.occupancy.mockResolvedValue({ occupied: 1, capacity: 5, admins: 0 })
+  editor.state.mockResolvedValue({ tabs: [], active: null })
+  editor.save.mockResolvedValue(null)
+  files.tree.mockResolvedValue({ entries: [] })
 })
 
 describe('첫 화면', () => {

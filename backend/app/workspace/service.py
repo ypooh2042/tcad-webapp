@@ -14,6 +14,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.workspace.starter import seed
 from app.workspace.paths import (
     InvalidPath,
     is_source_file,
@@ -178,7 +179,16 @@ class Workspace:
 
     def _ensure_root(self) -> None:
         # 가입 직후 첫 요청에서 루트가 없으면 목록부터 실패한다.
-        self.root.mkdir(parents=True, exist_ok=True)
+        #
+        # **처음 만들 때만 예제를 넣는다.** 있을 때마다 확인해서 채워 넣으면
+        # 사용자가 지운 예제가 되살아나 지울 방법이 없어진다. mkdir 이
+        # 성공했다는 것이 곧 "이 작업공간은 방금 생겼다"는 뜻이다 — 같은 순간에
+        # 들어온 다른 요청은 FileExistsError 를 받고 씨앗 뿌리기를 건너뛴다.
+        try:
+            self.root.mkdir(parents=True)
+        except FileExistsError:
+            return
+        seed(self.root)
 
     def _entries(self, folder: Path) -> list[Entry]:
         found: list[Entry] = []

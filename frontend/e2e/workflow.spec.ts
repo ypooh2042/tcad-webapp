@@ -13,6 +13,7 @@ import {
   ONE_DIMENSIONAL_SOURCE,
   createProject,
   logOut,
+  openExample,
   setSource,
   signUp,
   uniqueEmail,
@@ -31,6 +32,9 @@ test.beforeEach(async ({ page, context }) => {
 })
 
 test('편집기가 뜨고 문법 강조가 걸린다', async ({ page }) => {
+  // 열어 둔 파일이 없으면 편집기 자체가 뜨지 않는다. 새 작업공간에 들어 있는
+  // 예제를 연다.
+  await openExample(page)
   const editor = page.locator('.monaco-editor').first()
 
   await expect(editor).toBeVisible()
@@ -105,21 +109,24 @@ test('시뮬레이션이 실제로 돌고 결과가 그려진다', async ({ page
   expect(ticks.some((t) => /^1e/.test(t))).toBe(true)    // 농도 (1e15 …)
 })
 
-test('기본 예제가 손대지 않고 그대로 돌아간다', async ({ page }) => {
+test('새 계정에 들어 있는 예제가 손대지 않고 그대로 돌아간다', async ({ page }) => {
   test.slow()
 
-  // **편집기를 건드리지 않는다.** 처음 들어온 사람이 가장 먼저 누르는 것이
-  // 실행 버튼이다. 그때 실패하면 이 도구를 쓸 수 있다는 믿음이 먼저 깨진다.
+  // **편집기를 건드리지 않는다.** 처음 들어온 사람이 가장 먼저 하는 일이
+  // 들어 있는 예제를 열어 실행 버튼을 누르는 것이다. 그때 실패하면 이 도구를
+  // 쓸 수 있다는 믿음이 먼저 깨진다.
   //
-  // 다른 테스트는 fixtures 의 소스를 붙여 넣기 때문에 앱의 기본값이 깨져도
-  // 통과한다. 실제로 그렇게 배포됐다 — `mode one.dim` 이 빠져 있어
-  // "No mesh defined!" 가 났다.
-  await createProject(page, 'starter')
+  // 다른 시험은 fixtures 의 소스를 붙여 넣기 때문에 예제가 깨져도 통과한다.
+  // 예전에 그렇게 배포됐다 — `mode one.dim` 이 빠져 있어 "No mesh defined!"
+  // 가 났다.
+  await openExample(page)
 
   await page.getByRole('button', { name: '실행' }).click()
 
   await expect(page.getByText('성공')).toBeVisible({ timeout: 120_000 })
-  await expect(page.getByRole('img', { name: /깊이 프로파일/ })).toBeVisible()
+  // 25단계짜리 2D 흐름이다. 마지막 단계부터 보여준다.
+  await expect(page.getByText(/25\/25/)).toBeVisible()
+  await expect(page.locator('canvas.surface')).toBeVisible()
 })
 
 test('메시가 없는 소스는 실패로 보고된다', async ({ page }) => {
@@ -158,14 +165,20 @@ test('작업공간은 사용자마다 따로다', async ({ page, browser }) => {
   const otherPage = await other.newPage()
   await signUp(otherPage, uniqueEmail('stranger'))
 
-  await otherPage.getByRole('button', { name: '파일 열기' }).click()
+  await otherPage
+    .getByRole('banner')
+    .getByRole('button', { name: '파일 열기' })
+    .click()
   const browserPanel = otherPage.getByRole('dialog', { name: '내 파일' })
   await expect(browserPanel).toBeVisible()
 
   await expect(
     browserPanel.getByRole('button', { name: 'mine-only.in', exact: true }),
   ).toHaveCount(0)
-  await expect(browserPanel.getByText(/파일이 없습니다/)).toBeVisible()
+  // 새 계정에는 예제만 들어 있다. 남의 파일이 하나라도 보이면 안 된다.
+  await expect(
+    browserPanel.getByRole('button', { name: 'nmos.in', exact: true }),
+  ).toBeVisible()
 
   await otherPage.getByRole('button', { name: '로그아웃' }).click()
   await other.close()
@@ -207,7 +220,7 @@ test('파일 브라우저에서 이름을 바꾸고 지운다', async ({ page })
   // 이름 바꾸기와 삭제는 파일 브라우저로 옮겼다. 위쪽 탭은 열어 둔 파일일 뿐이다.
   await createProject(page, 'rename-me')
 
-  await page.getByRole('button', { name: '파일 열기' }).click()
+  await page.getByRole('banner').getByRole('button', { name: '파일 열기' }).click()
   const files = page.getByRole('dialog', { name: '내 파일' })
   const row = files.locator('li', { hasText: 'rename-me.in' })
 
@@ -222,13 +235,17 @@ test('파일 브라우저에서 이름을 바꾸고 지운다', async ({ page })
     .locator('li', { hasText: 'renamed.in' })
     .getByRole('button', { name: '삭제' })
     .click()
-  await expect(files.getByText(/파일이 없습니다/)).toBeVisible()
+  // 예제(nmos.in)는 그대로 남으므로 "파일이 없습니다"가 아니라 그 파일만
+  // 사라진 것을 본다.
+  await expect(
+    files.getByRole('button', { name: 'renamed.in', exact: true }),
+  ).toHaveCount(0)
 })
 
 test('삭제를 취소하면 남아 있는다', async ({ page }) => {
   await createProject(page, 'keep-me')
 
-  await page.getByRole('button', { name: '파일 열기' }).click()
+  await page.getByRole('banner').getByRole('button', { name: '파일 열기' }).click()
   const files = page.getByRole('dialog', { name: '내 파일' })
 
   page.once('dialog', (dialog) => dialog.dismiss())
@@ -247,8 +264,10 @@ test('탭을 닫아도 파일은 남는다', async ({ page }) => {
 
   await page.getByRole('button', { name: 'keep-tab.in 탭 닫기' }).click()
   await expect(page.getByRole('tab')).toHaveCount(0)
+  // 탭이 하나도 없으면 편집기 대신 안내가 뜬다.
+  await expect(page.getByText(/열어 둔 파일이 없습니다/)).toBeVisible()
 
-  await page.getByRole('button', { name: '파일 열기' }).click()
+  await page.getByRole('banner').getByRole('button', { name: '파일 열기' }).click()
   await expect(
     page.getByRole('dialog', { name: '내 파일' })
       .getByRole('button', { name: 'keep-tab.in', exact: true }),

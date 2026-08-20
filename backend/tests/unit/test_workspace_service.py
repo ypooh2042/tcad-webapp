@@ -20,16 +20,29 @@ from app.workspace.service import (
 )
 
 
+def empty_workspace(root, quota_bytes=1024 * 1024) -> Workspace:
+    """예제가 들어 있지 않은 작업공간.
+
+    새 작업공간에는 예제가 한 개 들어간다(app/workspace/starter.py). 여기서
+    보려는 것은 파일 조작 자체이므로, 루트를 미리 만들어 씨앗 뿌리기를
+    건너뛴다 — 씨앗 자체는 test_workspace_starter.py 가 본다.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    return Workspace(root=root, quota_bytes=quota_bytes)
+
+
 @pytest.fixture
 def workspace(tmp_path):
-    return Workspace(root=tmp_path / "user-1", quota_bytes=1024 * 1024)
+    return empty_workspace(tmp_path / "user-1")
 
 
 class TestSetup:
-    def test_creates_the_root_on_demand(self, workspace):
+    def test_creates_the_root_on_demand(self, tmp_path):
         # 가입 직후 첫 요청에서 루트가 없으면 목록부터 실패한다.
-        assert workspace.list() == []
-        assert workspace.root.is_dir()
+        fresh = Workspace(root=tmp_path / "user-1", quota_bytes=1024 * 1024)
+
+        assert [entry.name for entry in fresh.list()] == ["nmos.in"]
+        assert fresh.root.is_dir()
 
 
 class TestWrite:
@@ -247,14 +260,14 @@ class TestQuota:
         assert workspace.usage().quota_bytes == 1024 * 1024
 
     def test_refuses_a_write_that_would_exceed(self, tmp_path):
-        small = Workspace(root=tmp_path / "u", quota_bytes=10)
+        small = empty_workspace(tmp_path / "u", quota_bytes=10)
 
         with pytest.raises(QuotaExceeded):
             small.write("a.in", "x" * 11)
 
     def test_the_rejected_write_leaves_nothing_behind(self, tmp_path):
         # 반쯤 쓰다 실패하면 상한을 넘긴 채로 남는다.
-        small = Workspace(root=tmp_path / "u", quota_bytes=10)
+        small = empty_workspace(tmp_path / "u", quota_bytes=10)
 
         with pytest.raises(QuotaExceeded):
             small.write("a.in", "x" * 11)
@@ -264,7 +277,7 @@ class TestQuota:
     def test_overwriting_counts_only_the_difference(self, tmp_path):
         """기존 파일을 덮어쓸 때 옛 크기를 빼지 않으면, 상한 가까이에서
         같은 파일을 저장하는 것조차 막힌다."""
-        small = Workspace(root=tmp_path / "u", quota_bytes=10)
+        small = empty_workspace(tmp_path / "u", quota_bytes=10)
         small.write("a.in", "x" * 9)
 
         small.write("a.in", "y" * 10)

@@ -50,10 +50,17 @@ async def app(tmp_path):
 
 
 async def _login(app, email: str) -> AsyncClient:
-    """가입 + 로그인을 마친 클라이언트. 가입만으로는 세션이 붙지 않는다."""
+    """가입 + 로그인을 마친 클라이언트. 가입만으로는 세션이 붙지 않는다.
+
+    **새 작업공간에 들어 있는 예제는 치우고 시작한다**(app/workspace/starter.py).
+    이 파일이 보려는 것은 파일 조작과 격리이므로, 예제가 섞이면 목록 검증이
+    전부 그 파일을 달고 다녀야 한다. 예제가 실제로 들어가는지는 아래
+    TestStarterExample 과 test_workspace_starter.py 가 본다.
+    """
     client = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
     await register(client, app.state.sessionmaker, email, PASSWORD)
     await client.post("/api/auth/login", json={"email": email, "password": PASSWORD})
+    await client.delete("/api/files?path=nmos.in")
     return client
 
 
@@ -382,3 +389,38 @@ class TestJobIdentity:
         assert body["created_at"] is not None
         # 시간대가 없으면 화면이 현지 시각으로 못 바꾼다.
         assert body["created_at"].endswith("Z") or "+" in body["created_at"]
+
+
+class TestStarterExample:
+    """처음 들어온 사람에게 빈 화면을 주지 않는다."""
+
+    async def test_a_new_workspace_has_the_example(self, app) -> None:
+        client = AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        )
+        await register(client, app.state.sessionmaker, "new@example.com", PASSWORD)
+        await client.post(
+            "/api/auth/login", json={"email": "new@example.com", "password": PASSWORD}
+        )
+
+        entries = (await client.get("/api/files")).json()["entries"]
+        await client.aclose()
+
+        assert [entry["name"] for entry in entries] == ["nmos.in"]
+
+    async def test_the_example_can_be_opened_and_run(self, app) -> None:
+        """열리지 않는 예제는 없는 것만 못하다."""
+        client = AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        )
+        await register(client, app.state.sessionmaker, "open@example.com", PASSWORD)
+        await client.post(
+            "/api/auth/login", json={"email": "open@example.com", "password": PASSWORD}
+        )
+
+        content = (await client.get("/api/files/content?path=nmos.in")).json()
+        submitted = await client.post("/api/files/jobs", json={"path": "nmos.in"})
+        await client.aclose()
+
+        assert "structure out=25_metal_contact.str" in content["content"]
+        assert submitted.status_code == 201

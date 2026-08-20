@@ -37,6 +37,16 @@ class TestPackageDiscovery:
 
         assert find["include"] == ["app*"]
 
+    def test_bundled_examples_are_declared_as_package_data(self, pyproject) -> None:
+        """`.in` 은 파이썬 파일이 아니라 선언하지 않으면 설치본에서 빠진다.
+
+        빠져도 예외가 나지 않는다 — 새 작업공간이 그냥 비어 있을 뿐이라
+        배포하고 한참 뒤에야 알아챈다.
+        """
+        data = pyproject["tool"]["setuptools"]["package-data"]
+
+        assert "examples/*.in" in data["app.workspace"]
+
     def test_migration_directory_is_not_a_package(self) -> None:
         """alembic 은 마이그레이션 스크립트지 임포트할 패키지가 아니다."""
         assert (BACKEND_ROOT / "alembic").is_dir()

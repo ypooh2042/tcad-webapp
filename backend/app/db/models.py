@@ -272,3 +272,29 @@ class InviteCode(Base):
         CheckConstraint("max_uses > 0", name="ck_invite_codes_max_uses"),
         CheckConstraint("used_count >= 0", name="ck_invite_codes_used_count"),
     )
+
+
+class EditorState(Base):
+    """사용자가 편집기에 열어 둔 것.
+
+    세션은 30분 유휴로 끊긴다. 다시 들어왔을 때 빈 화면이면 어느 파일을 보고
+    있었는지, 어디까지 고쳤는지 사용자가 기억해서 되짚어야 한다. 그래서
+    **열어 둔 탭·활성 탭·커서 위치·저장하지 않은 초안**을 사용자별로 남긴다.
+
+    브라우저(localStorage)가 아니라 서버에 두는 이유는 두 가지다. 한 컴퓨터를
+    여러 사람이 쓰면 저장소가 섞이고, 다른 컴퓨터로 옮기면 따라오지 않는다.
+
+    내용은 JSON 문자열 하나다. 모양이 화면 사정으로 자주 바뀌는 값이라 컬럼으로
+    쪼개면 마이그레이션이 계속 따라다닌다. 형태 검증은 API 경계에서 한다.
+    """
+
+    __tablename__ = "editor_states"
+
+    #: 사용자당 하나. 별도 id 를 두면 같은 사용자의 행이 여럿 생길 수 있다.
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    state: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

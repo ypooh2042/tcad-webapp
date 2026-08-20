@@ -59,6 +59,20 @@ export function issueInviteCode(maxUses = 5): string {
   return result.stdout.trim()
 }
 
+/**
+ * 새 작업공간에 들어 있는 예제를 연다.
+ *
+ * 가입 직후에는 `nmos.in` 하나가 들어 있다(backend/app/workspace/starter.py).
+ * 열어 둔 파일이 없으면 편집기 자체가 뜨지 않으므로, 편집기를 다루는 시험은
+ * 먼저 무언가를 열어야 한다.
+ */
+export async function openExample(page: Page, name = 'nmos.in'): Promise<void> {
+  await page.getByRole('banner').getByRole('button', { name: '파일 열기' }).click()
+  const browser = page.getByRole('dialog', { name: '내 파일' })
+  await browser.getByRole('button', { name, exact: true }).click()
+  await expect(page.getByRole('tab', { name })).toBeVisible()
+}
+
 /** 브라우저로 가입한다. 실제 사용자가 지나는 경로 그대로. */
 export async function signUp(page: Page, email: string): Promise<void> {
   await page.goto('/')
@@ -94,7 +108,9 @@ export async function logOut(page: Page): Promise<void> {
 export async function createProject(page: Page, name: string): Promise<void> {
   const filename = name.endsWith('.in') ? name : `${name}.in`
 
-  await page.getByRole('button', { name: '파일 열기' }).click()
+  // 머리말 쪽으로 좁힌다. 열어 둔 파일이 없을 때는 편집기 자리에도 같은
+  // 이름의 버튼이 있다.
+  await page.getByRole('banner').getByRole('button', { name: '파일 열기' }).click()
   const browser = page.getByRole('dialog', { name: '내 파일' })
   await expect(browser).toBeVisible()
 

@@ -20,19 +20,23 @@ import { ApiError } from '../../api/client'
 import { files } from '../../api/endpoints'
 import type { FileEntry, FileUsage } from '../../api/types'
 
-/** 새 파일에 넣어 둘 뼈대. 빈 파일로 시작하면 무엇을 쓸지 막막하다. */
-const STARTER = `mode one.dim
-line x loc = 0    spacing = 0.05 tag = top
-line x loc = 1.0  spacing = 0.10 tag = bottom
-region silicon xlo = top xhi = bottom
-bound exposed xlo = top xhi = top
-init boron conc = 1e15
-structure outfile = result.str
-`
+/**
+ * 새 파일의 내용. **비워 둔다.**
+ *
+ * 예전에는 1차원 뼈대를 넣었다. 그러면 새 파일을 만들 때마다 쓰지도 않을 줄을
+ * 먼저 지워야 하고, 붙여 넣기로 시작하는 경우에는 남은 줄이 섞인다. 처음
+ * 들어온 사람에게는 대신 작업공간에 예제 하나가 들어 있다
+ * (backend/app/workspace/starter.py).
+ */
+const STARTER = ''
 
 interface Props {
   onOpen: (path: string) => void
   onClose: () => void
+  /** 이름이 바뀐 파일. 열어 둔 탭이 따라가야 한다. */
+  onRenamed?: (from: string, to: string) => void
+  /** 지워진 파일. 탭이 남으면 열 때마다 실패한다. */
+  onDeleted?: (path: string) => void
 }
 
 function megabytes(bytes: number): string {
@@ -49,7 +53,7 @@ function join(folder: string, name: string): string {
   return folder ? `${folder}/${name}` : name
 }
 
-export function FileBrowser({ onOpen, onClose }: Props) {
+export function FileBrowser({ onOpen, onClose, onRenamed, onDeleted }: Props) {
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [usage, setUsage] = useState<FileUsage | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -124,9 +128,12 @@ export function FileBrowser({ onOpen, onClose }: Props) {
     // 이름만 묻는다. 경로째 물으면 사용자가 폴더 구조를 손으로 써야 한다.
     const name = window.prompt('새 이름', entry.name)
     if (!name || name === entry.name) return
-    void guard(() =>
-      files.rename(entry.path, join(parentOf(entry.path), name)),
-    )
+    const destination = join(parentOf(entry.path), name)
+    void guard(async () => {
+      await files.rename(entry.path, destination)
+      // 열어 둔 탭이 옛 경로를 가리킨 채 남으면 저장도 실행도 실패한다.
+      onRenamed?.(entry.path, destination)
+    })
   }
 
   /** 떨어뜨린 지점이 뜻하는 폴더. 파일 위면 그 파일이 든 폴더다. */
@@ -147,7 +154,11 @@ export function FileBrowser({ onOpen, onClose }: Props) {
       return
     }
 
-    void guard(() => files.rename(source.path, join(folder, source.name)))
+    const destination = join(folder, source.name)
+    void guard(async () => {
+      await files.rename(source.path, destination)
+      onRenamed?.(source.path, destination)
+    })
   }
 
   function remove(entry: FileEntry) {
@@ -155,7 +166,10 @@ export function FileBrowser({ onOpen, onClose }: Props) {
       ? `'${entry.name}' 폴더를 지웁니다.\n안의 파일도 모두 사라지며 되돌릴 수 없습니다.`
       : `'${entry.name}' 을(를) 지웁니다. 되돌릴 수 없습니다.`
     if (!window.confirm(warning)) return
-    void guard(() => files.remove(entry.path))
+    void guard(async () => {
+      await files.remove(entry.path)
+      onDeleted?.(entry.path)
+    })
   }
 
   return (

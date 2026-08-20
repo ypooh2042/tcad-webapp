@@ -14,7 +14,7 @@ test('파일을 끌어서 폴더에 넣는다', async ({ page, context }) => {
   await signUp(page, uniqueEmail('dnd'))
   await createProject(page, 'movable')
 
-  await page.getByRole('button', { name: '파일 열기' }).click()
+  await page.getByRole('banner').getByRole('button', { name: '파일 열기' }).click()
   const files = page.getByRole('dialog', { name: '내 파일' })
 
   page.once('dialog', (dialog) => dialog.accept('semi'))

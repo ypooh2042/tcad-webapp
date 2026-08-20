@@ -58,7 +58,10 @@ class Settings(BaseSettings):
     #: 너무 짧으면 DB 를 계속 두드리고, 길면 디스크가 그만큼 오래 차 있는다.
     artifact_sweep_seconds: int = Field(default=300, gt=0)
 
-    #: 사용자당 저장 가능한 산출물 총량. CMOS 예제 한 번이 약 5MB 다.
+    #: 사용자당 저장 가능한 산출물 총량. 예제 한 번이 약 5~15MB 다.
+    #: 넘으면 워커의 청소 주기가 **오래된 잡부터** 비운다(가장 최근 잡 하나는
+    #: 남긴다). 상한을 두지 않으면 접속해 있는 동안 아무도 치우지 않아 한
+    #: 사람이 디스크를 다 쓸 수 있다 — 잡 하나가 최대 256MB 다.
     storage_quota_mb: int = Field(default=500, gt=0)
 
 

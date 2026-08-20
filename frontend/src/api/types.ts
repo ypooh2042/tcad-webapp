@@ -113,6 +113,20 @@ export interface SurfaceResponse {
   value_max: number
 }
 
+/** 편집기에 열어 둔 탭 하나. 저장하지 않은 내용과 커서 자리를 함께 담는다. */
+export interface PersistedTab {
+  path: string
+  /** 저장하지 않은 편집 내용. 파일 그대로면 null. */
+  draft: string | null
+  /** 1-based 줄·칸. */
+  cursor: { line: number; column: number } | null
+}
+
+export interface PersistedEditorState {
+  tabs: PersistedTab[]
+  active: string | null
+}
+
 /** 동시 접속 정원 사용 현황. */
 export interface Occupancy {
   /** 정원을 차지하고 있는 **사람** 수(세션 수가 아니다). */

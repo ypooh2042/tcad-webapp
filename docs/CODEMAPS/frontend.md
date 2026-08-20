@@ -97,7 +97,8 @@ prop 으로 내려보내는 것으로 충분하다.
 ```
 auth/       AuthContext (로그인 상태), LoginPage (로그인 + 초대 가입),
             useOccupancy (접속 현황 30초 폴링)
-workspace/  WorkspacePage (본체), panelLayout, usePanelWidth
+workspace/  WorkspacePage (본체), panelLayout, usePanelWidth,
+            editorSession (탭·초안·커서 규칙), useEditorSession (서버 연결)
 files/      FileBrowser (모달, 드래그 이동 지원), tabLabels
 editor/     SupremEditor (Monaco 래퍼)
 jobs/       JobPanel (상태·실행시간·공정진행·로그·중단), useJob (폴링),
@@ -122,6 +123,19 @@ admin/      AdminPanel (초대 발급·회수)
   이름이 안 보인다.
 - **`JobPanel.runLabel`** — 잡 번호는 전체 사용자가 공유하는 기본키라 혼자 두 번
   돌려도 건너뛴다(#23 다음이 #27). 그래서 "경로 · 제출 시각"으로 가리킨다.
+- **`editorSession`** — 탭 전환에 저장을 요구하지 않는 근거가 여기 있다.
+  고치던 내용은 버퍼에 남고, 돌아오면 그대로 이어서 고친다. 저장은 곧 "실행
+  대상이 바뀐다"는 뜻이라 잠깐 다른 파일을 들춰 보려고 시킬 일이 아니다.
+  **닫을 때는 묻는다** — 전환과 달리 버퍼를 버리므로 되돌릴 수 없다.
+- **`useEditorSession`** — 들어올 때 서버에서 되살리고, 바뀌면 1초 뒤 한 번
+  남기고, **보려는 탭만** 읽어온다. 되살리기가 끝나기 전에는 아무것도 남기지
+  않는다 — 빈 상태를 먼저 보내면 서버에 있던 탭 목록을 지운다. 스무 개를
+  한꺼번에 읽으면 nginx 레이트 리밋(20 req/s)에 그대로 걸린다.
+- **`SupremEditor` 의 `path`** — Monaco 에 경로를 넘기면 파일마다 모델이
+  따로 생긴다. 되돌리기 기록이 파일별로 나뉘고(탭을 옮긴 뒤 Ctrl+Z 가 남의
+  파일을 되돌리지 않는다) 보던 줄도 탭마다 보존된다. `keepCurrentModel` 은
+  탭을 처음 열 때 내용을 받아오는 동안 편집기가 잠깐 내려가는데, 그때 모델이
+  버려지면 그 파일의 되돌리기 기록이 사라지기 때문에 켠다.
 - **`ResultView` 의 첫 단계** — **마지막 단계부터 보여준다.** 보려는 것은 보통
   공정이 끝난 모습이고, 25단계짜리 흐름에서 거기까지 '다음' 을 스물네 번 눌러
   가는 것은 번거롭다. 실패한 실행에서도 마지막 산출물이 곧 마지막으로 성공한
