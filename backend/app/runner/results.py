@@ -121,16 +121,7 @@ _SIGNAL_NAMES = {
 #: 로그에 찍히는 격자 크기. 공정이 진행되며 여러 번 나오므로 마지막 것을 쓴다.
 _MESH_POINTS_RE = re.compile(r"Points\s*=\s*(\d+)")
 
-#: 영역 하나가 감당하는 점의 대략적 상한.
-#:
-#: geom.h 의 `struct list_str` 이 개수를 short 로 센다. 영역의 변 목록이
-#: 32,767 을 넘으면 카운터가 음수로 뒤집히고, `add_list` 는 그때부터 버퍼를
-#: 늘리지 않은 채 계속 쓴다. 삼각형 격자에서 변은 점의 약 3배다.
-GRID_POINTS_PER_REGION = 32_767 // 3
 
-#: 이 크기 아래에서 죽었다면 격자 탓으로 보기 어렵다. 엉뚱한 곳을 고치게
-#: 만들지 않으려면 짐작하지 않는 편이 낫다.
-_GRID_BLAME_FLOOR = 8_000
 
 
 def mesh_points(log: str) -> int | None:
@@ -231,17 +222,16 @@ def describe_abnormal_exit(exit_code: int, log: str = "") -> str | None:
         " 입력 문법 문제가 아니라 시뮬레이터 내부에서 죽은 것입니다."
     )
 
+    #: 예전에는 여기서 "영역당 약 10,900 점이 한계"라고 안내했다. 그 한계는
+    #: geom.h 의 16 비트 카운터 때문이었고 patch 0009 로 걷어냈으므로(실측:
+    #: 예전에 죽던 격자가 15,276 점으로 완주한다) 더는 사실이 아니다. 없는
+    #: 한계를 근거로 조언하면 사용자가 멀쩡한 격자를 붙들고 시간을 버린다.
+    #:
+    #: 격자 크기 자체는 여전히 단서라 알려 준다.
     points = mesh_points(log)
-    if points is not None and points >= _GRID_BLAME_FLOOR:
-        return (
-            f"{opening} 마지막으로 만든 격자가 {points:,}점입니다."
-            f" 영역 하나가 약 {GRID_POINTS_PER_REGION:,}점을 넘으면 시뮬레이터"
-            " 내부 한계에 걸립니다 — 촘촘한 구간을 좁히거나 격자선을 줄여 보세요."
-            " 한계는 영역별이라, 층이 여러 개면 전체 점수는 더 커도 됩니다."
-        )
-
+    where = f" 마지막으로 만든 격자가 {points:,}점입니다." if points is not None else ""
     return (
-        f"{opening} 격자를 성기게 하면 넘어가는 경우가 많습니다"
+        f"{opening}{where} 격자를 성기게 하면 넘어가는 경우가 많습니다"
         " — 촘촘한 구간을 좁히거나 반대 방향 격자선을 줄여 보세요."
     )
 

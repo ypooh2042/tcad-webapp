@@ -217,24 +217,32 @@ class TestDenseGridSurvivesOxidation:
 
 
 @requires_sandbox
-class TestGridLimitIsExplained:
-    """상한을 넘겼을 때 사용자가 이유를 알 수 있는가.
+class TestLargeGridNoLongerFails:
+    """예전에 16비트 카운터가 넘쳐 죽던 격자.
 
-    이 격자는 고칠 수 없다 — 시뮬레이터 안의 16비트 카운터가 넘친다. 고칠 수
-    없다면 **최소한 왜 실패했는지는 말해 줘야 한다.** 세그폴트는 로그를 통째로
-    날리므로 그냥 두면 화면에 아무 단서도 남지 않는다.
+    `geom.h` 의 `struct list_str` 이 개수를 short 로 세어 영역당 약 10,900 점이
+    실질 상한이었다. patch 0009 로 int 로 바꿔 걷어냈다. 되돌아가면 사용자는
+    아무 설명 없는 세그폴트를 보게 되므로 여기서 지킨다.
     """
 
-    def test_failure_names_the_grid_size(self, tmp_path: Path) -> None:
+    def test_completes(self, tmp_path: Path) -> None:
         source = (FIXTURES / "2d_over_grid_limit.in").read_text()
 
         result = run_simulation(source, tmp_path / "job")
 
-        assert not result.succeeded
-        joined = " ".join(result.errors)
-        assert "격자" in joined, joined
-        # 실제로 만든 점 개수를 알려 줘야 얼마나 줄일지 판단할 수 있다.
-        assert "점입니다" in joined, joined
+        assert result.succeeded, result.errors
+
+    def test_really_exceeds_the_old_limit(self, tmp_path: Path) -> None:
+        """격자가 옛 상한 아래로 줄면 위 시험이 아무것도 확인하지 않는다."""
+        from app.runner.logfile import read_full_log
+        from app.runner.results import mesh_points
+
+        workdir = tmp_path / "job"
+        run_simulation((FIXTURES / "2d_over_grid_limit.in").read_text(), workdir)
+
+        points = mesh_points(read_full_log(workdir) or "")
+        assert points is not None
+        assert points > 32_767 // 3, points
 
 
 @requires_sandbox
