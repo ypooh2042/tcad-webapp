@@ -1,0 +1,133 @@
+--- a/src/dbase/region.c
++++ b/src/dbase/region.c
+@@ -21,6 +21,7 @@
+ #include <global.h>
+ #include <constant.h>
+ #include <geom.h>
++#include <dbaccess.h>
+ #include <material.h>	/* So we can set nmat to 0 - want this? */
+ 
+ 
+@@ -125,3 +126,107 @@
+     reg[r]->sreg = skel_reg(r);
+ }
+ 
++
++
++/*-----------------SPLIT_DISC_REG---------------------------------------
++ *  서로 닿지 않는 조각으로 갈라진 영역을 조각마다 하나씩으로 나눈다.
++ *
++ *  바로 위 build_reg 는 스스로 "a single simply connected region" 을
++ *  만든다고 적어 두었고, skel_reg 는 시작 변 하나에서 경계를 따라 한 바퀴
++ *  걸어 **닫힌 고리 하나**만 만든다. 그래서 한 영역이 떨어진 조각 둘이
++ *  되면 그중 하나만 기술되고 나머지는 자료구조상 없는 것이 된다.
++ *
++ *  없는 것은 마스크 노릇도 못 한다. get_edge() 가 이 스켈레톤으로 세로
++ *  단면의 물질 층을 뽑고 주입이 그 층 목록으로 정지능을 계산하기 때문이다.
++ *  실측: photoresist 를 좌우 두 조각으로 남기는 마스크 공정 뒤 arsenic 을
++ *  주입하면, 보이지 않는 조각 아래의 실리콘이 뚫린 창과 **똑같이** 도핑되고
++ *  그 조각 자신에는 아무것도 들어가지 않았다.
++ *
++ *  B-rep 식각에는 이 문제가 없었다. sub_skel() 이 다각형을 빼면서 조각마다
++ *  영역을 새로 만들었다("This routine can possible make new resulting
++ *  regions"). 요소를 지우는 방식에는 그 단계가 없어 여기서 대신한다.
++ *
++ *  연결 판정은 **변 공유**(노드 두 개를 함께 쓰는가)로 한다. 점 하나로만
++ *  닿은 두 조각은 나눈다 — 경계 순회가 그 점에서 어느 쪽으로 갈지 정할 수
++ *  없어, 붙었다고 보면 고리가 한쪽만 돌고 제자리로 돌아온다.
++ *
++ *  이웃 배열(nb[])은 쓰지 않는다. 이 함수는 요소를 지운 직후, 즉 이웃이
++ *  아직 낡은 상태에서 불린다. 삼각형의 꼭짓점 목록만으로 인접을 구한다.
++ *
++ *  돌려주는 값은 새로 만든 영역의 수다.
++ *--------------------------------------------------------------------*/
++split_disc_reg()
++{
++    int t, u, i, j, k, m, r, nr, c, top, seed, made;
++    int *head, *next, *stack, *memb, *comp;
++    int nmemb, shared, newr;
++
++    if ( mode != TWOD ) return( 0 );
++
++    /*노드 -> 삼각형 역참조. 체인 한 칸이 (삼각형, 몇 번째 꼭짓점)이다.*/
++    head = salloc( int, nn );
++    next = salloc( int, ne * MAXVRT );
++    for(i = 0; i < nn; i++) head[i] = -1;
++    for(t = 0; t < ne; t++) {
++	if ( dead_tri(t) ) continue;
++	for(i = 0; i < num_vert(t); i++) {
++	    j = vert_tri(t,i);
++	    next[ t*MAXVRT + i ] = head[j];
++	    head[j] = t*MAXVRT + i;
++	}
++    }
++
++    comp  = salloc( int, ne );
++    stack = salloc( int, ne );
++    memb  = salloc( int, ne );
++    for(t = 0; t < ne; t++) comp[t] = -1;
++
++    made = 0;
++    nr = nreg;			/*새로 만든 영역은 다시 돌지 않는다*/
++    for(r = 0; r < nr; r++) {
++	if ( dead_reg(r) ) continue;
++
++	for(c = 0, seed = 0; seed < ne; seed++) {
++	    if ( dead_tri(seed) || (comp[seed] != -1) ) continue;
++	    if ( reg_tri(seed) != r ) continue;
++
++	    /*조각 하나를 훑는다*/
++	    nmemb = 0;  top = 0;
++	    comp[seed] = c;  stack[top++] = seed;
++	    while ( top > 0 ) {
++		t = stack[--top];
++		memb[nmemb++] = t;
++		for(i = 0; i < num_vert(t); i++) {
++		    for(k = head[ vert_tri(t,i) ]; k >= 0; k = next[k]) {
++			u = k / MAXVRT;
++			if ( (comp[u] != -1) || (reg_tri(u) != r) ) continue;
++			shared = 0;
++			for(j = 0; j < num_vert(t); j++)
++			    for(m = 0; m < num_vert(u); m++)
++				if ( vert_tri(t,j) == vert_tri(u,m) ) shared++;
++			if ( shared < 2 ) continue;
++			comp[u] = c;  stack[top++] = u;
++		    }
++		}
++	    }
++
++	    /*첫 조각은 원래 영역에 그대로 둔다. 두 번째부터 새 영역으로.*/
++	    if ( c > 0 ) {
++		if ( nreg + 1 > MAXREG )
++		    fprintf(stderr,
++			"경고: 영역 수가 상한(%d)이라 떨어진 조각을 나누지 못했습니다. 그 조각은 마스크 노릇을 못 합니다.\n",
++			MAXREG);
++		else {
++		    newr = mk_reg( mat_reg(r) );
++		    for(k = 0; k < nmemb; k++) reg_tri( memb[k] ) = newr;
++		    made++;
++		}
++	    }
++	    c++;
++	}
++    }
++
++    sfree(memb);  sfree(stack);  sfree(comp);
++    sfree(next);  sfree(head);
++    return( made );
++}
+--- a/src/refine/etch_elem.c
++++ b/src/refine/etch_elem.c
+@@ -506,6 +506,12 @@
+     sfree(gone);
+     sfree(doreg);
+ 
++    /*식각이 영역을 두 조각으로 끊었을 수 있다. 조각마다 영역을 나눠 준다 —
++      build_reg/skel_reg 는 영역 하나가 이어진 덩어리 하나라고 전제한다.
++      B-rep 식각에서는 sub_skel() 이 이 일을 했다. 자세한 이유는
++      dbase/region.c 의 split_disc_reg() 주석에 적었다.*/
++    split_disc_reg();
++
+     bd_connect("after etch");
+     return( nrem );
+ }
