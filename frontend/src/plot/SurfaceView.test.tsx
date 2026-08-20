@@ -60,6 +60,7 @@ beforeEach(() => {
     fillRect: vi.fn(),
     // 범례 판 크기를 글자 폭으로 정한다.
     measureText: vi.fn((text: string) => ({ width: text.length * 5 })),
+    drawImage: vi.fn(),
   }
   // fillStyle 은 메서드가 아니라 속성이다. 대입을 가로채야 어떤 색으로
   // 칠했는지 볼 수 있다.
@@ -120,6 +121,54 @@ describe('그리기', () => {
     const shards = 4 ** subdivisionDepth(1)
     // 최고 농도 색은 그 꼭짓점 근처 몇 조각에만 나와야 한다.
     expect(painted).toBeLessThan(shards / 2)
+  })
+
+  it('컷 선만 바뀌면 삼각형을 다시 칠하지 않는다', () => {
+    // 삼각형은 세분화까지 하므로 큰 구조에서 수만 번 칠한다. 컷 선을 옮길
+    // 때마다 그걸 다시 하면 눈에 띄게 버벅인다.
+    const { rerender } = render(
+      <SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} />,
+    )
+    const painted = context.fill.mock.calls.length
+    expect(painted).toBeGreaterThan(0)
+
+    rerender(<SurfaceView surface={SURFACE} cutX={2} onPickCut={vi.fn()} />)
+
+    expect(context.fill.mock.calls.length).toBe(painted)
+    // 대신 미리 그려 둔 것을 얹는다.
+    expect(context.drawImage).toHaveBeenCalled()
+  })
+
+  it('구조가 바뀌면 다시 칠한다', () => {
+    const { rerender } = render(
+      <SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} />,
+    )
+    const painted = context.fill.mock.calls.length
+
+    rerender(
+      <SurfaceView
+        surface={{ ...SURFACE }}
+        cutX={null}
+        onPickCut={vi.fn()}
+      />,
+    )
+
+    expect(context.fill.mock.calls.length).toBeGreaterThan(painted)
+  })
+
+  it('격자 표시를 켜면 다시 칠한다', () => {
+    // 격자는 삼각형과 같은 층에 그린다. 캐시를 그대로 두면 켜도 안 나온다.
+    const { rerender } = render(
+      <SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} />,
+    )
+    const before = strokes.length
+
+    rerender(
+      <SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} showMesh />,
+    )
+
+    expect(strokes).toContain(MESH_COLOR)
+    expect(strokes.length).toBeGreaterThan(before)
   })
 
   it('가로 눈금 숫자를 찍는다', () => {

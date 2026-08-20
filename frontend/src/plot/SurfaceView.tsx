@@ -69,6 +69,18 @@ export function SurfaceView({
   showMesh = false,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  /**
+   * 삼각형만 미리 그려 둔 층.
+   *
+   * 컷 선은 클릭할 때마다 바뀌는데, 그때마다 삼각형 수만 개를 다시 칠하면
+   * 눈에 띄게 버벅인다. 삼각형은 구조·격자표시·캔버스 크기가 그대로면
+   * 바뀌지 않으므로 한 번 그려 두고 얹기만 한다.
+   */
+  const layerRef = useRef<{
+    canvas: HTMLCanvasElement
+    surface: SurfaceResponse
+    key: string
+  } | null>(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -101,7 +113,25 @@ export function SurfaceView({
         ? Number.POSITIVE_INFINITY
         : (Math.log10(domain.max) - Math.log10(domain.min)) / 80
 
+    const key = `${width}x${height}@${ratio}|${showMesh}`
+    const cached = layerRef.current
+    const reuse =
+      cached !== null && cached.surface === surface && cached.key === key
+
+    const layer = reuse
+      ? cached.canvas
+      : (() => {
+          const made = document.createElement('canvas')
+          made.width = canvas.width
+          made.height = canvas.height
+          return made
+        })()
+    const lc = reuse ? null : layer.getContext('2d')
+    if (!reuse && !lc) return
+    lc?.setTransform(ratio, 0, 0, ratio, 0, 0)
+
     const paint = (s: Corners, color: string) => {
+      const context = lc!
       context.beginPath()
       context.moveTo(s.ax, s.ay)
       context.lineTo(s.bx, s.by)
@@ -115,7 +145,7 @@ export function SurfaceView({
       context.stroke()
     }
 
-    surface.triangles.forEach((triangle, index) => {
+    if (!reuse) surface.triangles.forEach((triangle, index) => {
       const [a, b, c] = triangle
       const corners: Corners = {
         ax: g.px(surface.x[a]!),
@@ -150,18 +180,23 @@ export function SurfaceView({
     // 변을 삼각형마다 따로 그리지 않고 경로 하나에 모아 한 번만 stroke 한다.
     // 따로 그리면 이웃과 공유하는 변이 두 번 칠해져 반투명 선이 얼룩덜룩해지고,
     // 삼각형 수천 개에서는 호출 수만큼 느려진다.
-    if (showMesh) {
-      context.beginPath()
+    if (!reuse && showMesh && lc) {
+      lc.beginPath()
       for (const [a, b, c] of surface.triangles) {
-        context.moveTo(g.px(surface.x[a]!), g.py(surface.y[a]!))
-        context.lineTo(g.px(surface.x[b]!), g.py(surface.y[b]!))
-        context.lineTo(g.px(surface.x[c]!), g.py(surface.y[c]!))
-        context.closePath()
+        lc.moveTo(g.px(surface.x[a]!), g.py(surface.y[a]!))
+        lc.lineTo(g.px(surface.x[b]!), g.py(surface.y[b]!))
+        lc.lineTo(g.px(surface.x[c]!), g.py(surface.y[c]!))
+        lc.closePath()
       }
-      context.strokeStyle = MESH_COLOR
-      context.lineWidth = 0.5
-      context.stroke()
+      lc.strokeStyle = MESH_COLOR
+      lc.lineWidth = 0.5
+      lc.stroke()
     }
+
+    if (!reuse) layerRef.current = { canvas: layer, surface, key }
+    // 미리 그려 둔 삼각형 층을 얹는다. 버퍼는 물리 픽셀 크기이고 이 컨텍스트는
+    // 논리 좌표계이므로 크기를 지정해 그린다.
+    context.drawImage(layer, 0, 0, width, height)
 
     // 눈금은 그림 위에 얹는다. 먼저 그리면 삼각형에 덮인다.
     context.font = '10px ui-sans-serif, system-ui, sans-serif'
