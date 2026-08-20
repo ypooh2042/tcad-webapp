@@ -81,13 +81,27 @@ log "마이그레이션"
     "$TARGET/backend/.venv/bin/python" -m alembic upgrade head)
 
 log "샌드박스 이미지 재빌드"
-podman build -t tcad/suprem:latest \
-    -f "$TARGET/docker/suprem/Containerfile" "$TARGET"
+
+# 루트리스 podman 은 pause 프로세스 하나로 user namespace 를 붙들고 있는데,
+# 그 짜임이 어긋나면 빌드가 시작조차 못 하고 newuidmap 오류로 죽는다. 원문만
+# 보면 Containerfile 문제로 오해하기 쉬워, 여기서 무엇을 하면 되는지 말해 준다.
+# (podman 이 안내하는 `podman system migrate` 는 쓰지 말 것 — 도는 컨테이너를
+#  전부 멈추고, 이 서버의 postgres/redis 는 스스로 돌아오지 않는다.)
+build_image() {
+    if ! podman build -t "$1" -f "$2" "$TARGET"; then
+        echo >&2
+        echo "이미지 빌드에 실패했습니다: $1" >&2
+        echo "  newuidmap / pause process 오류였다면 컨테이너 기반 문제입니다:" >&2
+        echo "    deploy/repair-podman.sh" >&2
+        return 1
+    fi
+}
+
+build_image tcad/suprem:latest "$TARGET/docker/suprem/Containerfile"
 
 # 메시 생성기. 실행이 형상 오류로 죽었을 때만 쓰이지만, 그때 없으면 복구가
 # 조용히 실패한다. suprem 과 같은 샌드박스 플래그로 돌린다.
-podman build -t tcad/remesh:latest \
-    -f "$TARGET/docker/remesh/Containerfile" "$TARGET"
+build_image tcad/remesh:latest "$TARGET/docker/remesh/Containerfile"
 
 log "API 재시작"
 systemctl --user restart tcad-api

@@ -23,6 +23,11 @@ from app.runner.sandbox import (
     build_stdin_script,
     container_name,
 )
+from app.runner.podman_health import (
+    ADVICE as PODMAN_ADVICE,
+    looks_like_infra_failure,
+    repair as repair_podman,
+)
 from app.runner.watchdog import OutputWatchdog
 from app.runner.logfile import write_full_log
 from app.runner.workdir import directory_size, prune_workdir
@@ -49,6 +54,9 @@ _LOG_HEAD_CHARS = 700_000
 #: 잘렸다는 것을 알리는 문구이자 판정 기준. 말없이 자르면 사용자는 로그가
 #: 그게 전부인 줄 알고 없는 원인을 찾는다.
 LOG_TRUNCATION_NOTICE = "로그가 너무 길어 중간을 생략했습니다"
+
+#: podman 기반이 못 떠서 다시 시도했다는 표시.
+RETRIED_NOTICE = "컨테이너 실행 기반을 되살리고 다시 시도했습니다"
 
 
 def was_truncated(log: str | None) -> bool:
@@ -81,6 +89,13 @@ def run_simulation(
     source = _write_source(workdir, source)
 
     exit_code, full_log, timed_out, tripped = _execute(workdir, image, limits)
+
+    # podman 기반이 못 떠서 실패했다면 되살리고 한 번만 다시 돌린다. 이 경우
+    # 컨테이너가 시작조차 못 했으므로 사용자 코드가 두 번 도는 일은 없다.
+    if looks_like_infra_failure(exit_code, full_log):
+        retried = _retry_after_repair(workdir, image, limits, full_log)
+        if retried is not None:
+            exit_code, full_log, timed_out, tripped = retried
 
     # 죽었다면 마지막 체크포인트에서 한 번만 다시 이어 본다. 성공한 실행은
     # 여기 들어오지 않으므로 결과가 달라지지 않는다.
@@ -131,6 +146,31 @@ def _execute(workdir: Path, image: str, limits: SandboxLimits):
     return exit_code, log, timed_out, watchdog.tripped
 
 
+def _retry_after_repair(
+    workdir: Path, image: str, limits: SandboxLimits, failed_log: str
+):
+    """podman 을 되살리고 한 번만 다시 돌린다.
+
+    **한 번만이다.** 되살리기가 듣지 않는 상태라면 반복해 봐야 같은 실패를
+    쌓을 뿐이고, 그동안 잡 슬롯이 묶인다.
+
+    되살릴 것이 없었으면(pause.pid 자체가 없으면) 다시 시도하지 않는다. 원인이
+    다른 곳에 있다는 뜻이라, 재시도는 시간만 쓰고 로그를 헷갈리게 만든다.
+    """
+    note = repair_podman()
+    if note is None:
+        logger.warning("podman 기반 실패이지만 되살릴 것을 찾지 못했습니다")
+        return None
+
+    logger.warning("podman 기반을 되살립니다: %s", note)
+    exit_code, log, timed_out, tripped = _execute(workdir, image, limits)
+
+    # 첫 실패의 원문을 남긴다. 지워 버리면 무슨 일이 있었는지 알 수 없고,
+    # 같은 문제가 반복돼도 흔적이 없다.
+    header = f"===== {RETRIED_NOTICE} ({note}) =====\n"
+    return exit_code, failed_log + "\n" + header + log, timed_out, tripped
+
+
 def _finish(
     source: str,
     workdir: Path,
@@ -161,6 +201,11 @@ def _finish(
     # 남지 않아 사용자가 자기 입력을 의심하며 시간을 버린다.
     if (abnormal := describe_abnormal_exit(exit_code, log)) and not timed_out:
         errors.append(abnormal)
+
+    # 되살리기까지 했는데도 기반이 못 떴다면, 원문 대신 무슨 일인지 말해 준다.
+    # podman 의 newuidmap 메시지만 보이면 사용자는 자기 코드를 의심한다.
+    if looks_like_infra_failure(exit_code, full_log):
+        errors.append(PODMAN_ADVICE)
 
     structure_files = collect_structure_files(workdir, source)
 
