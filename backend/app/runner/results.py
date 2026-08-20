@@ -253,7 +253,7 @@ def extract_errors(log: str) -> tuple[str, ...]:
 #: 고유 접두사는 `stru` 다 — `str` 까지는 `stress` 와 겹친다. 파라미터도
 #: `out`, `outf`, `outfile` 이 모두 같은 것을 가리킨다. 해석은 대소문자를
 #: 구분하므로 소문자만 본다.
-_STRUCTURE_OUT_RE = re.compile(
+STRUCTURE_OUT_RE = re.compile(
     r"^\s*stru\w*\s+(?:[^\n#]*?\s)?out\w*\s*=\s*(\S+)", re.MULTILINE
 )
 
@@ -276,7 +276,7 @@ def collect_structure_files(workdir: Path, source: str = "") -> tuple[Path, ...]
     present = {path.name: path for path in workdir.glob("*.str")}
 
     ordered: list[Path] = []
-    for match in _STRUCTURE_OUT_RE.finditer(source):
+    for match in STRUCTURE_OUT_RE.finditer(source):
         name = Path(match.group(1)).name
         path = present.pop(name, None)
         if path is not None:

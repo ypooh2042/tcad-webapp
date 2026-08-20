@@ -1,5 +1,5 @@
---- a/Makefile	2026-08-20 17:02:05.554437174 +0900
-+++ b/Makefile	2026-08-20 17:06:47.380128475 +0900
+--- a/Makefile	2026-08-20 17:34:33.683890265 +0900
++++ b/Makefile	2026-08-20 17:34:33.720889804 +0900
 @@ -95,7 +95,12 @@
  # BSD uses termcap
  #LIBS	= $(GRLIBS) -ly -ll -lm -ltermcap
@@ -14,8 +14,8 @@
  
  
  #.. SysV users take note!  In src/Makefile.proto, down where the
---- a/src/Makefile.proto	2026-08-20 17:02:05.574436763 +0900
-+++ b/src/Makefile.proto	2026-08-20 17:06:47.380128475 +0900
+--- a/src/Makefile.proto	2026-08-20 17:34:33.702890028 +0900
++++ b/src/Makefile.proto	2026-08-20 17:34:33.720889804 +0900
 @@ -72,7 +72,7 @@
  #LIBS	= $(GRLIBS) -ly -ll -lm -ltermlib
  # bsd uses termcap
@@ -38,8 +38,8 @@
  	math/min_fill.o math/mxv.o math/solblk.o math/symb.o math/vector.o
  
  MESHSRCS = mesh/check_active.c mesh/ig2_meshio.c mesh/initialize.c \
---- a/src/diffuse/prepare.c	2026-08-20 17:02:05.557437112 +0900
-+++ b/src/diffuse/prepare.c	2026-08-20 17:02:05.609436043 +0900
+--- a/src/diffuse/prepare.c	2026-08-20 17:34:33.685890240 +0900
++++ b/src/diffuse/prepare.c	2026-08-20 17:34:33.720889804 +0900
 @@ -107,7 +107,10 @@
  
  	    /* do it */
@@ -53,8 +53,8 @@
  	    free(reorder);
  	    Free( ia);
 --- a/src/math/amd_fill.c	1970-01-01 09:00:00.000000000 +0900
-+++ b/src/math/amd_fill.c	2026-08-20 17:12:07.261918171 +0900
-@@ -0,0 +1,108 @@
++++ b/src/math/amd_fill.c	2026-08-20 17:34:33.738889580 +0900
+@@ -0,0 +1,117 @@
 +/************************************************************************
 + *
 + *  amd_fill.c  --  AMD(근사 최소 차수) 순서화.
@@ -90,12 +90,21 @@
 +#include "constant.h"
 +#include "suitesparse/amd.h"
 +
-+/*이 순서화를 쓸지. 환경 변수를 매번 읽지 않도록 한 번만 본다.
-+  기본은 켬. SUP4_ORDER=minfill 이면 1993 년 순서화로 돌아간다.*/
++/*이 순서화를 쓸지.
++
++  **2 차원에서만 쓴다.** min_ia_fill 의 1 차원 분기는 채움 최소화가 아니라
++  노출면에서 시작해 소자를 따라가는 **물리적 순서**를 만든다(min_fill.c 의
++  `case ONED`). 채움만 보고 고른 순서로 바꾸면 1 차원 결과가 통째로 망가진다 —
++  실측으로 골든 파일 대비 상대차가 7e15 였다. 채움이 문제가 되는 것은 2 차원
++  뿐이므로 거기서만 쓴다.
++
++  2 차원에서도 SUP4_ORDER=minfill 이면 1993 년 순서화로 돌아간다.*/
 +int use_amd_order()
 +{
 +    static int decided = -1;
 +    char *want;
++
++    if ( mode != TWOD ) return( 0 );
 +
 +    if ( decided < 0 ) {
 +	want = getenv("SUP4_ORDER");

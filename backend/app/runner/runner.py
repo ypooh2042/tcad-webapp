@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 
@@ -25,6 +26,8 @@ from app.runner.sandbox import (
 from app.runner.watchdog import OutputWatchdog
 from app.runner.logfile import write_full_log
 from app.runner.workdir import directory_size, prune_workdir
+
+logger = logging.getLogger(__name__)
 
 #: conmon 이 컨테이너를 죽인 뒤 클라이언트가 정리될 여유. 클라이언트 타임아웃이
 #: 먼저 터지면 컨테이너가 남을 수 있어 항상 컨테이너 쪽이 먼저 끝나야 한다.
@@ -77,6 +80,20 @@ def run_simulation(
     workdir.mkdir(parents=True, exist_ok=True)
     source = _write_source(workdir, source)
 
+    exit_code, full_log, timed_out, tripped = _execute(workdir, image, limits)
+
+    # 죽었다면 마지막 체크포인트에서 한 번만 다시 이어 본다. 성공한 실행은
+    # 여기 들어오지 않으므로 결과가 달라지지 않는다.
+    if _worth_resuming(exit_code, timed_out, tripped, full_log):
+        resumed = _resume(source, workdir, image, limits, full_log)
+        if resumed is not None:
+            exit_code, full_log, timed_out, tripped = resumed
+
+    return _finish(source, workdir, limits, exit_code, full_log, timed_out, tripped)
+
+
+def _execute(workdir: Path, image: str, limits: SandboxLimits):
+    """컨테이너를 한 번 돌린다. (종료코드, 전체로그, 타임아웃, 워치독발동)."""
     argv = build_sandbox_argv(image=image, host_workdir=workdir, limits=limits)
     limit_bytes = limits.max_output_mb * 1_048_576
 
@@ -111,10 +128,21 @@ def run_simulation(
             exit_code = -1
             log = _decode_partial(expired.stdout)
 
-    # 전문을 먼저 붙잡아 둔다. 아래에서 log 는 상한에 맞춰 잘린 값으로
-    # 바뀌므로, 여기서 잡아 두지 않으면 파일에도 잘린 것이 남는다.
-    full_log = log
-    log = _truncate_log(log)
+    return exit_code, log, timed_out, watchdog.tripped
+
+
+def _finish(
+    source: str,
+    workdir: Path,
+    limits: SandboxLimits,
+    exit_code: int,
+    full_log: str,
+    timed_out: bool,
+    tripped: bool,
+) -> SimulationResult:
+    """실행 결과를 정리해 돌려준다. 이어 붙이기가 있었어도 여기는 한 번만 돈다."""
+    limit_bytes = limits.max_output_mb * 1_048_576
+    log = _truncate_log(full_log)
     errors = list(extract_errors(log))
 
     # 실행 직후 크기를 잰다. 워치독만으로는 부족하다 — 폴링 주기보다 빨리
@@ -122,7 +150,7 @@ def run_simulation(
     # 50배 넘겼는데도 잡이 "성공"으로 기록됐다. 정리는 되지만 사용자는 자기
     # 결과가 왜 사라졌는지 알 수 없다.
     final_size = directory_size(workdir)
-    if watchdog.tripped or final_size > limit_bytes:
+    if tripped or final_size > limit_bytes:
         # 산출물을 신뢰할 수 없다(쓰다 만 파일일 수 있다). 실패로 기록한다.
         errors.append(
             f"출력이 상한({limits.max_output_mb}MB)을 넘었습니다. "
@@ -152,6 +180,66 @@ def run_simulation(
         structure_files=structure_files,
         errors=tuple(errors),
     )
+
+
+#: 이어 붙이기가 끝난 자리에 남기는 표시. 조용히 다시 돌리면 사용자는 왜
+#: 로그가 두 벌인지 알 수 없다.
+RESUMED_NOTICE = "시뮬레이터가 형상 오류로 멈춰, 마지막 저장 지점에서 이어서 다시 실행했습니다"
+
+
+def _worth_resuming(exit_code: int, timed_out: bool, tripped: bool, log: str) -> bool:
+    """이어 붙이기를 시도할 만한 실패인가.
+
+    형상이 무너져 스스로 멈춘 경우(panic)만 다룬다. 시간 초과나 출력 상한은
+    다시 돌려도 같은 결과이고, 오히려 자원만 두 배로 쓴다.
+    """
+    if timed_out or tripped or exit_code == 0:
+        return False
+    return "suprem4 panic:" in log
+
+
+def _resume(
+    source: str,
+    workdir: Path,
+    image: str,
+    limits: SandboxLimits,
+    first_log: str,
+):
+    """마지막 체크포인트에서 남은 공정을 다시 돌린다.
+
+    격자가 퇴화했으면 다시 잇기 전에 메시를 새로 짠다. 늘 새로 짜지 않는
+    이유는 값 보간이 선량을 조금 움직이기 때문이다 — 필요할 때만 치른다.
+
+    Returns:
+        (종료코드, 합친 전체로그, 타임아웃, 워치독발동). 이어 갈 수 없으면 None.
+    """
+    from app.runner.recover import find_checkpoint, needs_remesh
+
+    plan = find_checkpoint(source, workdir)
+    if plan is None:
+        return None
+
+    note = RESUMED_NOTICE
+    try:
+        from app.remesh.service import remesh
+        from app.str_parser.parser import parse_structure
+
+        if needs_remesh(parse_structure(plan.structure.read_text())):
+            result = remesh(plan.structure.read_text())
+            plan.structure.write_text(result.text)
+            note += (
+                f" (격자가 퇴화해 다시 짰습니다: "
+                f"{result.old_points:,} → {result.new_points:,}점)"
+            )
+    except Exception as exc:  # noqa: BLE001 - 재메시 실패가 복구를 막으면 안 된다
+        logger.warning("재메시에 실패해 원래 격자로 이어 갑니다", exc_info=True)
+        note += f" (격자 재구성 실패: {exc})"
+
+    _write_source(workdir, plan.remaining)
+    exit_code, log, timed_out, tripped = _execute(workdir, image, limits)
+
+    joined = f"{first_log}\n\n===== {note} =====\n\n{log}"
+    return exit_code, joined, timed_out, tripped
 
 
 def normalise_source(source: str) -> str:
