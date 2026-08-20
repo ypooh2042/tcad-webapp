@@ -35,7 +35,14 @@ import { fitPanels, useViewportWidth } from './panelLayout'
 import { activeBuffer, isDirty } from './editorSession'
 import { useEditorSession } from './useEditorSession'
 
-export function WorkspacePage() {
+interface Props {
+  /** 최상위 화면 전환 탭. 헤더에 그대로 얹는다. */
+  viewTabs?: React.ReactNode
+  /** 이 구조로 소자 해석을 하겠다는 신호. 결과 보기의 버튼이 부른다. */
+  onAnalyse?: (jobId: number, sequence: number) => void
+}
+
+export function WorkspacePage({ viewTabs, onAnalyse }: Props = {}) {
   const { user, logout, clear } = useAuth()
   const [showFiles, setShowFiles] = useState(false)
   const [jobId, setJobId] = useState<number | null>(null)
@@ -140,7 +147,8 @@ export function WorkspacePage() {
     <div className="workspace">
       <header>
         <strong>TCAD</strong>
-        <nav role="tablist">
+        {viewTabs}
+        <nav role="tablist" aria-label="열어 둔 파일">
           {/* 탭 이름은 보통 파일 이름만. 다른 폴더에 같은 이름이 있을 때만
               구분될 만큼 경로를 붙인다. */}
           {session.order.map((path, index) => (
@@ -273,7 +281,7 @@ export function WorkspacePage() {
           label="결과 패널 크기"
         />
         <aside>
-          <JobPanel jobId={jobId} />
+          <JobPanel jobId={jobId} onAnalyse={onAnalyse} />
         </aside>
       </main>
     </div>

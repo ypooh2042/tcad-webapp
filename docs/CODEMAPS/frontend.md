@@ -1,6 +1,6 @@
 # 프론트엔드 코드맵
 
-**마지막 갱신:** 2026-08-19
+**마지막 갱신:** 2026-08-21
 **진입점:** `frontend/src/main.tsx` → `App.tsx` → `features/workspace/WorkspacePage.tsx`
 
 React 19 + TypeScript + Vite 단일 페이지 앱. 라우터가 없다 — 화면이 하나뿐이고

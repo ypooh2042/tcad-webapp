@@ -22,8 +22,15 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-#: 산출물로 인정하고 남기는 확장자. 이것만 화면에서 쓴다.
-_ARTIFACT_SUFFIX = ".str"
+#: SUPREM 실행이 남기는 산출물. 이것만 화면에서 쓴다.
+STRUCTURE_SUFFIXES = frozenset({".str"})
+
+#: 소자 해석이 남기는 산출물. 곡선 데이터와, 도중에 끊겼을 때 되살릴 중간 기록.
+#:
+#: 확장자가 아니라 **이름**으로 고른다. 같은 디렉토리에 있는 `device.json` 은
+#: 메시 전체가 든 5 MB 짜리 입력이라 남길 이유가 없는데, 확장자로 거르면 함께
+#: 살아남는다. 구조 파일(`.str`)도 뺀다 — 원본 잡에 그대로 있다.
+DEVSIM_ARTIFACTS = frozenset({"iv.json", "iv.jsonl"})
 
 
 class WorkdirTooLarge(Exception):
@@ -70,8 +77,16 @@ def _human(size: int) -> str:
     return f"{size}B"
 
 
-def prune_workdir(path: Path) -> int:
-    """산출물(`.str`)만 남기고 나머지를 지운다.
+def prune_workdir(
+    path: Path,
+    keep: frozenset[str] = STRUCTURE_SUFFIXES,
+    keep_names: frozenset[str] = frozenset(),
+) -> int:
+    """산출물만 남기고 나머지를 지운다.
+
+    잡 종류마다 산출물이 다르다. 확장자(`keep`) 로도, 정확한 이름(`keep_names`)
+    으로도 고를 수 있게 둘 다 받는다 — 소자 해석은 같은 `.json` 중에서도
+    결과만 남기고 입력은 버려야 한다.
 
     Returns:
         비운 바이트 수.
@@ -84,7 +99,9 @@ def prune_workdir(path: Path) -> int:
             shutil.rmtree(entry, ignore_errors=True)
             continue
 
-        if entry.is_symlink() or entry.suffix != _ARTIFACT_SUFFIX:
+        if entry.is_symlink() or (
+            entry.suffix not in keep and entry.name not in keep_names
+        ):
             try:
                 freed += entry.stat().st_size if entry.is_file() else 0
                 entry.unlink()

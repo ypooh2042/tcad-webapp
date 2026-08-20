@@ -102,6 +102,7 @@ build_image tcad/suprem:latest "$TARGET/docker/suprem/Containerfile"
 # 메시 생성기. 실행이 형상 오류로 죽었을 때만 쓰이지만, 그때 없으면 복구가
 # 조용히 실패한다. suprem 과 같은 샌드박스 플래그로 돌린다.
 build_image tcad/remesh:latest "$TARGET/docker/remesh/Containerfile"
+build_image tcad/devsim:latest "$TARGET/docker/devsim/Containerfile"
 
 log "API 재시작"
 systemctl --user restart tcad-api

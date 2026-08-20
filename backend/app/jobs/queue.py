@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import Job, JobStatus
+from app.db.models import Job, JobKind, JobStatus
 
 
 class JobQueue:
@@ -35,11 +35,13 @@ class JobQueue:
         *,
         source_path: str | None = None,
         source: str | None = None,
+        kind: str = JobKind.SUPREM,
     ) -> Job:
         """잡을 큐에 넣는다.
 
         `source` 는 **제출 시점의 스냅샷**이다. 경로만 두고 나중에 파일을 다시
-        읽으면, 그 사이 사용자가 고쳤을 때 결과와 입력이 어긋난다.
+        읽으면, 그 사이 사용자가 고쳤을 때 결과와 입력이 어긋난다. 소자 해석
+        잡에서는 이 자리에 해석 조건(JSON)이 들어간다.
         """
         async with self.sessionmaker() as session:
             job = Job(
@@ -49,6 +51,7 @@ class JobQueue:
                 source=source,
                 workdir=workdir,
                 status=JobStatus.QUEUED,
+                kind=kind,
             )
             session.add(job)
             await session.commit()

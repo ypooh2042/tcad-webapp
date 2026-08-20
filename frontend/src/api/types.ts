@@ -26,9 +26,13 @@ export type JobStatus =
   | 'timed_out'
   | 'cancelled'
 
+/** 잡의 종류. 화면이 어떤 결과 보기를 띄울지 이걸로 고른다. */
+export type JobKind = 'suprem' | 'devsim'
+
 export interface Job {
   id: number
   status: JobStatus
+  kind: JobKind
   /** 예전 프로젝트 모델의 잔재. 파일로 돌린 잡은 비어 있다. */
   source_revision_id: number | null
   /** 어느 파일을 돌렸는지(작업공간 기준 경로). */
@@ -215,4 +219,108 @@ export interface DocsSearchHit {
   command: string | null
   kind: string
   snippet: string
+}
+
+
+/**
+ * 구조에서 자동으로 찾은 전극 하나.
+ *
+ * 규칙은 SUPREM 원본의 것을 그대로 옮긴 것이다(같은 금속 덩어리에 닿은 계면은
+ * 하나의 전극). 그래서 등전위가 **구성상** 보장되고, 사용자가 따로 묶어 줄
+ * 필요가 없다.
+ */
+export interface DevSimElectrode {
+  /** 조건이 이 전극을 가리킬 때 쓰는 열쇠. 같은 구조면 항상 같다. */
+  key: string
+  origin: 'detected' | 'backside' | 'picked'
+  kind: 'semiconductor' | 'insulator'
+  materials: string[]
+  extent: { x_min: number; x_max: number; y_min: number; y_max: number }
+  edge_count: number
+  /** 화면에 그릴 선분들. `[x0, y0, x1, y1]`, 단위 µm. */
+  segments: number[][]
+}
+
+export interface DevSimElectrodes {
+  filename: string
+  gate_model: GateModel
+  electrodes: DevSimElectrode[]
+}
+
+export type GateModel = 'semiconductor' | 'conductor'
+
+export type BiasRole = 'sweep' | 'step' | 'const'
+
+/** 전압원 하나. 여기 묶인 전극들이 같은 전위를 갖는다. */
+export interface Bias {
+  name: string
+  electrodes: string[]
+  role: BiasRole
+  /** role='const' */
+  value?: number
+  /** role='step' — 곡선족을 만든다. */
+  values?: number[]
+  /** role='sweep' — 곡선의 x 축. */
+  sweep?: { start: number; stop: number; step: number }
+}
+
+export interface ElectrodeChoice {
+  origin: 'detected' | 'backside' | 'picked'
+  label: string
+  key?: string
+  box?: { x_min: number; x_max: number; y_min: number; y_max: number }
+}
+
+export interface DeviceSpec {
+  label: string
+  electrodes: ElectrodeChoice[]
+  biases: Bias[]
+  gate_model?: GateModel
+  temperature_k?: number
+}
+
+/** 바이어스 점 하나의 결과. */
+export interface IvRow {
+  sweep: number
+  steps: Record<string, number>
+  /** 전압원별 전류. 단위는 A/µm. */
+  currents: Record<string, number>
+}
+
+export interface IvDataset {
+  sweep: string | null
+  biases: string[]
+  current_unit: string
+  rows: IvRow[]
+  total: number
+  completed: number
+  /** 도중에 멈췄으면 그 사유. 부분 곡선은 rows 에 남아 있다. */
+  error: string | null
+}
+
+export interface DevSimRunSummary {
+  job_id: number
+  label: string
+  structure: string
+  created_at: string
+  completed: number
+  total: number
+}
+
+export interface DevSimRunDetail extends DevSimRunSummary {
+  spec: DeviceSpec
+  data: IvDataset
+}
+
+export interface StructureSource {
+  job_id: number
+  source_path: string | null
+  created_at: string
+  artifacts: { sequence: number; filename: string }[]
+}
+
+export interface DevSimSubmitResponse {
+  id: number
+  status: JobStatus
+  total_points: number
 }

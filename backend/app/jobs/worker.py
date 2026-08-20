@@ -10,13 +10,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from collections.abc import Sequence
 from datetime import timedelta
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import Artifact, JobStatus, SourceRevision
+from app.db.models import Artifact, DevSimResult, Job, JobKind, JobStatus, SourceRevision
+from app.devsim.service import DEFAULT_IMAGE as DEVSIM_IMAGE
+from app.devsim.service import DEFAULT_LIMITS as DEVSIM_LIMITS
+from app.devsim.service import DeviceResult, run_device_simulation
 from app.jobs.queue import JobQueue
 from app.runner.results import SimulationResult
 from app.runner.runner import run_simulation
@@ -41,12 +46,17 @@ class Worker:
         jobs_root: Path,
         image: str,
         limits: SandboxLimits | None = None,
+        devsim_image: str = DEVSIM_IMAGE,
+        devsim_limits: SandboxLimits | None = None,
     ) -> None:
         self.queue = queue
         self.sessionmaker = sessionmaker
         self.jobs_root = jobs_root
         self.image = image
         self.limits = limits or SandboxLimits()
+        # 소자 해석은 상한이 다르다. 직접 솔버가 메모리를 더 쓰고 오래 돈다.
+        self.devsim_image = devsim_image
+        self.devsim_limits = devsim_limits or DEVSIM_LIMITS
 
     async def run_forever(self, stop: asyncio.Event) -> None:
         """중지 신호가 올 때까지 잡을 처리한다."""
@@ -66,7 +76,7 @@ class Worker:
             return False
 
         try:
-            result = await self._execute(job.id, job.workdir)
+            result = await self._execute(job.id, job.workdir, job.kind)
         except Exception:
             # 한 잡의 실패로 워커가 멈추면 큐 전체가 정지한다. 잡만 실패로
             # 기록하고 루프는 계속 돈다.
@@ -90,9 +100,24 @@ class Worker:
             )
         )
 
-    async def _execute(self, job_id: int, workdir: str) -> SimulationResult:
+    async def _execute(
+        self, job_id: int, workdir: str, kind: str
+    ) -> SimulationResult | DeviceResult:
+        """잡 종류에 따라 무엇을 돌릴지 고른다.
+
+        여기가 두 종류가 갈리는 **유일한** 자리다. 큐·중단·타임아웃·로그·산출물·
+        청소는 아래위로 전부 공유한다.
+        """
         source = await self._load_source(job_id)
         # CPU 를 오래 쓰는 동기 호출이라 이벤트 루프 밖으로 내보낸다.
+        if kind == JobKind.DEVSIM:
+            return await asyncio.to_thread(
+                run_device_simulation,
+                source,
+                Path(workdir),
+                self.devsim_image,
+                self.devsim_limits,
+            )
         return await asyncio.to_thread(
             run_simulation,
             source,
@@ -117,8 +142,14 @@ class Worker:
             revision = await session.get(SourceRevision, job.source_revision_id)
             return revision.source
 
-    async def _record(self, job_id: int, result: SimulationResult) -> None:
-        await self._save_artifacts(job_id, result)
+    async def _record(
+        self, job_id: int, result: SimulationResult | DeviceResult
+    ) -> None:
+        if isinstance(result, DeviceResult):
+            await self._save_artifacts(job_id, result.artifacts)
+            await self._save_dataset(job_id, result)
+        else:
+            await self._save_artifacts(job_id, result.structure_files)
         await self.queue.mark_finished(
             job_id,
             status=_status_for(result),
@@ -127,12 +158,12 @@ class Worker:
         )
 
     async def _save_artifacts(
-        self, job_id: int, result: SimulationResult
+        self, job_id: int, paths: Sequence[Path]
     ) -> None:
-        if not result.structure_files:
+        if not paths:
             return
         async with self.sessionmaker() as session:
-            for sequence, path in enumerate(result.structure_files, start=1):
+            for sequence, path in enumerate(paths, start=1):
                 session.add(
                     Artifact(
                         job_id=job_id,
@@ -144,6 +175,35 @@ class Worker:
                 )
             await session.commit()
 
+    async def _save_dataset(self, job_id: int, result: DeviceResult) -> None:
+        """곡선을 DB 에도 남긴다.
+
+        산출물은 유휴·쿼터 스윕에 지워진다(`app/jobs/sweeper.py`). 비교 기능은
+        예전 해석을 다시 불러와야 하므로 결과만은 표에 둔다 — 수백 행짜리라 작다.
+        부분 결과라도 남긴다. 사용자가 볼 곡선이 있으면 비교할 값도 있다.
+        """
+        if not result.dataset or not result.dataset.get("completed"):
+            return
+        try:
+            spec = json.loads(result.spec_json or "{}")
+        except ValueError:
+            spec = {}
+        async with self.sessionmaker() as session:
+            job = await session.get(Job, job_id)
+            if job is None:
+                return
+            session.add(
+                DevSimResult(
+                    job_id=job_id,
+                    owner_id=job.owner_id,
+                    label=str(spec.get("label") or "해석")[:120],
+                    structure=str(spec.get("structure") or "")[:255],
+                    spec=result.spec_json or "{}",
+                    data=json.dumps(result.dataset),
+                )
+            )
+            await session.commit()
+
     @staticmethod
     async def _sleep_or_stop(stop: asyncio.Event, seconds: float) -> None:
         """중지 신호가 오면 즉시 깨어난다. 종료가 폴링 주기만큼 늦어지지 않는다."""
@@ -153,7 +213,7 @@ class Worker:
             pass
 
 
-def _status_for(result: SimulationResult) -> JobStatus:
+def _status_for(result: SimulationResult | DeviceResult) -> JobStatus:
     """실행 결과를 잡 상태로 옮긴다.
 
     종료 코드로 판정하지 않는다. 시뮬레이터는 커맨드 오류가 있어도 exit 0 으로

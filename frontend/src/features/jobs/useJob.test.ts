@@ -13,6 +13,7 @@ function detail(overrides: Partial<JobDetail> = {}): JobDetail {
   return {
     id: 1,
     status: 'queued',
+    kind: 'suprem',
     source_revision_id: 1,
     source_path: 'a.in',
     created_at: '2026-08-12T12:00:00+00:00',

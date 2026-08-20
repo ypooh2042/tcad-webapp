@@ -22,7 +22,10 @@ test('탭을 눌러 파일을 전환한다', async ({ page, context }) => {
   await expect(page.getByText(/저장됨/)).toBeVisible()
 
   // 지금은 second 가 활성. first 탭을 눌러 돌아간다.
-  await expect(page.getByRole('tab')).toHaveCount(2)
+  // 파일 탭 목록으로 좁힌다. 헤더에는 화면 전환 탭(공정/소자 해석)도 있다.
+  await expect(
+    page.getByRole('tablist', { name: '열어 둔 파일' }).getByRole('tab'),
+  ).toHaveCount(2)
   await page.getByRole('tab', { name: 'first.in' }).click()
 
   await expect(page.getByRole('tab', { name: 'first.in' })).toHaveAttribute(

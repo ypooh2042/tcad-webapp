@@ -157,12 +157,34 @@ class SourceRevision(Base):
     )
 
 
+class JobKind:
+    """잡의 종류.
+
+    Enum 이 아니라 문자열 상수인 이유: 값이 DB 에 그대로 들어가고, 종류가 늘 때
+    마이그레이션 없이 읽을 수 있어야 한다. `status` 는 상태 기계라 Enum 이지만
+    이쪽은 그냥 꼬리표다.
+    """
+
+    SUPREM = "suprem"
+    DEVSIM = "devsim"
+
+    ALL = (SUPREM, DEVSIM)
+
+
 class Job(Base):
-    """시뮬레이션 실행 한 건."""
+    """시뮬레이션 실행 한 건.
+
+    두 종류가 같은 표를 쓴다. 큐·중단·타임아웃·로그·산출물·청소가 전부 같고,
+    다른 것은 워커가 무엇을 부르느냐뿐이다. 표를 나누면 그 공통 부분을 전부
+    두 벌로 만들어야 한다.
+    """
 
     __tablename__ = "jobs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    #: 무엇을 돌리는 잡인가. `suprem` 은 `source` 가 공정 코드이고, `devsim` 은
+    #: `source` 가 해석 조건(JSON)이며 구조는 workdir 에 놓인다.
+    kind: Mapped[str] = mapped_column(String(16), default=JobKind.SUPREM)
     owner_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
@@ -205,6 +227,7 @@ class Job(Base):
     __table_args__ = (
         # 큐가 대기 중인 잡을 오래된 순으로 꺼낸다.
         Index("ix_jobs_status_created", "status", "created_at"),
+        CheckConstraint("kind in ('suprem', 'devsim')", name="ck_jobs_kind"),
     )
 
 
@@ -232,6 +255,39 @@ class Artifact(Base):
 
     __table_args__ = (
         UniqueConstraint("job_id", "sequence", name="uq_artifacts_job_sequence"),
+    )
+
+
+class DevSimResult(Base):
+    """소자 해석 한 건의 결과 데이터.
+
+    **왜 workdir 이 아니라 DB 인가.** 산출물은 유휴 스윕과 쿼터 스윕에 지워진다
+    (`app/jobs/sweeper.py`). 그런데 비교 기능은 예전 해석을 다시 불러와야 한다 —
+    지워진 결과는 비교할 수 없다. 곡선 하나가 수백 행짜리 JSON 이라 표에 두어도
+    작다.
+
+    스펙도 함께 남긴다. 비교 화면에서 "무엇이 달랐나"를 보여주려면 그때의 조건이
+    있어야 한다.
+    """
+
+    __tablename__ = "devsim_results"
+
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True
+    )
+    owner_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    #: 사용자가 붙인 이름. 비교 화면의 범례에 나온다.
+    label: Mapped[str] = mapped_column(String(120))
+    #: 어느 구조에서 왔는지. 원본 잡이 지워져도 설명은 남는다.
+    structure: Mapped[str] = mapped_column(String(255))
+    #: 제출한 해석 조건(JSON).
+    spec: Mapped[str] = mapped_column(Text)
+    #: 곡선 데이터(JSON). `iv.json` 과 같은 모양이다.
+    data: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 

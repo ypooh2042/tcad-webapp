@@ -107,3 +107,30 @@ describe('눈금', () => {
     expect(Number.isFinite(g.py(1))).toBe(true)
   })
 })
+
+describe('unpy', () => {
+  // 전극을 화면에서 찍으려면 세로도 되돌려야 한다. 예전에는 컷 선만 그으면
+  // 됐으므로 x 만 있었다.
+  const bounds = { xMin: 0, xMax: 4, yMin: 0, yMax: 2 }
+
+  it('py 의 역함수다', () => {
+    const g = surfaceGeometry(bounds, 400, 300)
+    for (const y of [0, 0.5, 1.25, 2]) {
+      expect(g.unpy(g.py(y))).toBeCloseTo(y, 9)
+    }
+  })
+
+  it('가로와 같은 배율을 쓴다', () => {
+    // 비율을 유지하므로 같은 픽셀 거리는 같은 µm 거리여야 한다.
+    const g = surfaceGeometry(bounds, 400, 300)
+    const dx = g.unpx(100) - g.unpx(0)
+    const dy = g.unpy(100) - g.unpy(0)
+    expect(dy).toBeCloseTo(dx, 9)
+  })
+
+  it('세로 범위를 벗어난 값을 잘라 준다', () => {
+    const g = surfaceGeometry(bounds, 400, 300)
+    expect(g.clampY(-5)).toBe(0)
+    expect(g.clampY(99)).toBe(2)
+  })
+})

@@ -36,7 +36,10 @@ export interface SurfaceGeometry {
   py: (y: number) => number
   /** 캔버스 x(px) → 모델 x(µm). px 의 역함수. */
   unpx: (px: number) => number
+  /** 캔버스 y(px) → 모델 y(µm). py 의 역함수. 전극을 찍을 때 쓴다. */
+  unpy: (py: number) => number
   clampX: (x: number) => number
+  clampY: (y: number) => number
   xTicks: number[]
   yTicks: number[]
   formatX: (value: number) => string
@@ -87,7 +90,9 @@ export function surfaceGeometry(
     px: (x) => offsetX + (x - xMin) * scale,
     py: (y) => offsetY + (y - yMin) * scale,
     unpx: (px) => (px - offsetX) / scale + xMin,
+    unpy: (py) => (py - offsetY) / scale + yMin,
     clampX: (x) => Math.min(xMax, Math.max(xMin, x)),
+    clampY: (y) => Math.min(yMax, Math.max(yMin, y)),
     xTicks,
     yTicks,
     formatX: formatter(xTicks),

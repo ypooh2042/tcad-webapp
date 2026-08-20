@@ -2,6 +2,13 @@
 import { request } from './client'
 import type { JobStatus,
   Artifact,
+  DeviceSpec,
+  DevSimElectrodes,
+  DevSimRunDetail,
+  DevSimRunSummary,
+  DevSimSubmitResponse,
+  GateModel,
+  StructureSource,
   DocsReference,
   DocsSearchHit,
   DocsSection,
@@ -220,8 +227,40 @@ export const plot = {
     ),
 }
 
+/** 소자 해석. 구조를 고르고 전극에 전압원을 붙여 I-V 를 뽑는다. */
+export const devsim = {
+  /** 해석 입력으로 쓸 수 있는 공정 실행들. `.str` 은 파일 목록에 안 나온다. */
+  structures: () => request<StructureSource[]>('/api/devsim/structures'),
+
+  /** 구조에서 자동으로 찾은 전극과 뒷면 후보. */
+  electrodes: (jobId: number, sequence: number, gateModel?: GateModel) =>
+    request<DevSimElectrodes>(
+      `/api/devsim/jobs/${jobId}/artifacts/${sequence}/electrodes` +
+        (gateModel ? `?gate_model=${gateModel}` : ''),
+    ),
+
+  submit: (jobId: number, sequence: number, spec: DeviceSpec) =>
+    request<DevSimSubmitResponse>('/api/devsim/jobs', {
+      method: 'POST',
+      body: { job_id: jobId, sequence, spec },
+    }),
+
+  /** 끝난 해석 목록. 비교 화면이 여기서 고른다. */
+  runs: () => request<DevSimRunSummary[]>('/api/devsim/runs'),
+
+  run: (jobId: number) =>
+    request<DevSimRunDetail>(`/api/devsim/runs/${jobId}`),
+}
+
 export type {
   Artifact,
+  DeviceSpec,
+  DevSimElectrodes,
+  DevSimRunDetail,
+  DevSimRunSummary,
+  DevSimSubmitResponse,
+  GateModel,
+  StructureSource,
   DocsReference,
   DocsSearchHit,
   DocsSection,

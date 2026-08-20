@@ -91,6 +91,11 @@ export function SurfaceView({
     const ratio = window.devicePixelRatio || 1
     const width = canvas.clientWidth
     const height = canvas.clientHeight
+    // **크기가 0 이면 아무것도 하지 않는다.** 화면이 숨겨져 있거나 패널이 아직
+    // 자리를 못 잡았을 때 그렇게 된다. 그대로 진행하면 아래 drawImage 가
+    // "width or height of 0" 로 던지고, 오류 경계가 없으므로 React 트리 전체가
+    // 무너진다(최상위 화면 전환을 붙이자마자 실제로 그렇게 됐다).
+    if (width === 0 || height === 0) return
     canvas.width = width * ratio
     canvas.height = height * ratio
     context.setTransform(ratio, 0, 0, ratio, 0, 0)

@@ -1,0 +1,53 @@
+# DevSim 소자 해석 샌드박스.
+#
+# 왜 별도 이미지인가: suprem 이미지는 의도적으로 최소 구성이다(libc, libm 뿐).
+# 거기에 파이썬 런타임을 얹으면 그 원칙이 깨진다. remesh 이미지와 같은 이유다.
+#
+# **여기서 도는 것은 사용자 코드가 아니다.** 사용자는 파이썬을 못 만진다 —
+# 스크립트는 아래에서 이미지에 구워 넣고 root 소유 읽기전용으로 잠근다. 들어오는
+# 것은 검증된 JSON 하나뿐이다(app/devsim/spec.py).
+#
+# 그래도 격리는 suprem 과 똑같이 건다. 이유가 다르다: 소자 해석은 **발산·행업·
+# 메모리 폭주**가 실제로 일어난다. 실측에서 수렴 실패로 반복을 되풀이하는 경우를
+# 여러 번 봤다. --network none, --cap-drop ALL, --read-only, 비루트,
+# cpus/memory/pids/timeout 은 app/runner/sandbox.py 의 것을 그대로 쓴다.
+FROM python:3.12-slim-bookworm
+
+# devsim 은 BLAS/LAPACK 을 **실행 시점에** dlopen 한다. 휠에 안 들어 있어서
+# 안 깔면 `import devsim` 이 "Error loading math libraries" 로 죽는다(실측).
+# 개발 패키지(-dev)가 아니라 런타임 패키지만 깔고, 찾을 이름을 직접 일러 준다 —
+# `libopenblas.so` 라는 심볼릭 링크는 -dev 에만 있기 때문이다.
+RUN apt-get update  && apt-get install -y --no-install-recommends libopenblas0  && rm -rf /var/lib/apt/lists/*
+
+# 버전을 못 박는다. 솔버가 바뀌면 곡선이 바뀐다. 올릴 때는 실측 게이트(nmos.in
+# Id-Vd)를 다시 통과시키고 올린다.
+RUN pip install --no-cache-dir devsim==2.10.1
+
+# 실행 유저를 suprem·remesh 이미지와 같은 uid 로 맞춘다. --userns keep-id 로
+# 도는 작업디렉토리의 소유권이 세 컨테이너에서 같게 보이게 하기 위해서다.
+RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin devsim
+
+# 해석 스크립트. 사용자가 못 바꾸도록 root 소유 + 쓰기 불가.
+COPY docker/devsim/run.py /opt/devsim/run.py
+RUN chown -R root:root /opt/devsim \
+ && chmod 0555 /opt/devsim \
+ && chmod 0444 /opt/devsim/run.py
+
+# 읽기전용 루트라 파이썬이 __pycache__ 나 설정 디렉토리를 쓰려 들면 죽는다.
+# 샌드박스가 /tmp 를 tmpfs 로 준다.
+ENV HOME=/tmp \
+    XDG_CACHE_HOME=/tmp \
+    DEVSIM_MATH_LIBS=libopenblas.so.0 \
+    OPENBLAS_NUM_THREADS=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+USER devsim
+
+# 잡별 스크래치 디렉토리가 여기에 rw 로 마운트된다. device.json 을 읽고
+# iv.jsonl / iv.json 을 쓰는 유일한 경로다.
+WORKDIR /work
+
+# -u 로 줄 단위로 흘려보낸다. 블록 버퍼링이면 컨테이너가 상한에 걸려 죽을 때
+# 로그가 통째로 사라진다(suprem 쪽에서 실측한 문제다).
+ENTRYPOINT ["python", "-u", "/opt/devsim/run.py"]

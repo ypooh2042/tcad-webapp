@@ -49,7 +49,14 @@ const STATUS_LABEL: Record<JobStatus, string> = {
   cancelled: '중단됨',
 }
 
-export function JobPanel({ jobId }: { jobId: number | null }) {
+export function JobPanel({
+  jobId,
+  onAnalyse,
+}: {
+  jobId: number | null
+  /** 결과 구조를 소자 해석으로 넘기는 신호. 없으면 버튼이 안 뜬다. */
+  onAnalyse?: (jobId: number, sequence: number) => void
+}) {
   const { job, error, applyStatus } = useJob(jobId)
   //: 실패한 잡에서는 로그가 전부다. 그때 차트 자리를 비켜 주면 한 화면에
   //: 더 많이 들어온다.
@@ -137,7 +144,7 @@ export function JobPanel({ jobId }: { jobId: number | null }) {
       )}
 
       {job?.artifacts.length && !logOnly ? (
-        <ResultView jobId={jobId} artifacts={job.artifacts} />
+        <ResultView jobId={jobId} artifacts={job.artifacts} onAnalyse={onAnalyse} />
       ) : null}
 
       {/* 로그에는 사용자가 쓴 코드가 그대로 들어 있다. textContent 로만 넣는다. */}

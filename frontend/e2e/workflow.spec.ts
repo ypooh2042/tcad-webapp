@@ -263,7 +263,10 @@ test('탭을 닫아도 파일은 남는다', async ({ page }) => {
   await createProject(page, 'keep-tab')
 
   await page.getByRole('button', { name: 'keep-tab.in 탭 닫기' }).click()
-  await expect(page.getByRole('tab')).toHaveCount(0)
+  // 파일 탭 목록으로 좁힌다. 헤더에는 화면 전환 탭(공정/소자 해석)도 있다.
+  await expect(
+    page.getByRole('tablist', { name: '열어 둔 파일' }).getByRole('tab'),
+  ).toHaveCount(0)
   // 탭이 하나도 없으면 편집기 대신 안내가 뜬다.
   await expect(page.getByText(/열어 둔 파일이 없습니다/)).toBeVisible()
 

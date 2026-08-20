@@ -24,7 +24,9 @@ from app.api.deps import (
 )
 from app.auth.models import Session
 from app.core.config import Settings
-from app.db.models import Artifact, Job, JobStatus
+from app.db.models import Artifact, Job, JobKind, JobStatus
+from app.devsim.progress import scan_devsim_progress
+from app.devsim.spec import DeviceSpec, total_points
 from app.jobs.progress import scan_progress
 from app.jobs.queue import JobQueue
 from app.runner.control import kill_container
@@ -43,6 +45,9 @@ router = APIRouter(tags=["jobs"])
 class JobResponse(BaseModel):
     id: int
     status: str
+    #: 무엇을 돌린 잡인가 — `suprem` 공정 실행, `devsim` 소자 해석. 화면이
+    #: 어떤 결과 보기를 띄울지 이걸로 고른다.
+    kind: str = JobKind.SUPREM
     #: 예전 프로젝트 모델의 잔재. 파일로 돌린 잡은 비어 있다 — 필수로 두면
     #: 조회가 직렬화 단계에서 터지고 화면은 폴링 실패만 반복한다.
     source_revision_id: int | None = None
@@ -112,11 +117,28 @@ def _elapsed_seconds(job: Job) -> float | None:
     return max(0.0, (end - _aware(job.started_at)).total_seconds())
 
 
+def _devsim_total(source: str) -> int:
+    """해석 조건에서 풀어야 할 바이어스 점 수. 진행률의 분모다."""
+    try:
+        return total_points(DeviceSpec.model_validate_json(source))
+    except ValueError:
+        # 조건이 깨졌으면 워커가 실패로 기록한다. 여기서는 조용히 진행률만 접는다.
+        return 0
+
+
 def _progress(job: Job) -> JobProgressResponse | None:
-    """도는 동안의 공정 진행. 끝났거나 셀 근거가 없으면 None."""
+    """도는 동안의 진행. 끝났거나 셀 근거가 없으면 None.
+
+    세는 방법이 잡 종류마다 다르다. 공정 실행은 `.str` 파일 개수를, 소자 해석은
+    해석기가 흘려보내는 `iv.jsonl` 의 줄 수를 센다. 로그를 못 쓰는 사정은 같다 —
+    stdout 은 파이프로 받아 끝날 때 한꺼번에 저장한다.
+    """
     if job.status is not JobStatus.RUNNING or not job.source or not job.workdir:
         return None
-    found = scan_progress(Path(job.workdir), job.source)
+    if job.kind == JobKind.DEVSIM:
+        found = scan_devsim_progress(Path(job.workdir), _devsim_total(job.source))
+    else:
+        found = scan_progress(Path(job.workdir), job.source)
     if found is None:
         return None
     return JobProgressResponse(

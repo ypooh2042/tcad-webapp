@@ -314,3 +314,72 @@ structure out=ild.str
 
 
 `
+
+
+/**
+ * 알루미늄 전극 셋(소스·게이트·드레인)이 있는 최소 공정.
+ *
+ * 소자 해석 시험용이다. `nmos.in` 은 25 단계라 실행 자체는 3 초지만 재메시와
+ * 해석까지 가면 브라우저 시험의 제한 시간을 넘긴다. 격자를 성기게 잡은 이
+ * 흐름은 실행부터 곡선까지 전부 합쳐 몇 초다.
+ *
+ * 백엔드 픽스처 `backend/tests/fixtures/2d_contacts.in` 과 같은 내용이다.
+ */
+export const CONTACT_SOURCE = String.raw`# 전극 추출 시험용 최소 구조.
+# 알루미늄 플러그 셋(소스/게이트/드레인)이 각각 silicon, poly, silicon 에
+# 닿도록만 만든다. 격자는 일부러 성기게 잡아 픽스처를 작게 유지한다.
+
+line x loc=0.0 spacing=0.2 tag=left
+line x loc=2.0 spacing=0.2 tag=right
+line y loc=0.0 spacing=0.05 tag=top
+line y loc=0.4 spacing=0.2
+line y loc=1.5 spacing=0.5 tag=bottom
+
+region silicon xlo=left xhi=right ylo=top yhi=bottom
+bound exposed  xlo=left xhi=right ylo=top yhi=top
+bound backside xlo=left xhi=right ylo=bottom yhi=bottom
+initialize boron conc=1.0e15 ori=100
+
+# 게이트 산화막
+deposit oxide thick=0.02
+
+# 폴리 게이트
+deposit poly thick=0.3
+implant phosphorus energy=40 dose=5.0e15
+etch poly left p1.x=0.8
+etch poly right p1.x=1.2
+
+# 소스/드레인
+implant arsenic energy=50 dose=3.0e15
+diffuse time=10 temp=900
+
+# 층간 절연막
+deposit oxide thick=0.6
+etch oxide start x=-1 y=-0.5
+etch continue x=3 y=-0.5
+etch continue x=3 y=-2
+etch done x=-1 y=-2
+
+# 비아
+etch oxide start x=0.2 y=0.5
+etch continue x=0.5 y=0.5
+etch continue x=0.5 y=-2
+etch done x=0.2 y=-2
+etch oxide start x=0.85 y=-0.1
+etch continue x=1.15 y=-0.1
+etch continue x=1.15 y=-2
+etch done x=0.85 y=-2
+etch oxide start x=1.5 y=0.5
+etch continue x=1.8 y=0.5
+etch continue x=1.8 y=-2
+etch done x=1.5 y=-2
+
+# 금속
+deposit aluminum thick=0.5
+etch aluminum start x=-1 y=-0.5
+etch continue x=3 y=-0.5
+etch continue x=3 y=-2
+etch done x=-1 y=-2
+
+structure out=contacts.str
+`

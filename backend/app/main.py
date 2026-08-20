@@ -16,6 +16,7 @@ from app.api import (
     routes_admin,
     routes_auth,
     routes_catalog,
+    routes_devsim,
     routes_docs,
     routes_editor,
     routes_files,
@@ -64,6 +65,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(routes_catalog.router, prefix="/api")
     app.include_router(routes_docs.router, prefix="/api")
     app.include_router(routes_plot.router, prefix="/api")
+    app.include_router(routes_devsim.router, prefix="/api")
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:

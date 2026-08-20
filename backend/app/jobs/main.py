@@ -59,6 +59,7 @@ def build_worker(
         sessionmaker=sessionmaker,
         jobs_root=settings.jobs_root,
         image=settings.sandbox_image,
+        devsim_image=settings.devsim_image,
         limits=SandboxLimits(timeout_seconds=settings.job_timeout_seconds),
     )
 

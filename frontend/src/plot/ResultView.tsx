@@ -50,6 +50,13 @@ const MATERIAL_VIEW = '재질'
 interface Props {
   jobId: number
   artifacts: Artifact[]
+  /**
+   * 지금 보고 있는 구조로 소자 해석을 하겠다는 신호.
+   *
+   * `.str` 은 작업공간 파일 목록에 안 나오므로(실행 결과다) 여기서 넘겨주는
+   * 것이 소자 해석으로 가는 주 경로다.
+   */
+  onAnalyse?: (jobId: number, sequence: number) => void
 }
 
 /** 마지막 단계의 번호. 산출물이 없으면 0. */
@@ -57,7 +64,7 @@ function lastStep(artifacts: Artifact[]): number {
   return Math.max(0, artifacts.length - 1)
 }
 
-export function ResultView({ jobId, artifacts }: Props) {
+export function ResultView({ jobId, artifacts, onAnalyse }: Props) {
   //: **마지막 단계부터 보여준다.** 사용자가 보려는 것은 보통 공정이 끝난
   //: 모습이고, 25단계짜리 흐름에서 거기까지 '다음' 을 스물네 번 눌러 가는 것은
   //: 번거롭다. 실패한 실행에서도 마지막 산출물이 곧 마지막으로 성공한 단계다.
@@ -242,6 +249,16 @@ export function ResultView({ jobId, artifacts }: Props) {
           <span className="muted">
             {step + 1}/{artifacts.length}
           </span>
+        )}
+        {onAnalyse && current && (
+          <button
+            type="button"
+            className="analyse"
+            onClick={() => onAnalyse(jobId, current.sequence)}
+            title="이 구조를 소자 해석 화면으로 넘깁니다"
+          >
+            소자 해석
+          </button>
         )}
       </div>
 

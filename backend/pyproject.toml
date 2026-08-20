@@ -33,6 +33,10 @@ include = ["app*"]
 
 [project.optional-dependencies]
 dev = [
+    # 소자 해석은 컨테이너(docker/devsim) 안에서 도는 것이 정상 경로다. 여기
+    # 선언한 것은 **해석 스크립트를 개발·검증하기 위한** 것이다 — 컨테이너를
+    # 띄우지 않고 물리 모형을 손볼 수 있어야 한다. 버전은 Containerfile 과 맞춘다.
+    "devsim==2.10.1",
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "pytest-asyncio>=0.24",

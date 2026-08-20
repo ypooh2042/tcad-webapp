@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = True
 
     sandbox_image: str = "tcad/suprem:latest"
+    #: 소자 해석 이미지. 파이썬 런타임과 DevSim 이 들어 있어 suprem 이미지와
+    #: 따로 둔다(suprem 쪽은 libc/libm 만 있는 최소 구성을 유지한다).
+    devsim_image: str = "tcad/devsim:latest"
     job_timeout_seconds: int = Field(default=600, gt=0)
 
     #: 사용자 작업공간(소스 파일) 루트.

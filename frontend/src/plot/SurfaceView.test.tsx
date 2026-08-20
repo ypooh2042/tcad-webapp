@@ -415,3 +415,24 @@ describe('격자 보기', () => {
     expect(context.stroke.mock.calls.length).toBe(without + 1)
   })
 })
+
+describe('숨겨진 화면', () => {
+  it('캔버스 크기가 0 이면 그리지 않고 조용히 넘어간다', () => {
+    // 최상위 화면을 전환하면 안 보이는 쪽이 0×0 이 된다. 예전에는 여기서
+    // drawImage 가 "width or height of 0" 로 던져, 오류 경계가 없는 탓에
+    // React 트리 전체가 무너지고 화면이 하얗게 됐다(브라우저 시험으로 실측).
+    Object.defineProperty(HTMLCanvasElement.prototype, 'clientWidth', {
+      configurable: true,
+      value: 0,
+    })
+    Object.defineProperty(HTMLCanvasElement.prototype, 'clientHeight', {
+      configurable: true,
+      value: 0,
+    })
+
+    expect(() =>
+      render(<SurfaceView surface={SURFACE} cutX={null} onPickCut={vi.fn()} />),
+    ).not.toThrow()
+    expect(fills).toHaveLength(0)
+  })
+})
