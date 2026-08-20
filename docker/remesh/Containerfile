@@ -1,0 +1,26 @@
+# 메시 생성기.
+#
+# 왜 별도 이미지인가: suprem 이미지는 의도적으로 최소 구성이다(패키지를 안 깔면
+# 공격 표면이 그만큼 준다). 거기에 gmsh 와 그 의존성을 얹으면 그 원칙이 깨진다.
+# 그리고 gmsh 는 GPL 이라 우리 코드에 링크하지 않고 **별도 프로세스로만** 부른다.
+#
+# 입력은 사용자 입력에서 파생된 기하이므로 신뢰할 수 없다. suprem 과 **같은
+# 샌드박스 플래그**로 돌린다(--network none, --cap-drop ALL, --read-only,
+# 비루트). app/runner/sandbox.py 의 argv 를 그대로 재사용한다.
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gmsh \
+ && rm -rf /var/lib/apt/lists/*
+
+# 실행 유저를 suprem 이미지와 같은 uid 로 맞춘다. --userns keep-id 로 도는
+# 작업디렉토리의 소유권이 두 컨테이너에서 같게 보이게 하기 위해서다.
+RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin mesher
+
+# gmsh 는 기본으로 ~/.gmsh 등에 쓰려 든다. 홈이 없으므로 /tmp 로 돌린다
+# (샌드박스가 /tmp 를 tmpfs 로 준다).
+ENV HOME=/tmp XDG_CACHE_HOME=/tmp
+
+USER mesher
+WORKDIR /work
+ENTRYPOINT ["gmsh"]
