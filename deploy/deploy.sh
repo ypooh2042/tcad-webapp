@@ -84,6 +84,11 @@ log "샌드박스 이미지 재빌드"
 podman build -t tcad/suprem:latest \
     -f "$TARGET/docker/suprem/Containerfile" "$TARGET"
 
+# 메시 생성기. 실행이 형상 오류로 죽었을 때만 쓰이지만, 그때 없으면 복구가
+# 조용히 실패한다. suprem 과 같은 샌드박스 플래그로 돌린다.
+podman build -t tcad/remesh:latest \
+    -f "$TARGET/docker/remesh/Containerfile" "$TARGET"
+
 log "API 재시작"
 systemctl --user restart tcad-api
 

@@ -24,7 +24,7 @@ from app.runner.sandbox import SandboxLimits, build_sandbox_argv
 from app.str_parser.parser import parse_structure
 from app.str_parser.writer import write_structure
 
-DEFAULT_IMAGE = "tcad/remesh"
+DEFAULT_IMAGE = "tcad/remesh:latest"
 
 #: 컨테이너 안에서 쓸 파일 이름. 고정이라 사용자 입력이 인자에 섞이지 않는다.
 _GEO = "mesh.geo"

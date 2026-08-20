@@ -107,3 +107,41 @@ def _square(edge: float):
         "I 1   0\n"
     )
     return parse_structure(text)
+
+
+class TestWorthResuming:
+    """언제 다시 이어 볼지.
+
+    **성공한 실행에는 절대 발동하면 안 된다.** 발동하면 결과가 달라지고,
+    사용자는 왜 로그가 두 벌인지 알 수 없다. 시간 초과나 출력 상한도 다시
+    돌려 봐야 같은 결과라 자원만 두 배로 쓴다.
+    """
+
+    PANIC = "...\nsuprem4 panic: triangles are not clock wise\n"
+
+    def test_fires_on_a_panic(self) -> None:
+        from app.runner.runner import _worth_resuming
+
+        assert _worth_resuming(139, False, False, self.PANIC)
+
+    def test_never_fires_on_success(self) -> None:
+        from app.runner.runner import _worth_resuming
+
+        assert not _worth_resuming(0, False, False, self.PANIC)
+
+    def test_never_fires_on_timeout(self) -> None:
+        from app.runner.runner import _worth_resuming
+
+        assert not _worth_resuming(-1, True, False, self.PANIC)
+
+    def test_never_fires_when_output_was_capped(self) -> None:
+        # 상한을 넘겨 죽인 실행은 산출물을 믿을 수 없다. 이어 가면 안 된다.
+        from app.runner.runner import _worth_resuming
+
+        assert not _worth_resuming(137, False, True, self.PANIC)
+
+    def test_ignores_failures_that_are_not_panics(self) -> None:
+        """문법 오류 같은 것은 다시 돌려도 같다."""
+        from app.runner.runner import _worth_resuming
+
+        assert not _worth_resuming(1, False, False, "no such parameter: thick\n")
