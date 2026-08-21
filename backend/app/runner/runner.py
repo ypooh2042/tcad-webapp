@@ -25,6 +25,7 @@ from app.runner.sandbox import (
 )
 from app.runner.podman_health import (
     ADVICE as PODMAN_ADVICE,
+    ensure_pause_process,
     looks_like_infra_failure,
     repair as repair_podman,
 )
@@ -154,11 +155,18 @@ def _retry_after_repair(
     **한 번만이다.** 되살리기가 듣지 않는 상태라면 반복해 봐야 같은 실패를
     쌓을 뿐이고, 그동안 잡 슬롯이 묶인다.
 
-    되살릴 것이 없었으면(pause.pid 자체가 없으면) 다시 시도하지 않는다. 원인이
-    다른 곳에 있다는 뜻이라, 재시도는 시간만 쓰고 로그를 헷갈리게 만든다.
+    되살리기는 두 가지다. 낡은 pause.pid 를 치우는 것과, pause 프로세스를 새로
+    만들어 달라고 부탁하는 것(`ensure_pause_process`). 뒤엣것이 따로 필요한
+    이유는 이 워커가 `NoNewPrivileges=true` 아래에서 돌기 때문이다 — 거기서는
+    setuid 인 `newuidmap` 이 무효라 새 user namespace 를 스스로 만들 수 없다.
+
+    둘 다 할 것이 없었으면 다시 시도하지 않는다. 원인이 다른 곳에 있다는
+    뜻이라, 재시도는 시간만 쓰고 로그를 헷갈리게 만든다.
     """
-    note = repair_podman()
-    if note is None:
+    cleaned = repair_podman()
+    started = ensure_pause_process()
+    note = " · ".join(part for part in (cleaned, started) if part)
+    if not note:
         logger.warning("podman 기반 실패이지만 되살릴 것을 찾지 못했습니다")
         return None
 

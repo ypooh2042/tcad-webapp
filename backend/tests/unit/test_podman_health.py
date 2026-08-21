@@ -10,9 +10,11 @@ import signal
 import subprocess
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from app.runner import podman_health
 from app.runner.podman_health import (
     ADVICE,
     looks_like_infra_failure,
@@ -154,7 +156,7 @@ class TestRunnerRetriesOnce:
     INFRA = (125, REAL_ERROR, False, False)
     OK = (0, "SUPREM-IV.GS B.9305\n", False, False)
 
-    def _patch(self, monkeypatch, outcomes, note="치웠습니다"):
+    def _patch(self, monkeypatch, outcomes, note="치웠습니다", started=None):
         from app.runner import runner as mod
 
         calls: list[int] = []
@@ -165,7 +167,29 @@ class TestRunnerRetriesOnce:
 
         monkeypatch.setattr(mod, "_execute", fake_execute)
         monkeypatch.setattr(mod, "repair_podman", lambda: note)
+        # 시험이 진짜 systemctl 을 부르지 않게 한다.
+        monkeypatch.setattr(mod, "ensure_pause_process", lambda: started)
         return calls
+
+    def test_retries_after_making_a_fresh_pause_process(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """치울 것이 없어도, 새 pause 를 만들었으면 다시 돌려 봐야 한다.
+
+        실제로 겪은 고장이 이 모양이었다. pause 프로세스가 사라진 뒤에는
+        pause.pid 도 남지 않아 치울 것이 없는데, 워커는 NoNewPrivileges 아래라
+        새 네임스페이스를 스스로 만들지 못해 모든 잡이 같은 자리에서 죽었다.
+        만드는 일을 별도 유닛에 맡겼으니, 그 뒤에는 한 번 더 돌려야 한다.
+        """
+        from app.runner.runner import run_simulation
+
+        calls = self._patch(
+            monkeypatch, [self.INFRA, self.OK], note=None, started="새로 만듦"
+        )
+        result = run_simulation("initialize\n", tmp_path / "job")
+
+        assert len(calls) == 2, "새 pause 를 만들었으면 한 번 더 돌려야 합니다"
+        assert result.succeeded
 
     def test_repairs_and_retries(self, monkeypatch, tmp_path) -> None:
         from app.runner.runner import RETRIED_NOTICE, run_simulation
@@ -213,3 +237,58 @@ class TestRunnerRetriesOnce:
         run_simulation("initialize\n", tmp_path / "job")
 
         assert len(calls) == 1
+
+
+class TestEnsurePauseProcess:
+    """pause 프로세스를 NoNewPrivileges 바깥에서 만들어 달라고 부탁한다.
+
+    워커 유닛은 `NoNewPrivileges=true` 다. 그러면 setuid 인 `newuidmap` 이
+    무효가 되어 워커 안에서는 새 user namespace 를 만들 수 없다(실측: 같은
+    podman 명령이 NNP 를 켜면 EPERM, 끄면 성공). 그래서 pause.pid 를 치우고
+    그 자리에서 다시 돌려 봐야 같은 곳에서 막힌다 — 별도 유닛에게 맡겨야 한다.
+    """
+
+    def test_asks_systemd_for_the_pause_unit(self, monkeypatch) -> None:
+        seen: dict[str, list[str]] = {}
+
+        def fake_run(argv, **rest):
+            seen["argv"] = argv
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(podman_health.subprocess, "run", fake_run)
+        note = podman_health.ensure_pause_process()
+
+        assert note is not None
+        # 사용자 관리자여야 한다. 시스템 쪽에는 이 유닛이 없다.
+        assert seen["argv"][:3] == ["systemctl", "--user", "start"]
+        assert seen["argv"][3] == podman_health.PAUSE_UNIT
+
+    def test_says_nothing_when_systemd_refuses(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            podman_health.subprocess,
+            "run",
+            lambda argv, **rest: SimpleNamespace(
+                returncode=5, stdout="", stderr="Unit not found."
+            ),
+        )
+        assert podman_health.ensure_pause_process() is None
+
+    def test_survives_a_box_without_systemd(self, monkeypatch) -> None:
+        # 개발 상자에는 사용자 관리자가 없을 수 있다. 되살리기는 최선의
+        # 시도이지 보장이 아니므로, 여기서 예외가 새어 나가면 안 된다.
+        def explode(argv, **rest):
+            raise FileNotFoundError("systemctl")
+
+        monkeypatch.setattr(podman_health.subprocess, "run", explode)
+        assert podman_health.ensure_pause_process() is None
+
+    def test_does_not_hang_forever(self, monkeypatch) -> None:
+        seen: dict[str, object] = {}
+
+        def fake_run(argv, **rest):
+            seen.update(rest)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(podman_health.subprocess, "run", fake_run)
+        podman_health.ensure_pause_process()
+        assert seen.get("timeout")

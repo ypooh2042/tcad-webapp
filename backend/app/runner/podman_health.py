@@ -35,9 +35,27 @@ from __future__ import annotations
 import logging
 import os
 import signal
+import subprocess
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+#: pause 프로세스를 새로 만들어 주는 systemd 사용자 유닛.
+#:
+#: 워커 유닛은 `NoNewPrivileges=true` 로 돈다. **그러면 setuid 인 `newuidmap`
+#: 이 무효가 되어, 워커 안에서는 새 user namespace 를 만들 수 없다** (실측:
+#: 같은 podman 명령이 NNP 를 켜면 `write to uid_map failed: Operation not
+#: permitted`, 끄면 성공). 지금까지 돌아간 것은 살아 있는 pause 프로세스에
+#: 합류만 했기 때문이다.
+#:
+#: 그래서 pause.pid 를 치우고 그 자리에서 다시 돌려 봐야 같은 곳에서 막힌다.
+#: 만드는 일은 NNP 를 물려받지 않는 별도 유닛에 맡기고, 워커는 거기서 생긴
+#: 네임스페이스에 합류한다.
+PAUSE_UNIT = "tcad-podman.service"
+
+#: systemd 에 부탁하고 기다리는 한도. 이미지 풀 같은 것이 아니라 프로세스
+#: 하나를 띄우는 일이라 길 이유가 없다. 여기서 막히면 잡 슬롯이 묶인다.
+_PAUSE_UNIT_TIMEOUT_SECONDS = 60.0
 
 #: 이 문구들이 보이면 podman 기반 자체가 못 뜬 것이다. 시뮬레이터가 낸 오류와
 #: 구별해야 한다 — 시뮬레이터 실패는 다시 돌려도 같은 결과다.
@@ -113,6 +131,32 @@ def _is_ours(pid: int) -> bool:
         return Path(f"/proc/{pid}").stat().st_uid == os.getuid()
     except OSError:
         return False
+
+
+def ensure_pause_process(timeout: float = _PAUSE_UNIT_TIMEOUT_SECONDS) -> str | None:
+    """pause 프로세스를 NNP 바깥에서 만들어 달라고 systemd 에 부탁한다.
+
+    무엇을 했는지 돌려주고, 부탁이 닿지 않으면 None. **실패해도 예외를 내지
+    않는다** — 되살리기는 최선의 시도이지 보장이 아니고, 여기서 터지면 원래의
+    실패 원문까지 묻힌다. systemd 사용자 관리자가 없는 개발 상자에서도 조용히
+    넘어간다.
+    """
+    try:
+        done = subprocess.run(
+            ["systemctl", "--user", "start", PAUSE_UNIT],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        logger.exception("%s 를 시작하지 못했습니다", PAUSE_UNIT)
+        return None
+
+    if done.returncode != 0:
+        logger.warning("%s 시작 실패: %s", PAUSE_UNIT, done.stderr.strip())
+        return None
+    return f"{PAUSE_UNIT} 로 pause 프로세스를 새로 만들었습니다"
 
 
 def repair(pause_pid: Path | None = None) -> str | None:

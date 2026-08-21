@@ -104,6 +104,25 @@ build_image tcad/suprem:latest "$TARGET/docker/suprem/Containerfile"
 build_image tcad/remesh:latest "$TARGET/docker/remesh/Containerfile"
 build_image tcad/devsim:latest "$TARGET/docker/devsim/Containerfile"
 
+# 유닛 파일도 맞춘다. 이것이 없으면 저장소의 유닛을 고쳐도 서버에는 영원히
+# 닿지 않는다 — bootstrap.sh 는 처음 한 번만 돌기 때문이다. 실제로
+# tcad-podman.service 를 새로 만들 때 이 구멍이 드러났다.
+log "systemd 유닛 동기화"
+mkdir -p "$HOME/.config/systemd/user"
+rsync -a "$REPO_ROOT"/deploy/systemd/tcad-*.service "$HOME/.config/systemd/user/"
+systemctl --user daemon-reload
+# 새로 생긴 유닛이 있으면 켜 준다. 이미 켜져 있으면 아무 일도 하지 않는다.
+for unit in "$REPO_ROOT"/deploy/systemd/tcad-*.service; do
+    name=$(basename "$unit")
+    systemctl --user is-enabled "$name" > /dev/null 2>&1 || \
+        systemctl --user enable "$name" > /dev/null 2>&1 || true
+done
+
+# pause 프로세스를 먼저 세운다. 워커는 NoNewPrivileges 아래라 이것을 스스로
+# 만들지 못한다 — deploy/systemd/tcad-podman.service 주석 참조.
+log "podman pause 프로세스 확인"
+systemctl --user start tcad-podman.service
+
 log "API 재시작"
 systemctl --user restart tcad-api
 

@@ -1,0 +1,38 @@
+# 루트리스 podman 의 pause 프로세스를 띄워 두는 유닛 (systemd **사용자** 유닛)
+#
+# 루트리스 podman 은 pause 프로세스(`catatonit -P`) 하나로 user namespace 를
+# 붙들고, 뒤따르는 모든 명령이 그 네임스페이스에 합류한다. 합류만 하는 동안에는
+# 아무 특권도 필요 없지만, **새로 만들 때는** setuid 인 `/usr/bin/newuidmap`
+# 이 있어야 한다.
+#
+# 워커(tcad-worker.service)는 `NoNewPrivileges=true` 로 돈다. 그 아래에서는
+# setuid 가 무효라 newuidmap 이 이렇게 죽는다:
+#
+#     newuidmap: write to uid_map failed: Operation not permitted
+#     invalid internal status, try resetting the pause process with
+#         "podman system migrate"
+#
+# 즉 워커는 살아 있는 pause 에 합류할 수만 있고, 그것이 사라지면 스스로는
+# 절대 되살리지 못한다. 실제로 그렇게 모든 시뮬레이션이 멈춘 적이 있다.
+#
+# 그래서 만드는 일만 이 유닛이 맡는다. **여기에는 NoNewPrivileges 를 켜지
+# 않는다 — 그것이 이 유닛의 존재 이유다.** 워커 쪽 하드닝은 그대로 둔 채,
+# 특권이 필요한 한 걸음만 밖으로 꺼낸 것이다.
+#
+# `podman info` 를 쓰는 이유는 그것이 부작용 없이 네임스페이스를 요구하는
+# 가장 가벼운 명령이기 때문이다. 이미 pause 가 살아 있으면 그냥 합류하고 끝난다.
+
+[Unit]
+Description=TCAD rootless podman pause process
+Before=tcad-worker.service
+
+[Service]
+Type=oneshot
+Environment=XDG_RUNTIME_DIR=%t
+ExecStart=/usr/bin/podman info
+# podman info 는 출력이 길다. 저널에 매번 쌓을 이유가 없다.
+StandardOutput=null
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

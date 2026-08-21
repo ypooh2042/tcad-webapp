@@ -9,8 +9,11 @@
 
 [Unit]
 Description=TCAD simulation worker
-After=network-online.target tcad-api.service
+After=network-online.target tcad-api.service tcad-podman.service
 Wants=network-online.target
+# pause 프로세스가 먼저 있어야 한다. 이 워커는 NoNewPrivileges 아래에서 돌아
+# 그것을 스스로 만들 수 없다 — tcad-podman.service 의 주석 참조.
+Wants=tcad-podman.service
 
 [Service]
 Type=exec
@@ -27,6 +30,8 @@ RestartSec=5s
 KillSignal=SIGTERM
 TimeoutStopSec=650
 
+# 그대로 둔다. 이것 때문에 podman 이 새 네임스페이스를 못 만드는 것은 맞지만,
+# 만드는 일은 tcad-podman.service 로 옮겼다. 하드닝을 풀 이유가 없다.
 NoNewPrivileges=true
 
 [Install]
