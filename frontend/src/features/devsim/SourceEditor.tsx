@@ -13,6 +13,7 @@
  */
 import type { Bias, BiasRole, DeviceSpec } from '../../api/types'
 import { CURVE_COLORS } from './IvChart'
+import { NumberField, NumberListField } from './NumberField'
 
 interface Props {
   spec: DeviceSpec
@@ -31,13 +32,11 @@ function replaceBias(spec: DeviceSpec, index: number, bias: Bias): DeviceSpec {
   }
 }
 
-/** 쉼표로 나눈 숫자 목록. 편집 중의 빈칸은 버린다. */
-function parseValues(text: string): number[] {
-  return text
-    .split(',')
-    .map((part) => Number(part.trim()))
-    .filter((value) => Number.isFinite(value))
-}
+const SWEEP_FIELDS = [
+  ['start', '시작'],
+  ['stop', '끝'],
+  ['step', '간격'],
+] as const
 
 const ROLE_LABEL: Record<BiasRole, string> = {
   sweep: '스윕 (가로축)',
@@ -172,63 +171,44 @@ export function SourceEditor({
             </div>
 
             {bias.role === 'const' ? (
-              <label className="field">
-                전압 (V)
-                <input
-                  type="number"
-                  step="0.1"
-                  value={bias.value ?? 0}
-                  onChange={(event) =>
-                    onChange(
-                      replaceBias(spec, index, {
-                        ...bias,
-                        value: Number(event.target.value),
-                      }),
-                    )
-                  }
-                />
-              </label>
+              <NumberField
+                label="전압 (V)"
+                value={bias.value ?? 0}
+                onChange={(value) =>
+                  onChange(replaceBias(spec, index, { ...bias, value }))
+                }
+              />
             ) : null}
 
             {bias.role === 'step' ? (
-              <label className="field">
-                단계 전압 (쉼표로 구분, V)
-                <input
-                  value={(bias.values ?? []).join(', ')}
-                  onChange={(event) =>
-                    onChange(
-                      replaceBias(spec, index, {
-                        ...bias,
-                        values: parseValues(event.target.value),
-                      }),
-                    )
-                  }
-                />
-              </label>
+              <NumberListField
+                label="단계 전압 (쉼표로 구분, V)"
+                values={bias.values ?? []}
+                onChange={(values) =>
+                  onChange(replaceBias(spec, index, { ...bias, values }))
+                }
+              />
             ) : null}
 
             {bias.role === 'sweep' ? (
               <div className="sweep-fields">
-                {(['start', 'stop', 'step'] as const).map((field) => (
-                  <label className="field" key={field}>
-                    {field === 'start' ? '시작' : field === 'stop' ? '끝' : '간격'}
-                    <input
-                      type="number"
-                      step="0.05"
-                      value={bias.sweep?.[field] ?? 0}
-                      onChange={(event) =>
-                        onChange(
-                          replaceBias(spec, index, {
-                            ...bias,
-                            sweep: {
-                              ...(bias.sweep ?? { start: 0, stop: 2, step: 0.25 }),
-                              [field]: Number(event.target.value),
-                            },
-                          }),
-                        )
-                      }
-                    />
-                  </label>
+                {SWEEP_FIELDS.map(([field, label]) => (
+                  <NumberField
+                    key={field}
+                    label={label}
+                    value={bias.sweep?.[field] ?? 0}
+                    onChange={(value) =>
+                      onChange(
+                        replaceBias(spec, index, {
+                          ...bias,
+                          sweep: {
+                            ...(bias.sweep ?? { start: 0, stop: 2, step: 0.25 }),
+                            [field]: value,
+                          },
+                        }),
+                      )
+                    }
+                  />
                 ))}
               </div>
             ) : null}

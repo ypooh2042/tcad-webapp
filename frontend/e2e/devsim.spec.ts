@@ -152,6 +152,38 @@ test('계면을 다른 전극으로 옮기면 전극 옆 표시가 따라간다'
   await expect(page.getByRole('button', { name: '해석 실행' })).toBeDisabled()
 })
 
+test('전압을 소수로 칠 수 있다', async ({ page, context }) => {
+  // 예전에는 값을 매번 다시 문자열로 만들어 넣어서, "0." 이 "0" 으로 되돌아가
+  // 게이트 단계 전압을 정수로만 넣을 수 있었다. 한 글자씩 실제로 쳐 봐야
+  // 드러나는 종류의 결함이라 fill() 이 아니라 type() 을 쓴다.
+  test.setTimeout(180_000)
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signUp(page, uniqueEmail('decimal'))
+
+  await runProcess(page)
+  await page.getByRole('button', { name: '소자 해석' }).click()
+
+  const step = page.locator('.bias[data-role="step"]')
+  const values = step.getByLabel('단계 전압 (쉼표로 구분, V)')
+  await expect(values).toBeVisible({ timeout: 30_000 })
+
+  await values.fill('')
+  await values.pressSequentially('0.4, 0.8, 1.2')
+  await expect(values).toHaveValue('0.4, 0.8, 1.2')
+
+  // 스윕 칸도 같은 문제를 겪었다.
+  const sweep = page.locator('.bias[data-role="sweep"]')
+  const gap = sweep.getByLabel('간격')
+  await gap.fill('')
+  await gap.pressSequentially('0.05')
+  await expect(gap).toHaveValue('0.05')
+
+  // 소수가 실제로 조건에 들어갔는지는 점 개수로 확인된다.
+  // 0~2V 를 0.05 씩 → 41점, 단계 3개 → 123점.
+  await expect(page.getByText('바이어스 점 123개')).toBeVisible()
+  await expect(page.locator('.problems')).toHaveCount(0)
+})
+
 test('해석 패널 폭을 끌어서 바꾼다', async ({ page, context }) => {
   test.setTimeout(180_000)
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
