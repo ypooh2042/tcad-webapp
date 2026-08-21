@@ -321,3 +321,38 @@ describe('계면 이름', () => {
     expect(JSON.stringify(base)).toBe(before)
   })
 })
+
+describe('게이트가 둘일 때', () => {
+  // CMOS 처럼 트랜지스터가 둘이면 게이트도 둘이다. 예전에는 서버가 둘 다
+  // `gate` 로 이름 붙여서, 하나를 지우면 다른 하나까지 사라졌다.
+  const TWO_GATES = [
+    detected('source', 'metal', 0.2),
+    detected('gate1', 'metal', 0.85),
+    detected('drain', 'metal', 1.5),
+    detected('gate2', 'metal', 2.85),
+    detected('body', 'backside', 0),
+  ]
+
+  it('전극이 계면 수만큼 생긴다', () => {
+    expect(defaultSpec(TWO_GATES).electrodes).toHaveLength(5)
+  })
+
+  it('한쪽 게이트를 빼도 다른 쪽은 남는다', () => {
+    const spec = removeElectrode(defaultSpec(TWO_GATES), 'gate1')
+    expect(spec.electrodes.map((e) => e.label)).toContain('gate2')
+    expect(spec.electrodes.map((e) => e.label)).not.toContain('gate1')
+    expect(spec.biases.some((b) => b.electrode === 'gate2')).toBe(true)
+  })
+
+  it('한쪽 게이트 이름을 바꿔도 다른 쪽은 그대로다', () => {
+    const spec = renameElectrode(defaultSpec(TWO_GATES), 'gate1', 'pmos 게이트')
+    expect(ownerOf(spec, 'gate1')).toBe('pmos 게이트')
+    expect(ownerOf(spec, 'gate2')).toBe('gate2')
+  })
+
+  it('계면 이름도 따로 붙는다', () => {
+    const spec = renameInterface(defaultSpec(TWO_GATES), 'gate2', 'nmos 게이트')
+    expect(nameOfInterface(spec, 'gate1')).toBe('gate1')
+    expect(nameOfInterface(spec, 'gate2')).toBe('nmos 게이트')
+  })
+})

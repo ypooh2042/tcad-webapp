@@ -31,10 +31,16 @@ def resolve_electrodes(
     합친 전극이 곧 DevSim 접촉 하나(정확히는 영역마다 하나)이고, 전압원이
     거기에 1:1 로 붙는다.
     """
-    available = {
-        found.name: found
-        for found in detect_interfaces(structure, gate_model=spec.gate_model)
-    }
+    detected = detect_interfaces(structure, gate_model=spec.gate_model)
+    available = {found.name: found for found in detected}
+    if len(available) != len(detected):
+        # 이름이 곧 열쇠다. 겹치면 뒤엣것이 앞엣것을 덮어써서 한쪽 계면이
+        # **엉뚱한 자리에 걸린 채로** 해석이 돌아간다 — 오류 없이 틀린 곡선이
+        # 나오는 것보다 여기서 멈추는 편이 낫다.
+        raise ElectrodeNotFound(
+            "계면 이름이 겹칩니다: "
+            f"{sorted(one.name for one in detected)}. 구조 인식에 문제가 있습니다."
+        )
 
     resolved: list[Electrode] = []
     for choice in spec.electrodes:

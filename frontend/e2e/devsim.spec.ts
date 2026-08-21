@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import {
   CONTACT_SOURCE,
+  TWO_GATE_SOURCE,
   createProject,
   logOut,
   setSource,
@@ -28,9 +29,13 @@ async function clickInterface(
   const map = page.locator('.electrode-map')
   const box = (await map.boundingBox())!
   const popover = page.getByRole('dialog', { name })
-  for (let y = box.height - 4; y > 0; y -= 5) {
-    await map.click({ position: { x: box.width / 2, y } })
-    if (await popover.isVisible()) return popover
+  // 가로로도 훑는다. 같은 종류의 계면이 여럿이면(게이트 둘) 가운데만 눌러서는
+  // 오른쪽 것에 닿을 수 없다.
+  for (let x = 8; x < box.width; x += 12) {
+    for (let y = box.height - 4; y > 0; y -= 6) {
+      await map.click({ position: { x, y } })
+      if (await popover.isVisible()) return popover
+    }
   }
   return popover
 }
@@ -323,6 +328,42 @@ test('계면 이름을 바꾸면 전극 옆 표시도 따라간다', async ({ pa
   await expect(name).toHaveValue('기판 뒷면')
   // 전극 목록의 칩에도 그대로 나와야 한다.
   await expect(list.nth(3).locator('.chip')).toHaveText(['기판 뒷면'])
+})
+
+test('게이트가 둘이어도 각각 따로 다룬다', async ({ page, context }) => {
+  // CMOS 처럼 트랜지스터가 둘이면 게이트도 둘이다. 예전에는 서버가 둘 다
+  // `gate` 로 이름 붙였고, 그러면 화면만 헷갈리는 것으로 끝나지 않는다 —
+  // 해석기가 뒤엣것으로 앞엣것을 덮어써 한쪽이 엉뚱한 자리에 걸린다.
+  test.setTimeout(240_000)
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signUp(page, uniqueEmail('twogate'))
+
+  await createProject(page, 'twogate')
+  await setSource(page, TWO_GATE_SOURCE)
+  await page.getByRole('button', { name: /실행/ }).click()
+  await expect(page.locator('.status-succeeded')).toBeVisible({
+    timeout: 120_000,
+  })
+
+  await page.getByRole('button', { name: '소자 해석' }).click()
+  const list = page.locator('.electrode-list li')
+  await expect(list).toHaveCount(7, { timeout: 30_000 })
+
+  // 게이트가 서로 다른 이름으로 잡혀야 한다.
+  const chips = page.locator('.electrode-list .chip')
+  await expect(chips.filter({ hasText: /^gate1$/ })).toHaveCount(1)
+  await expect(chips.filter({ hasText: /^gate2$/ })).toHaveCount(1)
+
+  // 오른쪽 게이트를 눌러도 오른쪽 것이 떠야 한다.
+  const second = await clickInterface(page, /gate2/)
+  await expect(second).toBeVisible()
+  await expect(second.getByLabel('계면 이름')).toHaveValue('gate2')
+  await second.getByRole('button', { name: '닫기' }).click()
+
+  // 한쪽 게이트를 빼도 다른 쪽은 남는다.
+  await page.getByRole('button', { name: 'gate1 전극 빼기' }).click()
+  await expect(list).toHaveCount(6)
+  await expect(chips.filter({ hasText: /^gate2$/ })).toHaveCount(1)
 })
 
 test('무엇을 전극으로 보는지 탭에 적혀 있다', async ({ page, context }) => {

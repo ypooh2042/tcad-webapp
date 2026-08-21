@@ -6,6 +6,7 @@
 """
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -145,3 +146,51 @@ class TestPayload:
 
     def test_constant_biases_are_listed(self, payload) -> None:
         assert payload["plan"]["constants"] == {"Vs": 0.0, "Vb": 0.0}
+
+
+class TestDuplicateInterfaceKeys:
+    """열쇠가 겹치면 조용히 넘어가지 않는다.
+
+    `resolve_electrodes` 는 계면을 `{이름: 계면}` 으로 모은다. 이름이 겹치면
+    뒤엣것이 앞엣것을 덮어써서 한쪽이 엉뚱한 자리에 걸린 채로 해석이 돌아간다 —
+    오류 없이 틀린 곡선이 나오는 것보다 멈추는 편이 낫다.
+    """
+
+    def test_two_gates_become_two_electrodes(self) -> None:
+        two = parse_structure((FIXTURES / "2d_two_gates.str").read_text())
+        payload = spec_payload()
+        payload["electrodes"] = [
+            {"label": "G1", "interfaces": ["gate1"]},
+            {"label": "G2", "interfaces": ["gate2"]},
+            {"label": "B", "interfaces": ["body"]},
+        ]
+        payload["biases"] = [
+            {"name": "V1", "electrode": "G1", "role": "const", "value": 0.0},
+            {"name": "V2", "electrode": "G2", "role": "const", "value": 0.0},
+            {
+                "name": "Vb",
+                "electrode": "B",
+                "role": "sweep",
+                "sweep": {"start": 0.0, "stop": 1.0, "step": 0.5},
+            },
+        ]
+        found = {
+            one.name: one
+            for one in resolve_electrodes(two, DeviceSpec.model_validate(payload))
+        }
+        assert set(found) == {"G1", "G2", "B"}
+        # 서로 다른 변을 물어야 한다. 겹치면 두 게이트가 같은 자리를 가리킨다.
+        assert set(found["G1"].edges).isdisjoint(found["G2"].edges)
+
+    def test_refuses_when_detection_gives_duplicate_keys(self, contacts) -> None:
+        from unittest.mock import patch
+
+        from app.devsim.electrodes import detect_interfaces
+
+        doubled = detect_interfaces(contacts)
+        clashing = (*doubled, replace(doubled[0], edges=doubled[1].edges))
+        with patch("app.devsim.resolve.detect_interfaces", return_value=clashing):
+            with pytest.raises(ElectrodeNotFound, match="겹칩니다"):
+                resolve_electrodes(
+                    contacts, DeviceSpec.model_validate(spec_payload())
+                )

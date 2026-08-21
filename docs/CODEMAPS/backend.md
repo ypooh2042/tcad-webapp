@@ -62,31 +62,47 @@ Redis, 호스트 파일시스템을 통해서만 서로를 만난다.
 `jobs` 표를 나누지 않고 `kind` 한 칸으로 가른다. 큐·중단·타임아웃·로그·산출물·
 청소가 두 종류에서 완전히 같고, 다른 것은 워커가 무엇을 부르느냐뿐이다.
 
+### 계층 — 사용자가 손대는 것은 가운데 하나뿐이다
+
 ```
-브라우저: POST /api/devsim/jobs {job_id, sequence, spec}
-   │
-   ├─ 소유 확인 → 산출물(.str) 찾기
-   ├─ resolve_electrodes()      ★ 여기서 전극을 못 찾으면 즉시 422.
-   │                              워커까지 가면 사용자가 몇 분 뒤에 안다.
-   ├─ place_structure()         .str 을 잡 workdir 에 structure.str 로 복사.
-   │                              원본 산출물은 스윕에 지워질 수 있다.
+계면(interface)  구조에서 나온다. 금속 덩어리 하나, 뒷면 하나.
+                 사용자가 만들거나 고칠 수 없다 — 반도체 표면 아무 데나 접촉을
+                 걸 수 있게 하면 소자가 아니라 수치 실험이 된다.
+                 **이름(열쇠)은 반드시 서로 달라야 한다.** 겹치면 resolve 가
+                 뒤엣것으로 앞엣것을 덮어써 한쪽이 엉뚱한 자리에 걸린다
+                 (CMOS 의 게이트 둘이 실제로 그랬다).
+전극(electrode)  사용자가 계면을 묶는다. 한 계면은 한 전극에만 속한다.
+전압원(bias)     전극마다 정확히 하나.
+```
+
+### 흐름
+
+```
+공정 잡이 성공 → worker._save_structures
+   └─ catalog.place_files   전극이 있는 `.str` 만 골라 **잡 디렉토리 밖**으로
+                            (실측: 25단계 17MB 중 1개 1.4MB)
+                            같은 `.in` 의 옛 것은 파일·행 모두 지우고 새로 채운다
+
+브라우저: POST /api/devsim/jobs {structure_id, spec}
+   ├─ resolve_electrodes()      ★ 전극을 못 찾으면 즉시 422.
+   ├─ place_structure()         보관본을 잡 workdir 로 복사
    └─ enqueue(kind='devsim', source=<스펙 JSON>)
 
 워커 _execute → kind 로 분기 → app/devsim/service.run_device_simulation
-   │
-   ├─ remesh()                  ★ 선택이 아니라 필수. 원본 SUPREM 메시는
-   │                              실리콘 변의 23%가 EdgeCouple 0(둔각)이라
-   │                              뉴턴이 선다. 재메시하면 0 개가 된다.
-   ├─ build_payload()           좌표·요소·계면·접촉·도핑·바이어스 계획 → device.json
-   ├─ podman run tcad/devsim    /opt/devsim/run.py (이미지에 구워 넣은 고정 스크립트)
+   ├─ remesh()                  ★ 필수. 원본 SUPREM 메시는 실리콘 변의 23%가
+   │                              EdgeCouple 0(둔각)이라 뉴턴이 선다.
+   ├─ build_payload()           좌표·요소·계면·접촉·도핑·바이어스 계획
+   ├─ podman run tcad/devsim    /opt/devsim/run.py (이미지에 구워 넣은 스크립트)
+   │     ├─ 점마다 해를 떠 두고, 안 풀리면 **마지막 성공 자리로 되돌린 뒤**
+   │     │   그 점만 건너뛴다. 그냥 이어 가면 오염된 값 탓에 뒤가 다 실패한다.
    │     └─ 점마다 iv.jsonl 에 한 줄 flush → 진행률의 근거
    ├─ prune_workdir(keep_names={iv.json, iv.jsonl})
    └─ Artifact + DevSimResult 행(비교용 영구 보관)
 ```
 
 전극 판정은 SUPREM 원본의 `IS_CONT`(`upstream/src/include/device.h:35`)를 옮긴
-것이다 — **같은 알루미늄 덩어리에 닿은 계면은 하나의 전극**이므로 등전위가
-구성상 보장된다. 사용자가 만드는 것은 그 위의 전압원(전극을 묶는 계층)뿐이다.
+것이다 — **같은 알루미늄 덩어리에 닿은 변은 하나의 계면**이므로 그 안의 등전위는
+구성상 보장된다.
 
 ---
 
@@ -136,7 +152,7 @@ app/db/models.py  app/core/config.py
 | `routes_editor` | `/editor` | 필요 | 열어 둔 탭·커서·저장하지 않은 초안 보관 |
 | `routes_jobs` | (없음) | 필요 | 잡 상세(실행 시간·공정 진행 포함)·중단·산출물 원문, 예전 프로젝트 기반 제출 |
 | `routes_plot` | (없음) | 필요 | `.str` → 요약/프로파일/단면 |
-| `routes_devsim` | `/devsim` | 필요 | 전극 추출·소자 해석 제출·결과 조회·비교 목록 |
+| `routes_devsim` | `/devsim` | 필요 | 보관 구조·계면 추출·해석 제출·결과 조회·비교 목록 |
 | `routes_projects` | `/projects` | 필요 | 프로젝트·소스 리비전 (예전 모델) |
 | `routes_catalog` | `/catalog` | **불필요** | 커맨드 문법 조회·자동완성 |
 | `routes_docs` | `/docs` | **불필요** | 매뉴얼 검색·섹션·커맨드 레퍼런스 |

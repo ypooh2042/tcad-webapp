@@ -1,0 +1,67 @@
+# 전극 이름 겹침 시험용 최소 구조.
+# 폴리 게이트 둘과 금속 플러그 여섯(각 트랜지스터의 소스·게이트·드레인).
+# CMOS 처럼 같은 종류의 계면이 여럿일 때 이름이 겹치지 않는지 본다.
+
+line x loc=0.0 spacing=0.25 tag=left
+line x loc=4.0 spacing=0.25 tag=right
+line y loc=0.0 spacing=0.05 tag=top
+line y loc=0.4 spacing=0.2
+line y loc=1.5 spacing=0.5 tag=bottom
+
+region silicon xlo=left xhi=right ylo=top yhi=bottom
+bound exposed  xlo=left xhi=right ylo=top yhi=top
+bound backside xlo=left xhi=right ylo=bottom yhi=bottom
+initialize boron conc=1.0e15 ori=100
+
+deposit oxide thick=0.02
+deposit poly thick=0.3
+implant phosphorus energy=40 dose=5.0e15
+etch poly left p1.x=0.8
+etch poly start x=1.2 y=0.5
+etch continue x=2.8 y=0.5
+etch continue x=2.8 y=-3
+etch done x=1.2 y=-3
+etch poly right p1.x=3.2
+
+implant arsenic energy=50 dose=3.0e15
+diffuse time=10 temp=900
+
+deposit oxide thick=0.6
+etch oxide start x=-1 y=-0.5
+etch continue x=5 y=-0.5
+etch continue x=5 y=-2
+etch done x=-1 y=-2
+
+# 비아 여섯 개
+etch oxide start x=0.2 y=0.5
+etch continue x=0.5 y=0.5
+etch continue x=0.5 y=-2
+etch done x=0.2 y=-2
+etch oxide start x=0.85 y=-0.1
+etch continue x=1.15 y=-0.1
+etch continue x=1.15 y=-2
+etch done x=0.85 y=-2
+etch oxide start x=1.5 y=0.5
+etch continue x=1.8 y=0.5
+etch continue x=1.8 y=-2
+etch done x=1.5 y=-2
+etch oxide start x=2.2 y=0.5
+etch continue x=2.5 y=0.5
+etch continue x=2.5 y=-2
+etch done x=2.2 y=-2
+etch oxide start x=2.85 y=-0.1
+etch continue x=3.15 y=-0.1
+etch continue x=3.15 y=-2
+etch done x=2.85 y=-2
+etch oxide start x=3.5 y=0.5
+etch continue x=3.8 y=0.5
+etch continue x=3.8 y=-2
+etch done x=3.5 y=-2
+
+deposit aluminum thick=0.5
+etch aluminum start x=-1 y=-0.5
+etch continue x=5 y=-0.5
+etch continue x=5 y=-2
+etch done x=-1 y=-2
+
+structure out=twogate.str

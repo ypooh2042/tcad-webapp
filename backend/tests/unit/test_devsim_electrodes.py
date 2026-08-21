@@ -24,6 +24,7 @@ from app.devsim.electrodes import (
     backside_candidate,
     conductor_clusters,
     detect_electrodes,
+    detect_interfaces,
 )
 from app.str_parser import parse_structure
 
@@ -230,3 +231,70 @@ class TestConductorGateStaysOnThePolysilicon:
         gate = found["gate"]
         plug_top = semiconductor_mode["gate"].extent.y_min
         assert gate.extent.y_min >= plug_top - 0.4
+
+
+class TestNamesAreUnique:
+    """계면 열쇠는 반드시 서로 달라야 한다.
+
+    CMOS 처럼 트랜지스터가 둘이면 게이트도 둘이다. 예전에는 둘 다 `gate` 로
+    이름 붙었고, 그러면 화면만 헷갈리는 것으로 끝나지 않는다 —
+    `resolve_electrodes` 가 `{이름: 계면}` 으로 모으므로 **뒤엣것이 앞엣것을
+    덮어써서 한쪽 게이트가 엉뚱한 자리에 걸린다.** 조용히 틀리는 종류다.
+    """
+
+    @pytest.fixture
+    def two_gates(self):
+        return parse_structure((FIXTURES / "2d_two_gates.str").read_text())
+
+    def test_every_key_is_different(self, two_gates) -> None:
+        keys = [one.name for one in detect_interfaces(two_gates)]
+        assert len(keys) == len(set(keys)), keys
+
+    def test_both_gates_survive(self, two_gates) -> None:
+        gates = [
+            one
+            for one in detect_interfaces(two_gates)
+            if one.materials == ("poly",)
+        ]
+        assert len(gates) == 2
+        assert gates[0].name != gates[1].name
+
+    def test_gates_are_numbered_left_to_right(self, two_gates) -> None:
+        gates = [
+            one
+            for one in detect_interfaces(two_gates)
+            if one.materials == ("poly",)
+        ]
+        assert [one.name for one in gates] == ["gate1", "gate2"]
+        assert gates[0].extent.x_max < gates[1].extent.x_min
+
+    def test_the_gates_keep_their_own_geometry(self, two_gates) -> None:
+        # 이름이 겹치면 여기서 두 전극이 같은 변을 물게 된다.
+        gates = {
+            one.name: one
+            for one in detect_interfaces(two_gates)
+            if one.materials == ("poly",)
+        }
+        assert set(gates["gate1"].edges).isdisjoint(gates["gate2"].edges)
+
+    def test_a_lone_gate_keeps_the_plain_name(self, contacts) -> None:
+        # 트랜지스터가 하나뿐이면 번호를 붙이지 않는다. `gate1` 하나만 있는
+        # 화면은 무엇과 구분하려는 것인지 알 수 없다.
+        gates = [
+            one for one in detect_interfaces(contacts) if one.materials == ("poly",)
+        ]
+        assert [one.name for one in gates] == ["gate"]
+
+    def test_two_plain_contacts_are_source_and_drain(self, contacts) -> None:
+        keys = [one.name for one in detect_interfaces(contacts)]
+        assert keys == ["source", "gate", "drain", "body"]
+
+    def test_more_than_two_plain_contacts_are_numbered(self, two_gates) -> None:
+        # 넷이면 어느 것이 소스이고 드레인인지 구조만 보고는 알 수 없다.
+        # 아는 척하는 이름보다 번호가 정직하다.
+        keys = [
+            one.name
+            for one in detect_interfaces(two_gates)
+            if one.materials == ("silicon",) and one.origin == "metal"
+        ]
+        assert keys == ["contact1", "contact2", "contact3", "contact4"]

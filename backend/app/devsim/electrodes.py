@@ -243,38 +243,45 @@ def _name_electrodes(
 ) -> tuple[Electrode, ...]:
     """이름을 제안한다. 사용자가 화면에서 고칠 수 있으므로 어림짐작으로 충분하다.
 
+    다만 **서로 달라야 한다.** 이름이 곧 열쇠이고, 겹치면 화면이 헷갈리는 것으로
+    끝나지 않는다 — `resolve.resolve_electrodes` 가 `{이름: 계면}` 으로 모으므로
+    뒤엣것이 앞엣것을 덮어써서 한쪽이 엉뚱한 자리에 걸린다. CMOS 처럼 게이트가
+    둘이면 실제로 그렇게 됐다.
+
     게이트는 위치가 아니라 **무엇에 닿았는지**로 고른다. poly 에 닿았거나
-    (반도체 모드) 산화막에 닿았으면(도체 모드) 게이트다. 나머지는 왼쪽부터
-    source, drain 순으로 붙인다.
+    (반도체 모드) 산화막에 닿았으면(도체 모드) 게이트다.
+
+    나머지는 둘일 때만 source/drain 이라 부른다. 넷이면 어느 것이 소스이고
+    드레인인지 구조만 보고는 알 수 없다 — 아는 척하는 이름보다 번호가 정직하다.
     """
     ordered = sorted(candidates, key=lambda item: (item[0].x_min + item[0].x_max) / 2)
 
     def looks_like_gate(kind: ContactKind, materials: tuple[str, ...]) -> bool:
         return kind is ContactKind.INSULATOR or "poly" in materials
 
-    plain_names = deque(["source", "drain"])
+    gates = [item for item in ordered if looks_like_gate(item[1], item[2])]
+    plain = [item for item in ordered if not looks_like_gate(item[1], item[2])]
 
-    electrodes: list[Electrode] = []
-    extra = 0
-    for extent, kind, materials, edges in ordered:
-        if looks_like_gate(kind, materials):
-            name = "gate"
-        elif plain_names:
-            name = plain_names.popleft()
+    names: dict[int, str] = {}
+    for index, item in enumerate(gates, start=1):
+        names[id(item)] = "gate" if len(gates) == 1 else f"gate{index}"
+    for index, item in enumerate(plain, start=1):
+        if len(plain) == 2:
+            names[id(item)] = "source" if index == 1 else "drain"
         else:
-            extra += 1
-            name = f"contact{extra}"
-        electrodes.append(
-            Electrode(
-                name=name,
-                kind=kind,
-                materials=materials,
-                edges=edges,
-                extent=extent,
-                origin="metal",
-            )
+            names[id(item)] = f"contact{index}"
+
+    return tuple(
+        Electrode(
+            name=names[id(item)],
+            kind=item[1],
+            materials=item[2],
+            edges=item[3],
+            extent=item[0],
+            origin="metal",
         )
-    return tuple(electrodes)
+        for item in ordered
+    )
 
 
 def detect_electrodes(
