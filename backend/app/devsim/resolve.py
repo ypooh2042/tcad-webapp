@@ -23,6 +23,28 @@ class ElectrodeNotFound(ValueError):
     """스펙이 가리킨 계면을 구조에서 찾지 못했다."""
 
 
+def restorable(structure: Structure, spec: DeviceSpec) -> None:
+    """맡아 둔 조건을 이 구조에 되살릴 수 있는지만 본다.
+
+    `resolve_electrodes` 와 나눠 둔 이유는 **묻는 것이 다르기 때문**이다.
+    저장·복원이 지켜야 할 것은 "가리키는 계면이 실제로 있는가" 하나다. 계면이
+    아직 안 붙은 전극은 편집 도중의 정상적인 모습이므로 통과시킨다 — 그것까지
+    막으면 조건 저장이 통째로 멎는다.
+
+    해석을 돌릴 때 필요한 "전극마다 접촉 변이 최소 하나" 는 여기서 보지 않는다.
+    그쪽은 `resolve_electrodes` 가 잡 제출과 워커 양쪽에서 강제한다.
+    """
+    detected = detect_interfaces(structure, gate_model=spec.gate_model)
+    available = {found.name for found in detected}
+    for choice in spec.electrodes:
+        for key in choice.interfaces:
+            if key not in available:
+                raise ElectrodeNotFound(
+                    f"{key!r} 계면이 이 구조에 없습니다. "
+                    f"있는 것: {', '.join(sorted(available)) or '없음'}"
+                )
+
+
 def resolve_electrodes(
     structure: Structure, spec: DeviceSpec
 ) -> tuple[Electrode, ...]:

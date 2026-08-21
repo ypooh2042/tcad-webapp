@@ -641,3 +641,47 @@ describe('소자 해석으로 넘기기', () => {
     ).not.toBeInTheDocument()
   })
 })
+
+describe('다른 잡으로 갈아탈 때', () => {
+  // 실제 서버 로그에 이 흔적이 825 건 있었다. 잡마다 정확히 3 건씩(요약·물리량·
+  // 단면 한 세트) 404 가 났다.
+  //
+  // 원인: 보이는 단계는 곧바로 새 잡의 것으로 바뀌지만, 실제로 불러오는 단계는
+  // `useSettled` 가 잠시 옛 값을 붙들고 있다. 그 사이 **새 잡 번호 + 옛 단계
+  // 번호** 라는 있지도 않은 조합으로 요청이 나간다. 404 는 오류 배너까지 띄운다.
+  const OTHER = [{ sequence: 7, filename: 'other.str', size_bytes: 10 }]
+
+  it('옛 단계 번호를 새 잡에 대고 묻지 않는다', async () => {
+    const { rerender } = render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await waitFor(() => expect(plot.summary).toHaveBeenCalled())
+    plot.summary.mockClear()
+
+    rerender(<ResultView jobId={2} artifacts={OTHER} />)
+
+    await waitFor(() => expect(plot.summary).toHaveBeenCalled())
+    for (const [jobId, sequence] of plot.summary.mock.calls) {
+      if (jobId !== 2) continue
+      expect(OTHER.map((one) => one.sequence)).toContain(sequence)
+    }
+  })
+
+  it('갈아탄 뒤에는 새 잡의 단계를 실제로 불러온다', async () => {
+    const { rerender } = render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await waitFor(() => expect(plot.summary).toHaveBeenCalled())
+    plot.summary.mockClear()
+
+    rerender(<ResultView jobId={2} artifacts={OTHER} />)
+
+    await waitFor(() => expect(plot.summary).toHaveBeenCalledWith(2, 7))
+  })
+
+  it('갈아타는 것만으로 오류를 띄우지 않는다', async () => {
+    const { rerender } = render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    await waitFor(() => expect(plot.summary).toHaveBeenCalled())
+
+    rerender(<ResultView jobId={2} artifacts={OTHER} />)
+
+    await waitFor(() => expect(plot.summary).toHaveBeenCalledWith(2, 7))
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+})

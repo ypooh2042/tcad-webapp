@@ -144,12 +144,22 @@ class TestRejections:
         with pytest.raises(ValidationError, match="여러 번"):
             DeviceSpec.model_validate(payload)
 
-    def test_rejects_an_electrode_with_no_interface(self) -> None:
-        # 계면이 없는 전극은 걸 데가 없다.
+    def test_accepts_an_electrode_with_no_interface_yet(self) -> None:
+        """계면이 없는 전극은 **파싱에서 막지 않는다.**
+
+        "전극 추가" 를 누른 직후가 그 상태다. 여기서 막으면 편집 도중의 조건을
+        아예 맡아 둘 수 없어(422), 사용자는 저장된 줄 알고 새로고침했다가 그
+        전에 해 둔 것까지 잃는다.
+
+        걸 데가 없다는 판단 자체는 옳다 — 다만 그것은 **해석을 돌릴 때** 할 일이라
+        `resolve_electrodes` 로 옮겼다. 아래 시험이 그쪽을 지킨다.
+        """
         payload = build()
         payload["electrodes"][0]["interfaces"] = []
-        with pytest.raises(ValidationError):
-            DeviceSpec.model_validate(payload)
+
+        spec = DeviceSpec.model_validate(payload)
+
+        assert spec.electrodes[0].interfaces == []
 
     def test_rejects_duplicate_electrode_labels(self) -> None:
         payload = build()

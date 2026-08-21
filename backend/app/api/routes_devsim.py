@@ -38,7 +38,7 @@ from app.auth.models import Session
 from app.core.config import Settings
 from app.db.models import DevSimResult, DevSimState, Job, JobKind, SavedStructure
 from app.devsim.electrodes import Electrode, GateModel, detect_interfaces
-from app.devsim.resolve import ElectrodeNotFound, resolve_electrodes
+from app.devsim.resolve import ElectrodeNotFound, resolve_electrodes, restorable
 from app.devsim.screening import analysable
 from app.devsim.service import place_structure
 from app.devsim.spec import DeviceSpec, total_points
@@ -244,7 +244,7 @@ async def read_state(
         )
     try:
         spec = DeviceSpec.model_validate_json(row.spec)
-        resolve_electrodes(_structure(saved), spec)
+        restorable(_structure(saved), spec)
     except (ValueError, ElectrodeNotFound):
         logger.info(
             "맡아 둔 조건이 지금 구조에 맞지 않아 버립니다: %s", saved.source_path
@@ -268,7 +268,7 @@ async def write_state(
     저장이 된 줄 알았던 사용자에게는 그것이 곧 데이터를 잃은 일이다.
     """
     try:
-        resolve_electrodes(_structure(saved), payload.spec)
+        restorable(_structure(saved), payload.spec)
     except ElectrodeNotFound as error:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)

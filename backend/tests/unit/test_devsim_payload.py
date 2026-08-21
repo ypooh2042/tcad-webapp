@@ -194,3 +194,59 @@ class TestDuplicateInterfaceKeys:
                 resolve_electrodes(
                     contacts, DeviceSpec.model_validate(spec_payload())
                 )
+
+
+class TestEmptyElectrode:
+    """계면이 안 붙은 전극은 **여기서** 걸린다.
+
+    파싱(`DeviceSpec`)은 그것을 통과시킨다 — "전극 추가" 를 누른 직후가 그
+    상태이고, 거기서 막으면 편집 도중의 조건을 맡아 둘 수 없어 사용자가 저장한
+    줄 알고 새로고침했다가 잃는다. 대신 해석을 돌리기 직전인 이 자리에서 막는다.
+    잡 제출과 워커가 둘 다 여기를 거치므로 빈 전극으로 해석이 도는 일은 없다.
+    """
+
+    def test_refuses_to_resolve(self, contacts) -> None:
+        payload = spec_payload()
+        payload["electrodes"].append({"label": "새 전극", "interfaces": []})
+        payload["biases"].append(
+            {"name": "V새", "electrode": "새 전극", "role": "const", "value": 0.0}
+        )
+        spec = DeviceSpec.model_validate(payload)
+
+        with pytest.raises(ElectrodeNotFound, match="접촉 변"):
+            resolve_electrodes(contacts, spec)
+
+    def test_names_the_electrode_that_is_empty(self, contacts) -> None:
+        # 전극이 여럿일 때 어느 것인지 말해 주지 않으면 찾아다녀야 한다.
+        payload = spec_payload()
+        payload["electrodes"].append({"label": "새 전극", "interfaces": []})
+        payload["biases"].append(
+            {"name": "V새", "electrode": "새 전극", "role": "const", "value": 0.0}
+        )
+        spec = DeviceSpec.model_validate(payload)
+
+        with pytest.raises(ElectrodeNotFound, match="새 전극"):
+            resolve_electrodes(contacts, spec)
+
+    def test_restorable_lets_it_through(self, contacts) -> None:
+        """저장·복원 쪽은 통과시킨다. 묻는 것이 다르다."""
+        from app.devsim.resolve import restorable
+
+        payload = spec_payload()
+        payload["electrodes"].append({"label": "새 전극", "interfaces": []})
+        payload["biases"].append(
+            {"name": "V새", "electrode": "새 전극", "role": "const", "value": 0.0}
+        )
+        spec = DeviceSpec.model_validate(payload)
+
+        restorable(contacts, spec)  # 예외가 나지 않아야 한다
+
+    def test_restorable_still_catches_a_missing_interface(self, contacts) -> None:
+        from app.devsim.resolve import restorable
+
+        payload = spec_payload()
+        payload["electrodes"][0]["interfaces"] = ["그런계면없음"]
+        spec = DeviceSpec.model_validate(payload)
+
+        with pytest.raises(ElectrodeNotFound, match="그런계면없음"):
+            restorable(contacts, spec)

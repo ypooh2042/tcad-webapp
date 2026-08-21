@@ -61,7 +61,15 @@ class ElectrodeChoice(BaseModel):
     """
 
     label: str = Field(min_length=1, max_length=32)
-    interfaces: list[str] = Field(min_length=1, max_length=16)
+    #: **비어 있어도 받는다.** "전극 추가" 를 누른 직후가 그 상태이고, 그것은
+    #: 편집 도중의 정상적인 모습이지 망가진 조건이 아니다. 여기서 막으면 그
+    #: 순간부터 조건 저장이 통째로 거절되어(422), 사용자는 저장된 줄 알고
+    #: 새로고침했다가 그 전에 해 둔 것까지 잃는다.
+    #:
+    #: 해석을 **실행**할 때 필요한 "계면이 최소 하나" 는 `resolve_electrodes`
+    #: 가 강제한다(거기서 접촉 변이 없으면 거절한다). 잡 제출과 워커가 둘 다
+    #: 그것을 거치므로 빈 전극으로 해석이 도는 일은 없다.
+    interfaces: list[str] = Field(max_length=16)
 
     @model_validator(mode="after")
     def _no_repeats(self) -> ElectrodeChoice:

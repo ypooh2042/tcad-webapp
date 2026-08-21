@@ -105,7 +105,16 @@ export function ResultView({ jobId, artifacts, onAnalyse }: Props) {
   //: 곧바로 바뀌어야 누른 것이 느껴지고, 데이터는 멎은 뒤에 한 번만 받으면
   //: 된다. 지나치는 단계까지 받으면 단계당 요청 4개(요약·물리량·단면)가
   //: 그대로 곱해져 nginx 레이트 리밋(20 req/s)에 걸려 503 이 난다.
-  const sequence = useSettled(current?.sequence ?? null, LOAD_SETTLE_MS)
+  const settled = useSettled(current?.sequence ?? null, LOAD_SETTLE_MS)
+
+  //: 그리고 **이 잡에 없는 번호는 아예 묻지 않는다.** 잡을 갈아타면 보이는
+  //: 단계는 곧바로 새것이 되지만 불러올 단계는 위에서 잠시 옛 값을 붙들고
+  //: 있어서, 그 사이 "새 잡 번호 + 옛 단계 번호" 라는 있지도 않은 조합이
+  //: 나간다. 서버 로그에 잡마다 3 건씩(요약·물리량·단면) 404 가 쌓였고,
+  //: 그때마다 오류 배너가 떴다. 곧 위쪽이 따라잡으므로 한 박자 쉬면 된다.
+  const sequence = artifacts.some((one) => one.sequence === settled)
+    ? settled
+    : null
 
   const report = useCallback((caught: unknown) => {
     setError(caught instanceof ApiError ? caught.message : '결과를 읽지 못했습니다')

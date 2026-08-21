@@ -63,6 +63,20 @@ def spec_body(**overrides) -> dict:
     return body
 
 
+def with_new_electrode() -> dict:
+    """화면에서 "전극 추가" 를 누른 직후의 조건.
+
+    프런트의 `addElectrode` 와 같은 모양이다 — 계면은 아직 없고, 전압원은
+    함께 생긴다(`features/devsim/deviceSpec.ts`).
+    """
+    spec = spec_body()
+    spec["electrodes"].append({"label": "새 전극", "interfaces": []})
+    spec["biases"].append(
+        {"name": "V새 전극", "electrode": "새 전극", "role": "const", "value": 0.0}
+    )
+    return spec
+
+
 @pytest.fixture
 async def app(tmp_path):
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -788,6 +802,66 @@ class TestSavedConditions:
         again = await store_structure(app, tmp_path, "contacts.in", "contacts.str")
         body = (await client.get(f"/api/devsim/structures/{again}/state")).json()
         assert body["spec"]["label"] == "내 조건"
+
+    async def test_keeps_an_electrode_that_has_no_interface_yet(
+        self, client, saved
+    ) -> None:
+        """**"전극 추가" 를 누른 직후의 상태도 맡아 둘 수 있어야 한다.**
+
+        계면이 아직 안 붙은 전극은 편집 도중의 정상적인 모습이지 망가진 조건이
+        아니다. 그런데 저장이 이것을 거절하는 바람에(422) 그 순간부터 조건이
+        전혀 저장되지 않았다 — 사용자는 저장된 줄 알고 새로고침했다가 그 전에
+        해 둔 것까지 잃었다. 실제 서버 로그에 12 건 찍혀 있었다.
+
+        해석을 **실행**할 때 거절하는 것은 그대로다. 그쪽은 따로 검사한다.
+        """
+        spec = with_new_electrode()
+
+        response = await client.put(
+            f"/api/devsim/structures/{saved}/state", json={"spec": spec}
+        )
+
+        assert response.status_code == 204, response.text
+
+    async def test_gives_the_empty_electrode_back(self, client, saved) -> None:
+        spec = with_new_electrode()
+        await client.put(
+            f"/api/devsim/structures/{saved}/state", json={"spec": spec}
+        )
+
+        body = (await client.get(f"/api/devsim/structures/{saved}/state")).json()
+
+        labels = [one["label"] for one in body["spec"]["electrodes"]]
+        assert "새 전극" in labels
+
+    async def test_still_refuses_an_interface_the_structure_lacks(
+        self, client, saved
+    ) -> None:
+        """이쪽은 계속 거절해야 한다. 없는 자리를 가리키는 조건을 되살리면
+        사용자는 자기가 짠 적 없는 설정을 자기 것으로 알고 읽게 된다."""
+        spec = spec_body()
+        spec["electrodes"][0]["interfaces"] = ["그런계면없음"]
+
+        response = await client.put(
+            f"/api/devsim/structures/{saved}/state", json={"spec": spec}
+        )
+
+        assert response.status_code == 422
+
+    async def test_running_still_refuses_an_empty_electrode(
+        self, client, saved
+    ) -> None:
+        """저장을 완화했다고 실행까지 통과시키면 안 된다."""
+        spec = with_new_electrode()
+
+        response = await client.post(
+            "/api/devsim/jobs", json={"structure_id": saved, "spec": spec}
+        )
+
+        assert response.status_code == 422
+        # 파싱이 아니라 **전극 해석**에서 걸려야 한다. 파싱에서 막으면 저장까지
+        # 같이 막혀 원래 문제로 돌아간다.
+        assert "새 전극" in response.text and "접촉 변" in response.text
 
     async def test_conditions_do_not_leak_across_source_files(
         self, app, client, tmp_path, saved
