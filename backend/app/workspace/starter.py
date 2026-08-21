@@ -15,6 +15,8 @@ import logging
 import shutil
 from pathlib import Path
 
+from app.devsim.catalog import Placed, place_one
+
 logger = logging.getLogger(__name__)
 
 EXAMPLES = Path(__file__).parent / "examples"
@@ -46,3 +48,39 @@ def seed(root: Path) -> tuple[str, ...]:
             continue
         placed.append(name)
     return tuple(placed)
+
+
+#: 소자 해석 탭에 처음부터 들어 있는 구조와, 그것을 만든 공정 코드.
+#:
+#: 작업공간에는 `.in` 만 들어간다. 그런데 소자 해석은 **실행 결과**를 입력으로
+#: 받으므로, 예제를 한 번 돌리기 전에는 그 탭이 비어 있다. 처음 들어온 사람이
+#: 거기서 아무것도 못 보는 것을 막으려고 결과도 함께 넣는다.
+#:
+#: 이름표를 `.in` 쪽에 맞춰 둔다. 사용자가 자기 `nmos.in` 을 돌리면 그 결과가
+#: 이 자리를 대신한다 — 같은 `.in` 에서 나온 것은 갈아 끼우는 규칙(catalog)이
+#: 그대로 적용된다.
+STARTER_SOURCE = "nmos.in"
+STARTER_STRUCTURE = "nmos.str"
+
+#: 이 구조가 `nmos.in` 의 몇 번째 단계인지. 25단계 흐름의 마지막이다.
+STARTER_SEQUENCE = 25
+
+
+def seed_structure(structures_root: Path, owner_id: int) -> Placed | None:
+    """예제 구조를 보관소에 넣는다. 실패하면 조용히 넘어간다.
+
+    가입이 이것 때문에 막히면 안 된다 — 구조가 없어도 앱은 멀쩡히 돌아가고,
+    사용자가 예제를 한 번 돌리면 채워진다.
+    """
+    source = EXAMPLES / STARTER_STRUCTURE
+    try:
+        return place_one(
+            structures_root,
+            owner_id=owner_id,
+            source_path=STARTER_SOURCE,
+            sequence=STARTER_SEQUENCE,
+            path=source,
+        )
+    except OSError:
+        logger.warning("예제 구조를 넣지 못했습니다", exc_info=True)
+        return None

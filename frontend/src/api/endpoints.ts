@@ -7,6 +7,7 @@ import type { JobStatus,
   DevSimRunDetail,
   DevSimRunSummary,
   DevSimSubmitResponse,
+  IvDataset,
   GateModel,
   StructureSource,
   DocsReference,
@@ -260,7 +261,27 @@ export const devsim = {
       body: { structure_id: structureId, spec },
     }),
 
-  /** 끝난 해석 목록. 비교 화면이 여기서 고른다. */
+  /** 방금 돌린 해석의 곡선. 저장 여부와 무관하게 산출물에서 읽는다. */
+  result: (jobId: number) =>
+    request<IvDataset>(`/api/devsim/jobs/${jobId}/result`),
+
+  /** 이름을 붙여 남긴다. 돌린 것을 전부 쌓지 않는다. */
+  save: (jobId: number, label: string) =>
+    request<DevSimRunSummary>('/api/devsim/runs', {
+      method: 'POST',
+      body: { job_id: jobId, label },
+    }),
+
+  rename: (jobId: number, label: string) =>
+    request<DevSimRunSummary>(`/api/devsim/runs/${jobId}`, {
+      method: 'PATCH',
+      body: { label },
+    }),
+
+  forget: (jobId: number) =>
+    request<null>(`/api/devsim/runs/${jobId}`, { method: 'DELETE' }),
+
+  /** 저장해 둔 해석 목록. 비교 화면이 여기서 고른다. */
   runs: () => request<DevSimRunSummary[]>('/api/devsim/runs'),
 
   run: (jobId: number) =>
@@ -274,6 +295,7 @@ export type {
   DevSimRunDetail,
   DevSimRunSummary,
   DevSimSubmitResponse,
+  IvDataset,
   GateModel,
   StructureSource,
   DocsReference,

@@ -71,9 +71,16 @@ class ElectrodeChoice(BaseModel):
 
 
 class SweepRange(BaseModel):
+    """스윕 구간. **점 개수**로 정한다.
+
+    간격으로 정하면 `0 → 1` 을 `0.3` 씩 훑을 때 몇 점이 나오는지 손으로 세야
+    하고, 끝점이 걸리는지 안 걸리는지도 눈에 안 보인다. 실행 시간은 점 개수에
+    비례하므로, 사용자가 정하려는 것과 숫자가 일치한다.
+    """
+
     start: float = Field(ge=-MAX_ABS_VOLTS, le=MAX_ABS_VOLTS)
     stop: float = Field(ge=-MAX_ABS_VOLTS, le=MAX_ABS_VOLTS)
-    step: float = Field(gt=0.0, le=MAX_ABS_VOLTS)
+    points: int = Field(gt=0)
 
 
 class Bias(BaseModel):
@@ -110,7 +117,7 @@ class Bias(BaseModel):
         if self.role is BiasRole.STEP:
             return list(self.values or [])
         assert self.sweep is not None
-        return sweep_values(self.sweep.start, self.sweep.stop, self.sweep.step)
+        return sweep_values(self.sweep.start, self.sweep.stop, self.sweep.points)
 
 
 class DeviceSpec(BaseModel):
@@ -208,26 +215,19 @@ class DeviceSpec(BaseModel):
         return self
 
 
-def sweep_values(start: float, stop: float, step: float) -> list[float]:
-    """양 끝을 포함하는 스윕 점.
+def sweep_values(start: float, stop: float, points: int) -> list[float]:
+    """구간을 고르게 나눈 전압들. 양 끝을 반드시 포함한다.
 
-    간격이 구간을 딱 나누지 않아도 마지막 점은 `stop` 이다. 스윕이 목표 전압에
-    못 미치고 끝나면 그 지점의 값을 못 얻는다.
+    간격을 받던 시절에는 간격이 구간을 딱 나누지 않을 때 끝점을 따로 붙여야
+    했고, 그래서 점 개수가 사용자가 센 것과 어긋났다. 개수를 받으면 그런 일이
+    없다.
     """
-    if step <= 0:
-        raise ValueError("스윕 간격은 0 보다 커야 합니다")
-    if start == stop:
+    if points <= 0:
+        return []
+    if points == 1 or start == stop:
         return [start]
-
-    direction = 1.0 if stop > start else -1.0
-    span = abs(stop - start)
-    count = int(span / step)
-    values = [start + direction * step * i for i in range(count + 1)]
-    if abs(values[-1] - stop) > step * 1e-9:
-        values.append(stop)
-    else:
-        values[-1] = stop
-    return values
+    span = stop - start
+    return [start + span * index / (points - 1) for index in range(points)]
 
 
 def total_points(spec: DeviceSpec) -> int:

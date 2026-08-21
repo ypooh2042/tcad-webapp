@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { IvDataset, IvRow } from '../../api/types'
-import { dominantBias, figuresOf, seriesOf } from './figures'
+import { dominantBias, figuresOf, seriesOf, toMicroAmps } from './figures'
 
 /**
  * 문턱전압 1V, 선형영역 이득 1e-4 인 교과서 nMOS 의 전달 특성.
@@ -28,7 +28,7 @@ function transfer(vth = 1.0): IvDataset {
   return {
     sweep: 'Vg',
     biases: ['Vd', 'Vg'],
-    current_unit: 'A/um',
+    current_unit: 'uA/um',
     rows,
     total: rows.length,
     completed: rows.length,
@@ -51,7 +51,7 @@ function output(): IvDataset {
   return {
     sweep: 'Vd',
     biases: ['Vd', 'Vg'],
-    current_unit: 'A/um',
+    current_unit: 'uA/um',
     rows,
     total: rows.length,
     completed: rows.length,
@@ -161,5 +161,38 @@ describe('figuresOf — 데이터가 모자랄 때', () => {
     expect(found.iOn).toBe(0)
     expect(found.vth).toBeNull()
     expect(found.gmMax).toBeNull()
+  })
+})
+
+describe('단위 맞추기', () => {
+  it('µA/µm 은 그대로 둔다', () => {
+    expect(toMicroAmps(3.24, 'uA/um')).toBeCloseTo(3.24)
+  })
+
+  it('A/µm 은 µA/µm 로 올린다', () => {
+    // 예전에 저장한 결과가 A/µm 로 남아 있다. 그대로 겹쳐 그리면 한쪽 곡선이
+    // 바닥에 눌려 붙어 비교가 되지 않는다.
+    expect(toMicroAmps(3.24e-5, 'A/um')).toBeCloseTo(32.4)
+  })
+
+  it('모르는 단위는 건드리지 않는다', () => {
+    // 조용히 배수를 곱하면 틀린 값을 맞는 것처럼 보여준다.
+    expect(toMicroAmps(5, 'mA/mm')).toBe(5)
+    expect(toMicroAmps(5, undefined)).toBe(5)
+  })
+})
+
+describe('seriesOf — 단위', () => {
+  it('A/µm 로 저장된 곡선을 µA/µm 로 올려 준다', () => {
+    const old = { ...transfer(), current_unit: 'A/um' }
+    const [curve] = seriesOf(old, 'Vd')
+    const peak = Math.max(...curve.points.map((p) => Math.abs(p.y)))
+    expect(peak).toBeCloseTo(2e-4 * 1e6, 1)
+  })
+
+  it('µA/µm 로 저장된 곡선은 그대로 쓴다', () => {
+    const [curve] = seriesOf(transfer(), 'Vd')
+    const peak = Math.max(...curve.points.map((p) => Math.abs(p.y)))
+    expect(peak).toBeCloseTo(2e-4, 6)
   })
 })

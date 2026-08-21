@@ -21,7 +21,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -118,9 +118,20 @@ class RunSummary(BaseModel):
     job_id: int
     label: str
     structure: str
+    #: 이 결과를 만든 `.in`. 비교 화면이 출처를 보여줄 때 쓴다.
+    source_path: str
     created_at: str
     completed: int
     total: int
+
+
+class SaveRequest(BaseModel):
+    job_id: int
+    label: str = Field(min_length=1, max_length=120)
+
+
+class RenameRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=120)
 
 
 class RunDetail(RunSummary):
@@ -269,7 +280,7 @@ async def submit(
         owner_id=int(session.user_id),
         source_revision_id=None,
         workdir=str(workdir),
-        source_path=saved.filename,
+        source_path=saved.source_path,
         source=spec.model_dump_json(),
         kind=JobKind.DEVSIM,
     )
@@ -283,10 +294,100 @@ def _summary_of(row: DevSimResult, data: dict) -> RunSummary:
         job_id=row.job_id,
         label=row.label,
         structure=row.structure,
+        source_path=row.source_path,
         created_at=row.created_at.isoformat(),
         completed=int(data.get("completed", 0)),
         total=int(data.get("total", 0)),
     )
+
+
+def _dataset_of(job: Job) -> dict:
+    """잡이 남긴 곡선. 산출물에서 읽는다.
+
+    표에는 사용자가 이름을 붙여 저장한 것만 들어간다. 방금 돌린 결과를 보려면
+    산출물을 봐야 한다.
+    """
+    if job.kind != JobKind.DEVSIM:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="소자 해석 잡이 아닙니다"
+        )
+    path = Path(job.workdir) / "iv.json"
+    try:
+        return _loads(path.read_text())
+    except OSError:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="결과가 정리되어 더 이상 남아 있지 않습니다",
+        ) from None
+
+
+@router.get("/jobs/{job_id}/result")
+async def job_result(job: Job = Depends(owned_job)) -> dict:
+    """방금 돌린 해석의 곡선."""
+    return _dataset_of(job)
+
+
+@router.post("/runs", status_code=status.HTTP_201_CREATED)
+async def save_run(
+    payload: SaveRequest,
+    session: Session = Depends(current_session),
+    db: AsyncSession = Depends(get_db),
+) -> RunSummary:
+    """해석 결과에 이름을 붙여 남긴다."""
+    job = await db.get(Job, payload.job_id)
+    if job is None or job.owner_id != int(session.user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="잡을 찾을 수 없습니다"
+        )
+    data = _dataset_of(job)
+    if not data.get("rows"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="풀린 점이 없어 저장할 것이 없습니다",
+        )
+
+    spec = _loads(job.source or "{}")
+    row = await db.get(DevSimResult, job.id)
+    if row is None:
+        row = DevSimResult(job_id=job.id, owner_id=job.owner_id)
+        db.add(row)
+    # 같은 잡을 다시 저장하면 이름만 바뀐다. 같은 곡선이 두 줄로 쌓이면
+    # 비교 목록에서 어느 쪽이 무엇인지 구분할 수 없다.
+    row.label = payload.label
+    row.structure = str(spec.get("structure") or "")[:255]
+    row.source_path = str(job.source_path or "")[:1024]
+    row.spec = job.source or "{}"
+    row.data = json.dumps(data)
+    await db.commit()
+    return _summary_of(row, data)
+
+
+@router.patch("/runs/{job_id}")
+async def rename_run(
+    payload: RenameRequest,
+    job: Job = Depends(owned_job),
+    db: AsyncSession = Depends(get_db),
+) -> RunSummary:
+    row = await db.get(DevSimResult, job.id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="저장된 해석 결과가 없습니다",
+        )
+    row.label = payload.label
+    await db.commit()
+    return _summary_of(row, _loads(row.data))
+
+
+@router.delete("/runs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def forget_run(
+    job: Job = Depends(owned_job),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    row = await db.get(DevSimResult, job.id)
+    if row is not None:
+        await db.delete(row)
+        await db.commit()
 
 
 @router.get("/structures")

@@ -13,6 +13,7 @@
  */
 import type { Bias, BiasRole, DeviceSpec } from '../../api/types'
 import { CURVE_COLORS } from './IvChart'
+import { sweepGap } from './deviceSpec'
 import { NumberField, NumberListField } from './NumberField'
 
 interface Props {
@@ -34,16 +35,22 @@ function replaceBias(spec: DeviceSpec, index: number, bias: Bias): DeviceSpec {
   }
 }
 
-const SWEEP_FIELDS = [
-  ['start', '시작'],
-  ['stop', '끝'],
-  ['step', '간격'],
-] as const
-
 const ROLE_LABEL: Record<BiasRole, string> = {
   sweep: '스윕 (가로축)',
   step: '단계 (곡선족)',
   const: '고정',
+}
+
+const DEFAULT_SWEEP = { start: 0, stop: 2.5, points: 6 }
+
+function sweepOf(bias: Bias) {
+  return bias.sweep ?? DEFAULT_SWEEP
+}
+
+function formatGap(sweep: { start: number; stop: number; points: number }): string {
+  const gap = sweepGap(sweep.start, sweep.stop, sweep.points)
+  if (gap === 0) return '한 점뿐이라'
+  return `${Number(Math.abs(gap).toPrecision(4))}V`
 }
 
 export function colorOfIndex(index: number): string {
@@ -155,11 +162,8 @@ export function SourceEditor({
                       ...bias,
                       role,
                       value: role === 'const' ? (bias.value ?? 0) : undefined,
-                      values: role === 'step' ? (bias.values ?? [0, 1, 2]) : undefined,
-                      sweep:
-                        role === 'sweep'
-                          ? (bias.sweep ?? { start: 0, stop: 2, step: 0.25 })
-                          : undefined,
+                      values: role === 'step' ? (bias.values ?? [1, 2, 4]) : undefined,
+                      sweep: role === 'sweep' ? (bias.sweep ?? DEFAULT_SWEEP) : undefined,
                     }),
                   )
                 }}
@@ -193,26 +197,46 @@ export function SourceEditor({
             ) : null}
 
             {bias.role === 'sweep' ? (
-              <div className="sweep-fields">
-                {SWEEP_FIELDS.map(([field, label]) => (
+              <>
+                <div className="sweep-fields">
+                  {(['start', 'stop'] as const).map((field) => (
+                    <NumberField
+                      key={field}
+                      label={field === 'start' ? '시작 (V)' : '끝 (V)'}
+                      value={bias.sweep?.[field] ?? 0}
+                      onChange={(value) =>
+                        onChange(
+                          replaceBias(spec, index, {
+                            ...bias,
+                            sweep: { ...sweepOf(bias), [field]: value },
+                          }),
+                        )
+                      }
+                    />
+                  ))}
                   <NumberField
-                    key={field}
-                    label={label}
-                    value={bias.sweep?.[field] ?? 0}
+                    label="점 개수"
+                    value={sweepOf(bias).points}
                     onChange={(value) =>
                       onChange(
                         replaceBias(spec, index, {
                           ...bias,
                           sweep: {
-                            ...(bias.sweep ?? { start: 0, stop: 2, step: 0.25 }),
-                            [field]: value,
+                            ...sweepOf(bias),
+                            points: Math.max(1, Math.round(value)),
                           },
                         }),
                       )
                     }
                   />
-                ))}
-              </div>
+                </div>
+                {/* 점 개수만 보면 얼마나 촘촘한지 감이 안 온다. 간격은 계산해
+                    보여주기만 하고 고치게 하지 않는다 — 둘 다 고칠 수 있으면
+                    어느 쪽이 기준인지 알 수 없다. */}
+                <p className="hint">
+                  {formatGap(sweepOf(bias))} 간격 · {sweepOf(bias).points}점
+                </p>
+              </>
             ) : null}
           </div>
         ))}

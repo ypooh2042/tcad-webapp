@@ -267,8 +267,13 @@ export interface Bias {
   value?: number
   /** role='step' — 곡선족을 만든다. */
   values?: number[]
-  /** role='sweep' — 곡선의 x 축. */
-  sweep?: { start: number; stop: number; step: number }
+  /**
+   * role='sweep' — 곡선의 x 축.
+   *
+   * 간격이 아니라 **점 개수**로 정한다. 실행 시간이 점 개수에 비례하므로
+   * 사용자가 정하려는 것과 숫자가 일치한다.
+   */
+  sweep?: { start: number; stop: number; points: number }
 }
 
 /** 전극 하나. 계면 몇 개를 한 전위로 묶은 것이다. */
@@ -323,6 +328,8 @@ export interface DevSimRunSummary {
   job_id: number
   label: string
   structure: string
+  /** 이 결과를 만든 `.in`. 비교 화면이 출처를 보여줄 때 쓴다. */
+  source_path: string
   created_at: string
   completed: number
   total: number

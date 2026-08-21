@@ -86,8 +86,8 @@ test('공정 결과를 소자 해석으로 넘겨 I-V 를 뽑는다', async ({
 
   // 스윕을 세 점으로 줄인다. 곡선이 나오는지만 보면 된다.
   const sweep = page.locator('.bias[data-role="sweep"]')
-  await sweep.getByLabel('끝').fill('1')
-  await sweep.getByLabel('간격').fill('0.5')
+  await sweep.getByLabel('끝 (V)').fill('1')
+  await sweep.getByLabel('점 개수').fill('3')
 
   await page.getByRole('button', { name: '해석 실행' }).click()
 
@@ -176,16 +176,19 @@ test('전압을 소수로 칠 수 있다', async ({ page, context }) => {
   await values.pressSequentially('0.4, 0.8, 1.2')
   await expect(values).toHaveValue('0.4, 0.8, 1.2')
 
-  // 스윕 칸도 같은 문제를 겪었다.
+  // 스윕의 끝 전압도 같은 문제를 겪었다.
   const sweep = page.locator('.bias[data-role="sweep"]')
-  const gap = sweep.getByLabel('간격')
-  await gap.fill('')
-  await gap.pressSequentially('0.05')
-  await expect(gap).toHaveValue('0.05')
+  const stop = sweep.getByLabel('끝 (V)')
+  await stop.fill('')
+  await stop.pressSequentially('1.25')
+  await expect(stop).toHaveValue('1.25')
+
+  // 간격은 점 개수에서 계산해 보여주기만 한다.
+  await expect(sweep.getByText(/0\.25V 간격/)).toBeVisible()
 
   // 소수가 실제로 조건에 들어갔는지는 점 개수로 확인된다.
-  // 0~2V 를 0.05 씩 → 41점, 단계 3개 → 123점.
-  await expect(page.getByText('바이어스 점 123개')).toBeVisible()
+  // 스윕 6점 × 단계 3개 = 18점.
+  await expect(page.getByText('바이어스 점 18개')).toBeVisible()
   await expect(page.locator('.problems')).toHaveCount(0)
 })
 
@@ -253,13 +256,12 @@ test('금속이 없는 단계는 소자 해석으로 넘길 수 없다', async (
 
   // 소자 해석 탭의 구조 목록에도 올라오지 않는다.
   //
-  // <option> 자체는 Playwright 가 숨은 것으로 보므로 <select> 쪽에서 본다.
-  await page.getByRole('tab', { name: '소자 해석' }).click()
+  // 가입할 때 들어가는 예제(`nmos.str`)만 남아 있어야 한다.
+  await page.getByRole('tab', { name: /소자 해석/ }).click()
   const picker = page.locator('.devsim-bar select').first()
-  await expect(picker).toContainText('전극이 있는 실행 결과가 없습니다', {
-    timeout: 30_000,
-  })
-  await expect(picker.locator('option')).toHaveCount(1)
+  await expect(picker.locator('option')).toHaveCount(1, { timeout: 30_000 })
+  await expect(picker).toContainText('nmos.str')
+  await expect(picker).not.toContainText('bare.str')
 })
 
 test('같은 .in 을 다시 돌리면 그 구조가 갈아 끼워진다', async ({
@@ -273,9 +275,10 @@ test('같은 .in 을 다시 돌리면 그 구조가 갈아 끼워진다', async 
   await signUp(page, uniqueEmail('rerun'))
 
   await runProcess(page)
-  await page.getByRole('tab', { name: '소자 해석' }).click()
+  await page.getByRole('tab', { name: /소자 해석/ }).click()
   const picker = page.locator('.devsim-bar select').first()
-  await expect(picker.locator('option')).toHaveCount(1, { timeout: 30_000 })
+  // 가입할 때 들어간 예제와 방금 돌린 것, 둘이다.
+  await expect(picker.locator('option')).toHaveCount(2, { timeout: 30_000 })
   await expect(picker).toContainText('contacts.str')
 
   // 같은 파일에서 금속을 빼고 다시 돌린다.
@@ -300,12 +303,10 @@ test('같은 .in 을 다시 돌리면 그 구조가 갈아 끼워진다', async 
     timeout: 120_000,
   })
 
-  // 옛 구조가 사라져 있어야 한다.
-  await page.getByRole('tab', { name: '소자 해석' }).click()
-  await expect(picker).toContainText('전극이 있는 실행 결과가 없습니다', {
-    timeout: 30_000,
-  })
-  await expect(picker.locator('option')).toHaveCount(1)
+  // 옛 구조가 사라지고 예제만 남아야 한다.
+  await page.getByRole('tab', { name: /소자 해석/ }).click()
+  await expect(picker.locator('option')).toHaveCount(1, { timeout: 30_000 })
+  await expect(picker).not.toContainText('contacts.str')
 })
 
 test('계면 이름을 바꾸면 전극 옆 표시도 따라간다', async ({ page, context }) => {
@@ -366,13 +367,129 @@ test('게이트가 둘이어도 각각 따로 다룬다', async ({ page, context
   await expect(chips.filter({ hasText: /^gate2$/ })).toHaveCount(1)
 })
 
+test('저장을 눌러야 비교 목록에 올라간다', async ({ page, context }) => {
+  // 조건을 조금씩 바꿔 가며 여남은 번 돌리는 것이 보통이다. 그것이 다 쌓이면
+  // 정작 비교하고 싶은 둘을 그 안에서 찾아야 한다.
+  test.setTimeout(300_000)
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signUp(page, uniqueEmail('save'))
+
+  await runProcess(page)
+  await page.getByRole('button', { name: '소자 해석' }).click()
+
+  const sweep = page.locator('.bias[data-role="sweep"]')
+  await expect(sweep).toBeVisible({ timeout: 30_000 })
+  await sweep.getByLabel('끝 (V)').fill('1')
+  await sweep.getByLabel('점 개수').fill('2')
+  const step = page.locator('.bias[data-role="step"]')
+  await step.getByLabel('단계 전압 (쉼표로 구분, V)').fill('2')
+
+  await page.getByRole('button', { name: '해석 실행' }).click()
+  await expect(page.locator('.run-result .status-succeeded')).toBeVisible({
+    timeout: 240_000,
+  })
+
+  // 아직 아무것도 저장되지 않았다.
+  await page.locator('.devsim-tabs').getByRole('tab', { name: '비교' }).click()
+  await expect(page.getByText('저장된 해석이 아직 없습니다')).toBeVisible()
+
+  // 이름을 붙여 저장한다.
+  await page.locator('.devsim-tabs').getByRole('tab', { name: '해석' }).click()
+  await page.getByLabel('해석 이름').fill('두꺼운 산화막')
+  await page.getByRole('button', { name: '저장' }).click()
+  await expect(page.getByText(/저장했습니다/)).toBeVisible()
+
+  // 비교 목록에 뜨고, 어느 코드에서 나왔는지 보인다.
+  await page.locator('.devsim-tabs').getByRole('tab', { name: '비교' }).click()
+  const entry = page.locator('.compare-picker li').first()
+  await expect(entry).toContainText('두꺼운 산화막')
+  await entry.getByRole('checkbox').check()
+  await expect(page.locator('.origins')).toContainText('contacts.in')
+
+  // 이름을 고칠 수 있다.
+  await page.locator('.origins .link').click()
+  const rename = page.locator('.origins input')
+  await rename.fill('얇은 산화막')
+  await rename.press('Enter')
+  await expect(page.locator('.compare-picker li').first()).toContainText(
+    '얇은 산화막',
+  )
+})
+
+test('전류 단위가 µA/µm 로 나온다', async ({ page, context }) => {
+  test.setTimeout(300_000)
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signUp(page, uniqueEmail('unit'))
+
+  await page.getByRole('tab', { name: /소자 해석/ }).click()
+  const sweep = page.locator('.bias[data-role="sweep"]')
+  await expect(sweep).toBeVisible({ timeout: 30_000 })
+
+  // 기본 조건: 게이트 1, 2, 4 V / 드레인 0~2.5 V 6점.
+  await expect(
+    page.locator('.bias[data-role="step"]').getByLabel(/단계 전압/),
+  ).toHaveValue('1, 2, 4')
+  await expect(sweep.getByLabel('끝 (V)')).toHaveValue('2.5')
+  await expect(sweep.getByLabel('점 개수')).toHaveValue('6')
+  await expect(sweep.getByText(/0\.5V 간격/)).toBeVisible()
+
+  // 빠르게 끝나도록 줄인다.
+  await sweep.getByLabel('끝 (V)').fill('1')
+  await sweep.getByLabel('점 개수').fill('2')
+  await page
+    .locator('.bias[data-role="step"]')
+    .getByLabel(/단계 전압/)
+    .fill('2')
+
+  await page.getByRole('button', { name: '해석 실행' }).click()
+  await expect(page.locator('.run-result .status-succeeded')).toBeVisible({
+    timeout: 240_000,
+  })
+  await expect(page.getByRole('img', { name: /uA\/um/ })).toBeVisible()
+  await expect(page.locator('.figure-table')).toContainText('µA/µm')
+})
+
+test('폴리를 이상 도체로 놓으면 경고가 뜬다', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signUp(page, uniqueEmail('caution'))
+
+  await page.getByRole('tab', { name: /소자 해석/ }).click()
+  await expect(page.locator('.devsim-bar .notice.caution')).toHaveCount(0)
+
+  await page
+    .locator('.devsim-bar select')
+    .nth(1)
+    .selectOption('conductor')
+
+  const caution = page.locator('.devsim-bar .notice.caution')
+  await expect(caution).toBeVisible()
+  await expect(caution).toContainText('저항이 0인 완전 도체')
+})
+
+test('가입하면 소자 해석에 예제 구조가 들어 있다', async ({ page, context }) => {
+  // 소자 해석은 실행 결과를 입력으로 받으므로, 예제를 한 번 돌리기 전에는
+  // 탭이 비어 있었다.
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signUp(page, uniqueEmail('seeded'))
+
+  await page.getByRole('tab', { name: /소자 해석/ }).click()
+  const picker = page.locator('.devsim-bar select').first()
+  await expect(picker).toContainText('nmos.str', { timeout: 30_000 })
+  await expect(page.locator('.electrode-list li')).toHaveCount(4)
+})
+
+test('로그인 화면이 DevSim 도 함께 알린다', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByText(/DevSim/)).toBeVisible()
+})
+
 test('무엇을 전극으로 보는지 탭에 적혀 있다', async ({ page, context }) => {
   // 목록에 왜 일부 단계만 나오는지 알려주지 않으면, 사용자는 앱이 결과를
   // 잃어버린 줄 안다.
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await signUp(page, uniqueEmail('notice'))
 
-  await page.getByRole('tab', { name: '소자 해석' }).click()
+  await page.getByRole('tab', { name: /소자 해석/ }).click()
   const notice = page.locator('.devsim-bar .notice')
   await expect(notice).toBeVisible()
   await expect(notice).toContainText('알루미늄')

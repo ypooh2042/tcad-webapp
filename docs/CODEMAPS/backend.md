@@ -105,8 +105,19 @@ Redis, 호스트 파일시스템을 통해서만 서로를 만난다.
    │        아무 말이 없으면 진행률이 멈춰 서서 죽은 줄 안다. 다만 푼 점으로
    │        세지는 않는다(세면 분자가 분모를 넘는다).
    ├─ prune_workdir(keep_names={iv.json, iv.jsonl})
-   └─ Artifact + DevSimResult 행(비교용 영구 보관)
+   └─ Artifact 행. **표(DevSimResult)에는 안 넣는다** — 남길 것은 사용자가
+      "저장" 을 눌러 이름을 붙일 때뿐이다. 돌린 것을 전부 쌓으면 비교 목록에서
+      정작 보고 싶은 둘을 그 안에서 찾아야 한다.
+
+브라우저: GET  /api/devsim/jobs/{id}/result   방금 돌린 곡선(산출물에서)
+          POST /api/devsim/runs {job_id,label} 이름을 붙여 표에 남긴다
+          PATCH/DELETE /api/devsim/runs/{id}   이름 바꾸기 / 지우기
 ```
+
+새 사용자는 예제 구조(`nmos.str`)를 하나 갖고 시작한다. 작업공간에는 `.in` 만
+들어가는데 소자 해석은 **실행 결과**를 입력으로 받으므로, 예제를 한 번 돌리기
+전에는 그 탭이 비어 있었다. 이름표를 `nmos.in` 에 맞춰 두어, 사용자가 자기
+`nmos.in` 을 돌리면 그 결과가 이 자리를 대신한다.
 
 전극 판정은 SUPREM 원본의 `IS_CONT`(`upstream/src/include/device.h:35`)를 옮긴
 것이다 — **같은 알루미늄 덩어리에 닿은 변은 하나의 계면**이므로 그 안의 등전위는

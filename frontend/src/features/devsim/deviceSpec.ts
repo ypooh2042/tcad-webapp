@@ -11,38 +11,42 @@ import type { Bias, DeviceSpec, DevSimInterface } from '../../api/types'
 export const MAX_TOTAL_POINTS = 300
 
 /** 기본 게이트 단계. 문턱 아래부터 확실한 온 상태까지 걸친다. */
-const DEFAULT_STEPS = [0, 1, 2]
+const DEFAULT_STEPS = [1, 2, 4]
 
-const DEFAULT_SWEEP = { start: 0, stop: 2, step: 0.25 }
+const DEFAULT_SWEEP = { start: 0, stop: 2.5, points: 6 }
 
 /**
  * 스윕이 훑는 전압. 서버의 `sweep_values` 와 같은 규칙이다.
  *
- * 간격이 구간을 딱 나누지 않아도 마지막 점은 `stop` 이다 — 목표 전압에 못 미치고
- * 끝나면 정작 보고 싶은 지점의 값을 못 얻는다.
+ * 간격이 아니라 **점 개수**로 정한다. 간격으로 정하면 `0 → 1` 을 `0.3` 씩
+ * 훑을 때 몇 점이 나오는지 손으로 세야 하고 끝점이 걸리는지도 눈에 안 보인다.
+ * 실행 시간은 점 개수에 비례하므로 숫자가 사용자의 의도와 일치한다.
  */
 export function sweepValues(
   start: number,
   stop: number,
-  step: number,
+  points: number,
 ): number[] {
-  if (!(step > 0)) return []
-  if (start === stop) return [start]
-  const direction = stop > start ? 1 : -1
-  const span = Math.abs(stop - start)
-  const count = Math.floor(span / step)
-  const values: number[] = []
-  for (let i = 0; i <= count; i++) values.push(start + direction * step * i)
-  if (Math.abs(values[values.length - 1] - stop) > step * 1e-9) values.push(stop)
-  else values[values.length - 1] = stop
-  return values
+  if (points <= 0) return []
+  if (points === 1 || start === stop) return [start]
+  const span = stop - start
+  return Array.from(
+    { length: points },
+    (_unused, index) => start + (span * index) / (points - 1),
+  )
+}
+
+/** 점 사이 간격. 화면이 "0.5V 간격" 을 곁들여 보여줄 때 쓴다. */
+export function sweepGap(start: number, stop: number, points: number): number {
+  if (points <= 1) return 0
+  return (stop - start) / (points - 1)
 }
 
 function pointsOf(bias: Bias): number[] {
   if (bias.role === 'const') return [bias.value ?? 0]
   if (bias.role === 'step') return bias.values ?? []
   if (!bias.sweep) return []
-  return sweepValues(bias.sweep.start, bias.sweep.stop, bias.sweep.step)
+  return sweepValues(bias.sweep.start, bias.sweep.stop, bias.sweep.points)
 }
 
 /** 풀어야 할 바이어스 점의 총수. 실행 시간이 여기에 비례한다. */

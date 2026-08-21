@@ -21,6 +21,11 @@ export function CompareView() {
   const [chosen, setChosen] = useState<number[]>([])
   const [loaded, setLoaded] = useState<Map<number, DevSimRunDetail>>(new Map())
   const [logScale, setLogScale] = useState(false)
+  //: 어느 전극의 전류를 볼지. 비어 있으면 런마다 가장 많이 움직인 것을 고른다.
+  const [bias, setBias] = useState<string>('')
+  //: 이름을 고치는 중인 해석.
+  const [editing, setEditing] = useState<number | null>(null)
+  const [draft, setDraft] = useState('')
 
   useEffect(() => {
     devsim
@@ -58,14 +63,26 @@ export function CompareView() {
     [chosen, loaded],
   )
 
+  // 고른 해석들이 가진 전압원 이름의 합집합. 해석마다 전극 이름이 다를 수
+  // 있으므로 교집합으로 좁히면 고를 것이 없어진다.
+  const availableBiases = useMemo(() => {
+    const names = new Set<string>()
+    for (const run of picked) for (const one of run.data.biases ?? []) names.add(one)
+    return [...names].sort()
+  }, [picked])
+
   const series = useMemo<ChartSeries[]>(() => {
     const out: ChartSeries[] = []
     picked.forEach((run, index) => {
-      const bias = dominantBias(run.data)
-      if (!bias) return
+      // 고른 것이 이 해석에 없으면 그 해석에서 가장 많이 움직인 전류를 쓴다.
+      const chosenBias =
+        bias && (run.data.biases ?? []).includes(bias)
+          ? bias
+          : dominantBias(run.data)
+      if (!chosenBias) return
       // 런은 색으로, 그 안의 곡선족은 선 스타일로 나눈다. 둘 다 색으로 하면
       // 어느 곡선이 어느 런의 것인지 못 읽는다.
-      seriesOf(run.data, bias).forEach((one, at) => {
+      seriesOf(run.data, chosenBias).forEach((one, at) => {
         out.push({
           ...one,
           label: `${run.label}${one.label ? ` · ${one.label}` : ''}`,
@@ -75,7 +92,7 @@ export function CompareView() {
       })
     })
     return out
-  }, [picked])
+  }, [picked, bias])
 
   const differences = useMemo(
     () =>
@@ -88,6 +105,27 @@ export function CompareView() {
       ),
     [picked],
   )
+
+  async function commitRename(jobId: number) {
+    const name = draft.trim()
+    setEditing(null)
+    const current = runs.find((one) => one.job_id === jobId)
+    if (!name || !current || name === current.label) return
+    try {
+      const updated = await devsim.rename(jobId, name)
+      setRuns((list) =>
+        list.map((one) => (one.job_id === jobId ? { ...one, label: updated.label } : one)),
+      )
+      setLoaded((map) => {
+        const next = new Map(map)
+        const detail = next.get(jobId)
+        if (detail) next.set(jobId, { ...detail, label: updated.label })
+        return next
+      })
+    } catch {
+      // 이름만 못 바꾼 것이다. 곡선은 그대로 두고 넘어간다.
+    }
+  }
 
   function toggle(id: number) {
     setChosen((current) =>
@@ -130,14 +168,70 @@ export function CompareView() {
           <p className="hint">둘 이상 고르면 겹쳐 그립니다.</p>
         ) : (
           <>
-            <label className="field inline">
-              <input
-                type="checkbox"
-                checked={logScale}
-                onChange={(event) => setLogScale(event.target.checked)}
-              />
-              로그 축
-            </label>
+            <div className="chart-controls">
+              <select
+                value={bias}
+                aria-label="볼 전류"
+                onChange={(event) => setBias(event.target.value)}
+              >
+                <option value="">가장 많이 움직인 전류</option>
+                {availableBiases.map((name) => (
+                  <option key={name} value={name}>
+                    {name} 전류
+                  </option>
+                ))}
+              </select>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={logScale}
+                  onChange={(event) => setLogScale(event.target.checked)}
+                />
+                로그 축
+              </label>
+            </div>
+
+            {/* 어느 공정 코드에서 나온 결과인지. 구조 파일 이름만으로는 여러
+                흐름에서 같은 이름이 나올 수 있다. */}
+            <ul className="origins">
+              {picked.map((run, index) => (
+                <li key={run.job_id}>
+                  <span
+                    className="swatch"
+                    style={{ background: CURVE_COLORS[index % CURVE_COLORS.length] }}
+                    aria-hidden="true"
+                  />
+                  {editing === run.job_id ? (
+                    <input
+                      autoFocus
+                      value={draft}
+                      aria-label={`${run.label} 이름 바꾸기`}
+                      onChange={(event) => setDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') void commitRename(run.job_id)
+                        if (event.key === 'Escape') setEditing(null)
+                      }}
+                      onBlur={() => void commitRename(run.job_id)}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="link"
+                      title="눌러서 이름 바꾸기"
+                      onClick={() => {
+                        setEditing(run.job_id)
+                        setDraft(run.label)
+                      }}
+                    >
+                      {run.label}
+                    </button>
+                  )}
+                  <span className="origin">
+                    {run.source_path || '출처 모름'} · {run.structure}
+                  </span>
+                </li>
+              ))}
+            </ul>
             <IvChart
               series={series}
               xLabel="스윕 전압 (V)"

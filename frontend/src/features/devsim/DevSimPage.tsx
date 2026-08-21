@@ -44,6 +44,16 @@ interface Props {
   /** 공정 결과에서 "소자 해석" 을 눌러 넘어온 구조. */
   handoff: Handoff | null
   onHandoffUsed: () => void
+  /** 해석이 도는 중인지. 화면을 옮길 때 알려 주려고 바깥에서 본다. */
+  onBusyChange?: (busy: boolean) => void
+  /**
+   * 지금 이 화면을 보고 있는지.
+   *
+   * 이 화면은 한 번 연 뒤에는 내려놓지 않는다(조건과 진행률을 잃지 않으려고).
+   * 그래서 다시 열려도 마운트가 일어나지 않아, 그 사이에 공정을 돌려 새로
+   * 생긴 구조가 목록에 안 나타났다. 다시 보일 때 목록을 새로 받는다.
+   */
+  active?: boolean
 }
 
 /** 지금 보고 있는 보관 구조의 id. */
@@ -56,7 +66,12 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : '알 수 없는 오류'
 }
 
-export function DevSimPage({ handoff, onHandoffUsed }: Props) {
+export function DevSimPage({
+  handoff,
+  onHandoffUsed,
+  onBusyChange,
+  active = true,
+}: Props) {
   const [sources, setSources] = useState<StructureSource[]>([])
   const [selection, setSelection] = useState<Selection | null>(null)
   const [gateModel, setGateModel] = useState<GateModel>('semiconductor')
@@ -73,6 +88,7 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
   const { job } = useJob(jobId)
 
   useEffect(() => {
+    if (!active) return
     let cancelled = false
     devsim
       .structures()
@@ -80,7 +96,12 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
         if (cancelled) return
         setSources(found)
         setSelection((current) => {
-          if (current !== null) return current
+          // 고르고 있던 것이 아직 있으면 그대로 둔다. 목록을 다시 받을 때마다
+          // 선택이 튀면 조건을 짜다 말고 처음으로 돌아간다.
+          const alive = found.some((source) =>
+            source.structures.some((one) => one.id === current),
+          )
+          if (current !== null && alive) return current
           const first = found[0]
           if (!first || first.structures.length === 0) return null
           // 마지막 단계부터 보여준다. 보통 그것이 완성된 소자다.
@@ -93,7 +114,7 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [active])
 
   // 공정 결과에서 넘어온 구조를 받는다.
   //
@@ -221,6 +242,10 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
 
   const busy = job !== null && (job.status === 'queued' || job.status === 'running')
 
+  useEffect(() => {
+    onBusyChange?.(busy)
+  }, [busy, onBusyChange])
+
   return (
     <div className="devsim">
       <div className="devsim-bar">
@@ -261,6 +286,13 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
           인식합니다. 금속 배선까지 끝나 그런 계면이 생긴 단계만 위 목록에
           나옵니다.
         </p>
+
+        {gateModel === 'conductor' ? (
+          <p className="notice caution">
+            polysilicon 층을 저항이 0인 완전 도체로 인식합니다. 결과가 크게 달라질
+            수 있습니다.
+          </p>
+        ) : null}
 
         <div className="devsim-tabs" role="tablist">
           <button

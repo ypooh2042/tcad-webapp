@@ -303,12 +303,15 @@ class SavedStructure(Base):
 
 
 class DevSimResult(Base):
-    """소자 해석 한 건의 결과 데이터.
+    """사용자가 **이름을 붙여 저장한** 소자 해석 결과.
+
+    돌린 것을 전부 남기지 않는다. 조건을 조금씩 바꿔 가며 여남은 번 돌리는 것이
+    보통인데 그것이 다 목록에 쌓이면, 정작 비교하고 싶은 둘을 그 안에서 찾아야
+    한다. 남길 것은 사용자가 고른다.
 
     **왜 workdir 이 아니라 DB 인가.** 산출물은 유휴 스윕과 쿼터 스윕에 지워진다
-    (`app/jobs/sweeper.py`). 그런데 비교 기능은 예전 해석을 다시 불러와야 한다 —
-    지워진 결과는 비교할 수 없다. 곡선 하나가 수백 행짜리 JSON 이라 표에 두어도
-    작다.
+    (`app/jobs/sweeper.py`). 저장한 결과가 며칠 뒤 사라지면 저장한 의미가 없다.
+    곡선 하나가 수백 행짜리 JSON 이라 표에 두어도 작다.
 
     스펙도 함께 남긴다. 비교 화면에서 "무엇이 달랐나"를 보여주려면 그때의 조건이
     있어야 한다.
@@ -326,6 +329,10 @@ class DevSimResult(Base):
     label: Mapped[str] = mapped_column(String(120))
     #: 어느 구조에서 왔는지. 원본 잡이 지워져도 설명은 남는다.
     structure: Mapped[str] = mapped_column(String(255))
+    #: 그 구조를 만든 `.in` 의 경로. 비교 화면에서 "어느 공정 코드에서 나온
+    #: 결과인가" 를 보여주려면 이것이 있어야 한다 — 구조 파일 이름만으로는
+    #: 여러 흐름에서 같은 이름이 나올 수 있다.
+    source_path: Mapped[str] = mapped_column(String(1024), default="")
     #: 제출한 해석 조건(JSON).
     spec: Mapped[str] = mapped_column(Text)
     #: 곡선 데이터(JSON). `iv.json` 과 같은 모양이다.

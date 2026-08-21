@@ -44,13 +44,13 @@ const COLUMNS: {
     key: 'ion',
     head: 'I_on',
     title: '곡선에서 가장 큰 전류',
-    render: (f) => engineering(f.iOn, 'A/µm'),
+    render: (f) => engineering(f.iOn, 'µA/µm'),
   },
   {
     key: 'ioff',
     head: 'I_off',
     title: '0 이 아닌 가장 작은 전류',
-    render: (f) => engineering(f.iOff, 'A/µm'),
+    render: (f) => engineering(f.iOff, 'µA/µm'),
   },
   {
     key: 'onoff',
@@ -74,13 +74,13 @@ const COLUMNS: {
     key: 'gm',
     head: 'gm_max',
     title: '최대 상호컨덕턴스 dI/dV',
-    render: (f) => engineering(f.gmMax, 'S/µm'),
+    render: (f) => engineering(f.gmMax, 'µS/µm'),
   },
   {
     key: 'ron',
     head: 'R_on',
     title: '원점 부근 기울기의 역수 (출력 특성에서만 뜻이 있다)',
-    render: (f) => engineering(f.ron, 'Ω·µm'),
+    render: (f) => engineering(f.ron, 'MΩ·µm'),
   },
 ]
 

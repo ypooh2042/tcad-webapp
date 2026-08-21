@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections.abc import Sequence
 from datetime import timedelta
@@ -21,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.models import (
     Artifact,
-    DevSimResult,
     Job,
     JobKind,
     JobStatus,
@@ -160,8 +158,10 @@ class Worker:
         self, job_id: int, result: SimulationResult | DeviceResult
     ) -> None:
         if isinstance(result, DeviceResult):
+            # 곡선은 산출물(`iv.json`)에만 둔다. 표에 남기는 것은 사용자가
+            # 이름을 붙여 저장할 때뿐이다 — 돌린 것을 전부 쌓으면 정작
+            # 비교하고 싶은 둘을 그 안에서 찾아야 한다.
             await self._save_artifacts(job_id, result.artifacts)
-            await self._save_dataset(job_id, result)
         else:
             await self._save_artifacts(job_id, result.structure_files)
             if result.succeeded:
@@ -242,35 +242,6 @@ class Worker:
                 job.source_path,
                 len(placed),
             )
-
-    async def _save_dataset(self, job_id: int, result: DeviceResult) -> None:
-        """곡선을 DB 에도 남긴다.
-
-        산출물은 유휴·쿼터 스윕에 지워진다(`app/jobs/sweeper.py`). 비교 기능은
-        예전 해석을 다시 불러와야 하므로 결과만은 표에 둔다 — 수백 행짜리라 작다.
-        부분 결과라도 남긴다. 사용자가 볼 곡선이 있으면 비교할 값도 있다.
-        """
-        if not result.dataset or not result.dataset.get("completed"):
-            return
-        try:
-            spec = json.loads(result.spec_json or "{}")
-        except ValueError:
-            spec = {}
-        async with self.sessionmaker() as session:
-            job = await session.get(Job, job_id)
-            if job is None:
-                return
-            session.add(
-                DevSimResult(
-                    job_id=job_id,
-                    owner_id=job.owner_id,
-                    label=str(spec.get("label") or "해석")[:120],
-                    structure=str(spec.get("structure") or "")[:255],
-                    spec=result.spec_json or "{}",
-                    data=json.dumps(result.dataset),
-                )
-            )
-            await session.commit()
 
     @staticmethod
     async def _sleep_or_stop(stop: asyncio.Event, seconds: float) -> None:

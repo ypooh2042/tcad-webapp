@@ -6,6 +6,7 @@
  * 다른 항목만 남기면 원인 후보가 바로 좁혀진다.
  */
 import type { Bias, DeviceSpec } from '../../api/types'
+import { sweepGap } from './deviceSpec'
 
 export interface DiffRow {
   field: string
@@ -17,8 +18,9 @@ function formatSweep(bias: Bias): string {
   if (bias.role === 'const') return `${bias.value ?? 0} V 고정`
   if (bias.role === 'step') return `${(bias.values ?? []).join(', ')} V 단계`
   if (!bias.sweep) return '스윕'
-  const { start, stop, step } = bias.sweep
-  return `${start} → ${stop} V, ${step} V 간격`
+  const { start, stop, points } = bias.sweep
+  const gap = sweepGap(start, stop, points)
+  return `${start} → ${stop} V, ${points}점 (${Number(Math.abs(gap).toPrecision(4))}V 간격)`
 }
 
 function describe(spec: DeviceSpec): Map<string, string> {

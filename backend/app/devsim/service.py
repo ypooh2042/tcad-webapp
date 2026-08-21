@@ -145,7 +145,7 @@ def _read_dataset(workdir: Path, total: int) -> dict[str, Any] | None:
     return {
         "sweep": None,
         "biases": sorted(rows[0].get("currents", {})) if rows else [],
-        "current_unit": "A/um",
+        "current_unit": "uA/um",
         "rows": rows,
         "failures": failures,
         "total": total,

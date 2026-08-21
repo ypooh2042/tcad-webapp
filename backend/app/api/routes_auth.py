@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from datetime import datetime, timezone
 
@@ -39,6 +40,8 @@ from app.auth.service import EmailAlreadyRegistered, authenticate, register_user
 from app.auth.cookies import set_session_cookie
 from app.auth.store import SessionStore
 from app.core.config import Settings
+from app.db.models import SavedStructure
+from app.workspace.starter import STARTER_SOURCE, seed_structure
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +91,7 @@ async def register(
     request: Request,
     payload: RegisterRequest,
     db: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_app_settings),
 ) -> UserResponse:
     try:
         invite = await redeem_invite(db, payload.invite_code)
@@ -110,7 +114,42 @@ async def register(
             status_code=status.HTTP_409_CONFLICT,
             detail="이미 가입된 이메일입니다",
         ) from None
+
+    await _seed_example_structure(db, user.id, settings)
     return UserResponse(id=user.id, email=user.email, role=user.role)
+
+
+async def _seed_example_structure(
+    db: AsyncSession, owner_id: int, settings: Settings
+) -> None:
+    """소자 해석 탭에 처음부터 볼 것이 있게 한다.
+
+    작업공간에는 `nmos.in` 이 들어가지만(`app/workspace/starter.py`) 소자 해석은
+    **실행 결과**를 입력으로 받으므로, 예제를 한 번 돌리기 전에는 그 탭이 비어
+    있다. 처음 들어온 사람이 거기서 아무것도 못 보는 것을 막는다.
+
+    여기서 나는 오류로 가입을 막지 않는다 — 구조가 없어도 앱은 멀쩡히 돌아가고,
+    예제를 한 번 돌리면 채워진다.
+    """
+    try:
+        placed = seed_structure(Path(settings.structures_root), owner_id)
+    except OSError:
+        logger.warning("예제 구조를 넣지 못했습니다", exc_info=True)
+        return
+    if placed is None:
+        return
+    db.add(
+        SavedStructure(
+            owner_id=owner_id,
+            source_path=STARTER_SOURCE,
+            job_id=None,
+            sequence=placed.sequence,
+            filename=placed.filename,
+            path=placed.path,
+            size_bytes=placed.size_bytes,
+        )
+    )
+    await db.commit()
 
 
 @router.post("/login", dependencies=[Depends(throttle_login)])

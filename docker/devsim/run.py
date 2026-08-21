@@ -39,8 +39,12 @@ WORK = Path("/work")
 DEVICE = "device"
 MESH = "mesh"
 
-#: A/cm → A/µm.
-PER_CM_TO_PER_UM = 1.0e-4
+#: A/cm → µA/µm.
+#:
+#: 2 차원 해석이라 전류는 폭 방향 단위길이당 값이다(세 번째 축이 모형에 없다).
+#: DevSim 은 z 두께를 1 cm 로 놓고 풀어 A/cm 을 준다. 소자 쪽에서는 폭 1 µm 당
+#: 마이크로암페어로 인용하는 것이 관례라 거기에 맞춘다.
+PER_CM_TO_MICRO_PER_UM = 1.0e-4 * 1.0e6
 
 #: 바이어스를 한 번에 이만큼 넘게 옮기지 않는다. 크게 뛰면 뉴턴이 못 따라간다.
 MAX_BIAS_STEP = 0.25
@@ -291,7 +295,7 @@ class Solver:
             )
             totals[contact["bias"]] = totals.get(contact["bias"], 0.0) + (
                 electrons + holes
-            ) * PER_CM_TO_PER_UM
+            ) * PER_CM_TO_MICRO_PER_UM
         return totals
 
 
@@ -408,7 +412,7 @@ def run(payload: dict) -> dict:
         "sweep": sweep_name,
         "steps": [b for b in plan["steps"][0]] if plan["steps"] else [],
         "biases": sorted(solver.groups),
-        "current_unit": "A/um",
+        "current_unit": "uA/um",
         "rows": rows,
         "failures": failures,
         "total": plan["total"],

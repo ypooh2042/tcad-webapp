@@ -40,7 +40,7 @@ def spec_payload(**overrides) -> dict:
                 "name": "Vd",
                 "electrode": "D",
                 "role": "sweep",
-                "sweep": {"start": 0.0, "stop": 1.0, "step": 0.5},
+                "sweep": {"start": 0.0, "stop": 1.0, "points": 3},
             },
         ],
     }
@@ -171,7 +171,7 @@ class TestDuplicateInterfaceKeys:
                 "name": "Vb",
                 "electrode": "B",
                 "role": "sweep",
-                "sweep": {"start": 0.0, "stop": 1.0, "step": 0.5},
+                "sweep": {"start": 0.0, "stop": 1.0, "points": 3},
             },
         ]
         found = {

@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event, select
+from sqlalchemy import delete, event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import routes_auth, routes_devsim
@@ -55,7 +55,7 @@ def spec_body(**overrides) -> dict:
                 "name": "Vd",
                 "electrode": "D",
                 "role": "sweep",
-                "sweep": {"start": 0.0, "stop": 1.0, "step": 0.5},
+                "sweep": {"start": 0.0, "stop": 1.0, "points": 3},
             },
         ],
     }
@@ -105,6 +105,20 @@ async def client(app):
             json={"email": "alice@example.com", "password": PASSWORD},
         )
         yield async_client
+
+
+async def clear_seeded(app) -> None:
+    """가입할 때 들어간 예제 구조를 걷어낸다.
+
+    새 사용자는 `nmos.in` 예제 구조를 하나 갖고 시작한다(소자 해석 탭이 처음부터
+    비어 있지 않도록). 목록을 세는 시험은 그것까지 세면 뜻이 흐려지므로 지운다.
+    """
+    async with app.state.sessionmaker() as session:
+        # 예제만 지운다. 통째로 지우면 시험이 방금 만들어 둔 것까지 사라진다.
+        await session.execute(
+            delete(SavedStructure).where(SavedStructure.source_path == "nmos.in")
+        )
+        await session.commit()
 
 
 async def owner_id(app) -> int:
@@ -209,27 +223,34 @@ class TestInterfaces:
         assert body["gate_model"] == "conductor"
         assert self._by_key(body)["gate"]["kind"] == "insulator"
 
-    async def test_someone_elses_job_is_not_found(self, app, client, tmp_path) -> None:
+    async def test_someone_elses_structure_is_not_found(
+        self, app, client, tmp_path
+    ) -> None:
         async with app.state.sessionmaker() as session:
-            other = User(
-                email="bob@example.com", password_hash="x", role="user"
-            )
+            other = User(email="bob@example.com", password_hash="x", role="user")
             session.add(other)
             await session.flush()
-            job = Job(
+            row = SavedStructure(
                 owner_id=other.id,
-                status=JobStatus.SUCCEEDED,
-                workdir=str(tmp_path / "other"),
+                source_path="theirs.in",
+                job_id=None,
+                sequence=1,
+                filename="theirs.str",
+                path=str(tmp_path / "theirs.str"),
+                size_bytes=10,
             )
-            session.add(job)
+            session.add(row)
             await session.commit()
-            stolen = job.id
+            stolen = row.id
 
-        response = await client.get(
-            f"/api/devsim/structures/{stolen}/interfaces"
-        )
-        # 403 이면 남의 잡이 존재한다는 사실이 새어 나간다.
+        response = await client.get(f"/api/devsim/structures/{stolen}/interfaces")
+        # 403 이면 남의 구조가 존재한다는 사실이 새어 나간다.
         assert response.status_code == 404
+
+    async def test_an_unknown_structure_is_not_found(self, client) -> None:
+        assert (
+            await client.get("/api/devsim/structures/999999/interfaces")
+        ).status_code == 404
 
 
 class TestSubmit:
@@ -320,7 +341,7 @@ class TestSubmit:
         self, client, saved
     ) -> None:
         spec = spec_body()
-        spec["biases"][3]["sweep"] = {"start": 0.0, "stop": 90.0, "step": 0.5}
+        spec["biases"][3]["sweep"] = {"start": 0.0, "stop": 90.0, "points": 181}
         spec["biases"][2]["values"] = [float(v) for v in range(8)]
         response = await client.post(
             "/api/devsim/jobs",
@@ -402,17 +423,19 @@ class TestStructures:
     async def test_groups_structures_by_the_source_file(
         self, app, client, tmp_path, saved
     ) -> None:
+        await clear_seeded(app)
         await store_structure(app, tmp_path, "other.in", "other.str")
+
         body = (await client.get("/api/devsim/structures")).json()
         assert sorted(one["source_path"] for one in body) == [
             "contacts.in",
             "other.in",
         ]
-        assert [one["filename"] for one in body[0]["structures"]] == [
-            body[0]["structures"][0]["filename"]
-        ]
+        # `.in` 하나에 구조 하나씩 붙어 있어야 한다.
+        assert all(len(one["structures"]) == 1 for one in body)
 
-    async def test_reports_what_the_picker_needs(self, client, saved) -> None:
+    async def test_reports_what_the_picker_needs(self, app, client, saved) -> None:
+        await clear_seeded(app)
         body = (await client.get("/api/devsim/structures")).json()
         entry = body[0]["structures"][0]
         assert entry["id"] == saved
@@ -423,6 +446,7 @@ class TestStructures:
     async def test_several_structures_from_one_run_stay_together(
         self, app, client, tmp_path, saved
     ) -> None:
+        await clear_seeded(app)
         await store_structure(app, tmp_path, "contacts.in", "later.str")
         body = (await client.get("/api/devsim/structures")).json()
         assert len(body) == 1
@@ -431,12 +455,38 @@ class TestStructures:
             "later.str",
         ]
 
-    async def test_empty_when_nothing_is_kept(self, client) -> None:
+    async def test_empty_when_nothing_is_kept(self, app, client) -> None:
+        await clear_seeded(app)
         assert (await client.get("/api/devsim/structures")).json() == []
+
+    async def test_a_new_user_starts_with_the_example(self, client) -> None:
+        """가입 직후에도 소자 해석 탭에 볼 것이 있어야 한다.
+
+        작업공간에는 `nmos.in` 이 들어가지만 소자 해석은 **실행 결과**를 받으므로,
+        예제를 한 번 돌리기 전에는 그 탭이 비어 있었다.
+        """
+        body = (await client.get("/api/devsim/structures")).json()
+        assert [one["source_path"] for one in body] == ["nmos.in"]
+        assert body[0]["structures"][0]["filename"] == "nmos.str"
+
+    async def test_the_example_can_be_analysed(self, client) -> None:
+        body = (await client.get("/api/devsim/structures")).json()
+        structure_id = body[0]["structures"][0]["id"]
+        found = (
+            await client.get(f"/api/devsim/structures/{structure_id}/interfaces")
+        ).json()
+        # nmos 최종 구조는 소스·게이트·드레인·뒷면이다.
+        assert [one["key"] for one in found["interfaces"]] == [
+            "source",
+            "gate",
+            "drain",
+            "body",
+        ]
 
     async def test_someone_elses_structures_are_not_listed(
         self, app, client, tmp_path, saved
     ) -> None:
+        await clear_seeded(app)
         async with app.state.sessionmaker() as session:
             other = User(email="bob@example.com", password_hash="x", role="user")
             session.add(other)
@@ -520,4 +570,155 @@ class TestSurface:
             stolen = row.id
 
         response = await client.get(f"/api/devsim/structures/{stolen}/surface")
+        assert response.status_code == 404
+
+
+class TestSavingRuns:
+    """돌린 것을 전부 남기지 않는다.
+
+    조건을 조금씩 바꿔 가며 여남은 번 돌리는 것이 보통인데, 그것이 다 목록에
+    쌓이면 정작 비교하고 싶은 둘을 그 안에서 찾아야 한다. 남길 것은 사용자가
+    이름을 붙여 고른다.
+    """
+
+    async def _finished(self, app, tmp_path, rows: int = 2) -> int:
+        workdir = tmp_path / f"devjob-{rows}"
+        workdir.mkdir()
+        (workdir / "iv.json").write_text(
+            json.dumps(
+                {
+                    "sweep": "Vd",
+                    "biases": ["Vd", "Vg"],
+                    "current_unit": "uA/um",
+                    "rows": [
+                        {
+                            "sweep": i * 0.5,
+                            "steps": {"Vg": 1.0},
+                            "currents": {"Vd": 1.0, "Vg": 0.0},
+                        }
+                        for i in range(rows)
+                    ],
+                    "failures": [],
+                    "total": rows,
+                    "completed": rows,
+                    "error": None,
+                }
+            )
+        )
+        async with app.state.sessionmaker() as session:
+            job = Job(
+                owner_id=await owner_id(app),
+                kind=JobKind.DEVSIM,
+                status=JobStatus.SUCCEEDED,
+                workdir=str(workdir),
+                source_path="mosfet/nmos.in",
+                source=json.dumps(spec_body(structure="nmos.str")),
+            )
+            session.add(job)
+            await session.commit()
+            return job.id
+
+    async def test_a_finished_run_is_not_saved_by_itself(
+        self, app, client, tmp_path
+    ) -> None:
+        await self._finished(app, tmp_path)
+        assert (await client.get("/api/devsim/runs")).json() == []
+
+    async def test_the_curve_is_readable_without_saving(
+        self, app, client, tmp_path
+    ) -> None:
+        # 방금 돌린 결과는 산출물에서 읽는다. 저장은 남길지 말지의 문제다.
+        job_id = await self._finished(app, tmp_path)
+        body = (await client.get(f"/api/devsim/jobs/{job_id}/result")).json()
+        assert body["completed"] == 2
+        assert body["current_unit"] == "uA/um"
+
+    async def test_saving_gives_it_a_name(self, app, client, tmp_path) -> None:
+        job_id = await self._finished(app, tmp_path)
+        response = await client.post(
+            "/api/devsim/runs", json={"job_id": job_id, "label": "두꺼운 산화막"}
+        )
+        assert response.status_code == 201
+        assert response.json()["label"] == "두꺼운 산화막"
+
+        listed = (await client.get("/api/devsim/runs")).json()
+        assert [one["label"] for one in listed] == ["두꺼운 산화막"]
+
+    async def test_saving_remembers_where_it_came_from(
+        self, app, client, tmp_path
+    ) -> None:
+        # 구조 파일 이름만으로는 여러 흐름에서 같은 이름이 나올 수 있다.
+        job_id = await self._finished(app, tmp_path)
+        body = (
+            await client.post(
+                "/api/devsim/runs", json={"job_id": job_id, "label": "가"}
+            )
+        ).json()
+        assert body["source_path"] == "mosfet/nmos.in"
+        assert body["structure"] == "nmos.str"
+
+    async def test_saving_twice_replaces_rather_than_piles_up(
+        self, app, client, tmp_path
+    ) -> None:
+        job_id = await self._finished(app, tmp_path)
+        await client.post("/api/devsim/runs", json={"job_id": job_id, "label": "가"})
+        await client.post("/api/devsim/runs", json={"job_id": job_id, "label": "나"})
+        listed = (await client.get("/api/devsim/runs")).json()
+        assert [one["label"] for one in listed] == ["나"]
+
+    async def test_renaming_a_saved_run(self, app, client, tmp_path) -> None:
+        job_id = await self._finished(app, tmp_path)
+        await client.post("/api/devsim/runs", json={"job_id": job_id, "label": "가"})
+        response = await client.patch(
+            f"/api/devsim/runs/{job_id}", json={"label": "얇은 산화막"}
+        )
+        assert response.status_code == 200
+        assert response.json()["label"] == "얇은 산화막"
+
+    async def test_renaming_something_never_saved_is_not_found(
+        self, app, client, tmp_path
+    ) -> None:
+        job_id = await self._finished(app, tmp_path)
+        response = await client.patch(
+            f"/api/devsim/runs/{job_id}", json={"label": "가"}
+        )
+        assert response.status_code == 404
+
+    async def test_forgetting_a_saved_run(self, app, client, tmp_path) -> None:
+        job_id = await self._finished(app, tmp_path)
+        await client.post("/api/devsim/runs", json={"job_id": job_id, "label": "가"})
+        assert (
+            await client.delete(f"/api/devsim/runs/{job_id}")
+        ).status_code == 204
+        assert (await client.get("/api/devsim/runs")).json() == []
+
+    async def test_nothing_solved_cannot_be_saved(
+        self, app, client, tmp_path
+    ) -> None:
+        job_id = await self._finished(app, tmp_path, rows=0)
+        response = await client.post(
+            "/api/devsim/runs", json={"job_id": job_id, "label": "가"}
+        )
+        assert response.status_code == 422
+
+    async def test_someone_elses_job_cannot_be_saved(
+        self, app, client, tmp_path
+    ) -> None:
+        async with app.state.sessionmaker() as session:
+            other = User(email="dave@example.com", password_hash="x", role="user")
+            session.add(other)
+            await session.flush()
+            job = Job(
+                owner_id=other.id,
+                kind=JobKind.DEVSIM,
+                status=JobStatus.SUCCEEDED,
+                workdir=str(tmp_path / "theirs"),
+            )
+            session.add(job)
+            await session.commit()
+            stolen = job.id
+
+        response = await client.post(
+            "/api/devsim/runs", json={"job_id": stolen, "label": "가"}
+        )
         assert response.status_code == 404

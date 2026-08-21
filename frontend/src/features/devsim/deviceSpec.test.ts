@@ -11,6 +11,8 @@ import {
   removeElectrode,
   renameElectrode,
   renameInterface,
+  sweepGap,
+  sweepValues,
   unassignInterface,
 } from './deviceSpec'
 
@@ -191,16 +193,14 @@ describe('pointCount', () => {
     const spec = defaultSpec(MOSFET)
     const sweep = spec.biases.find((b) => b.role === 'sweep')!
     const step = spec.biases.find((b) => b.role === 'step')!
-    const sweepPoints =
-      Math.floor((sweep.sweep!.stop - sweep.sweep!.start) / sweep.sweep!.step) + 1
-    expect(pointCount(spec)).toBe(sweepPoints * step.values!.length)
+    expect(pointCount(spec)).toBe(sweep.sweep!.points * step.values!.length)
   })
 
   it('스윕이 없으면 0', () => {
     expect(pointCount({ label: 'x', electrodes: [], biases: [] })).toBe(0)
   })
 
-  it('간격이 구간을 딱 나누지 않으면 끝점을 더 센다', () => {
+  it('스윕 점 개수를 그대로 센다', () => {
     // 서버의 sweep_values 와 같은 규칙이다. 안 맞으면 진행률 분모가 어긋난다.
     expect(
       pointCount({
@@ -211,11 +211,11 @@ describe('pointCount', () => {
             name: 'V',
             electrode: 'a',
             role: 'sweep',
-            sweep: { start: 0, stop: 1, step: 0.3 },
+            sweep: { start: 0, stop: 1, points: 4 },
           },
         ],
       }),
-    ).toBe(5)
+    ).toBe(4)
   })
 })
 
@@ -237,7 +237,7 @@ describe('problemsOf', () => {
       ...base,
       biases: base.biases.map((b) =>
         b.role === 'step'
-          ? { ...b, role: 'sweep' as const, sweep: { start: 0, stop: 1, step: 0.5 } }
+          ? { ...b, role: 'sweep' as const, sweep: { start: 0, stop: 1, points: 3 } }
           : b,
       ),
     }
@@ -259,7 +259,7 @@ describe('problemsOf', () => {
       ...base,
       biases: base.biases.map((b) =>
         b.role === 'sweep'
-          ? { ...b, sweep: { start: 0, stop: 90, step: 0.1 } }
+          ? { ...b, sweep: { start: 0, stop: 90, points: 901 } }
           : b,
       ),
     }
@@ -354,5 +354,48 @@ describe('게이트가 둘일 때', () => {
     const spec = renameInterface(defaultSpec(TWO_GATES), 'gate2', 'nmos 게이트')
     expect(nameOfInterface(spec, 'gate1')).toBe('gate1')
     expect(nameOfInterface(spec, 'gate2')).toBe('nmos 게이트')
+  })
+})
+
+describe('sweepValues / sweepGap', () => {
+  it('구간을 고르게 나눈다', () => {
+    expect(sweepValues(0, 2, 5)).toEqual([0, 0.5, 1, 1.5, 2])
+  })
+
+  it('양 끝을 반드시 포함한다', () => {
+    const values = sweepValues(0, 1, 4)
+    expect(values[0]).toBe(0)
+    expect(values[values.length - 1]).toBe(1)
+  })
+
+  it('점이 하나면 시작점만', () => {
+    expect(sweepValues(0.5, 2, 1)).toEqual([0.5])
+  })
+
+  it('점이 없으면 아무것도 없다', () => {
+    expect(sweepValues(0, 1, 0)).toEqual([])
+  })
+
+  it('간격을 알려 준다', () => {
+    // 화면이 "0.5V 간격" 을 곁들여 보여준다. 점 개수만 보면 얼마나 촘촘한지
+    // 감이 안 온다.
+    expect(sweepGap(0, 2.5, 6)).toBeCloseTo(0.5)
+  })
+
+  it('점이 하나면 간격이 없다', () => {
+    expect(sweepGap(0, 2, 1)).toBe(0)
+  })
+})
+
+describe('기본 조건', () => {
+  it('게이트 단계는 1, 2, 4 V', () => {
+    const gate = defaultSpec(MOSFET).biases.find((b) => b.electrode === 'gate')
+    expect(gate?.values).toEqual([1, 2, 4])
+  })
+
+  it('드레인 스윕은 0~2.5 V 를 6 점으로', () => {
+    const sweep = defaultSpec(MOSFET).biases.find((b) => b.role === 'sweep')
+    expect(sweep?.sweep).toEqual({ start: 0, stop: 2.5, points: 6 })
+    expect(sweepGap(0, 2.5, 6)).toBeCloseTo(0.5)
   })
 })

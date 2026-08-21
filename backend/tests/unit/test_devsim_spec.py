@@ -33,7 +33,7 @@ def build(**overrides) -> dict:
                 "name": "Vd",
                 "electrode": "drain",
                 "role": "sweep",
-                "sweep": {"start": 0.0, "stop": 2.0, "step": 0.5},
+                "sweep": {"start": 0.0, "stop": 2.0, "points": 5},
             },
         ],
     }
@@ -42,19 +42,32 @@ def build(**overrides) -> dict:
 
 
 class TestSweepValues:
-    def test_includes_both_ends(self) -> None:
-        assert sweep_values(0.0, 2.0, 0.5) == [0.0, 0.5, 1.0, 1.5, 2.0]
+    """스윕은 **점 개수**로 정한다.
+
+    간격으로 정하면 `0 → 1` 을 `0.3` 씩 훑을 때 몇 점이 나오는지 손으로 세야
+    하고, 끝점이 걸리는지 안 걸리는지도 눈에 안 보인다. 점 개수로 정하면 실행
+    시간이 곧 그 숫자에 비례하므로 사용자가 정하려는 것과 일치한다.
+    """
+
+    def test_spreads_the_points_evenly(self) -> None:
+        assert sweep_values(0.0, 2.0, 5) == [0.0, 0.5, 1.0, 1.5, 2.0]
+
+    def test_always_hits_both_ends(self) -> None:
+        values = sweep_values(0.0, 1.0, 4)
+        assert values[0] == 0.0
+        assert values[-1] == 1.0
 
     def test_walks_downward_too(self) -> None:
-        assert sweep_values(1.0, 0.0, 0.5) == [1.0, 0.5, 0.0]
+        assert sweep_values(1.0, 0.0, 3) == [1.0, 0.5, 0.0]
 
-    def test_stops_at_the_end_even_when_the_step_does_not_divide(self) -> None:
-        values = sweep_values(0.0, 1.0, 0.3)
-        assert values[0] == 0.0
-        assert values[-1] == pytest.approx(1.0)
+    def test_one_point_sits_at_the_start(self) -> None:
+        assert sweep_values(0.5, 2.0, 1) == [0.5]
 
-    def test_single_point_when_start_equals_stop(self) -> None:
-        assert sweep_values(1.0, 1.0, 0.5) == [1.0]
+    def test_no_points_is_nothing(self) -> None:
+        assert sweep_values(0.0, 1.0, 0) == []
+
+    def test_same_start_and_stop_repeats_nothing(self) -> None:
+        assert sweep_values(1.0, 1.0, 3) == [1.0]
 
 
 class TestValidSpec:
@@ -94,7 +107,7 @@ class TestRejections:
     def test_needs_exactly_one_sweep(self) -> None:
         payload = build()
         payload["biases"][2]["role"] = "sweep"
-        payload["biases"][2]["sweep"] = {"start": 0.0, "stop": 1.0, "step": 0.5}
+        payload["biases"][2]["sweep"] = {"start": 0.0, "stop": 1.0, "points": 3}
         with pytest.raises(ValidationError, match="스윕"):
             DeviceSpec.model_validate(payload)
 
@@ -150,9 +163,9 @@ class TestRejections:
         with pytest.raises(ValidationError, match="전압원이 없는"):
             DeviceSpec.model_validate(payload)
 
-    def test_rejects_a_zero_step(self) -> None:
+    def test_rejects_zero_points(self) -> None:
         payload = build()
-        payload["biases"][3]["sweep"]["step"] = 0.0
+        payload["biases"][3]["sweep"]["points"] = 0
         with pytest.raises(ValidationError):
             DeviceSpec.model_validate(payload)
 
@@ -160,14 +173,14 @@ class TestRejections:
         """축마다는 멀쩡해도 곱이 크면 거절한다. 곡선족이 그렇게 커진다."""
         payload = build()
         payload["biases"][2]["values"] = [float(v) for v in range(16)]
-        payload["biases"][3]["sweep"] = {"start": 0.0, "stop": 50.0, "step": 0.5}
+        payload["biases"][3]["sweep"] = {"start": 0.0, "stop": 50.0, "points": 101}
         with pytest.raises(ValidationError, match="바이어스 점"):
             DeviceSpec.model_validate(payload)
 
     def test_rejects_too_many_points_on_one_axis(self) -> None:
         payload = build()
         payload["biases"][2]["values"] = [0.0]
-        payload["biases"][3]["sweep"] = {"start": 0.0, "stop": 100.0, "step": 0.001}
+        payload["biases"][3]["sweep"] = {"start": 0.0, "stop": 100.0, "points": 5000}
         with pytest.raises(ValidationError, match="스윕 점"):
             DeviceSpec.model_validate(payload)
 
@@ -178,8 +191,8 @@ class TestRejections:
         half = MAX_TOTAL_POINTS // 2
         payload["biases"][3]["sweep"] = {
             "start": 0.0,
-            "stop": (half - 1) * 0.5,
-            "step": 0.5,
+            "stop": 10.0,
+            "points": half,
         }
         spec = DeviceSpec.model_validate(payload)
         assert total_points(spec) == MAX_TOTAL_POINTS

@@ -22,8 +22,20 @@ export interface Series {
   points: Point[]
 }
 
+/**
+ * 저장된 곡선을 µA/µm 로 맞춘다.
+ *
+ * 해석기가 내는 단위를 A/µm 에서 µA/µm 로 바꾸었다. 그 전에 저장해 둔 결과는
+ * 여전히 A/µm 이고, 그대로 겹쳐 그리면 한쪽 곡선이 바닥에 눌려 붙어 비교가
+ * 되지 않는다. 모르는 단위는 **건드리지 않는다** — 조용히 배수를 곱하면 틀린
+ * 값을 맞는 것처럼 보여준다.
+ */
+export function toMicroAmps(value: number, unit: string | undefined): number {
+  return unit === 'A/um' ? value * 1e6 : value
+}
+
 export interface Figures {
-  /** 최대 |전류| (A/µm). */
+  /** 최대 |전류| (µA/µm). */
   iOn: number
   /** 0 이 아닌 최소 |전류|. 전부 0 이면 null. */
   iOff: number | null
@@ -98,7 +110,10 @@ export function seriesOf(dataset: IvDataset, bias: string): Series[] {
       }
       grouped.set(key, series)
     }
-    series.points.push({ x: row.sweep, y: row.currents[bias] ?? 0 })
+    series.points.push({
+      x: row.sweep,
+      y: toMicroAmps(row.currents[bias] ?? 0, dataset.current_unit),
+    })
   }
   const result = [...grouped.values()]
   for (const series of result) {

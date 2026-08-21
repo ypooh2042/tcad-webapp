@@ -97,6 +97,30 @@ def place_files(
     return placed
 
 
+def place_one(
+    root: Path,
+    owner_id: int,
+    source_path: str,
+    sequence: int,
+    path: Path,
+) -> Placed:
+    """구조 하나를 보관소에 넣는다. **거르지 않는다.**
+
+    `place_files` 와 달리 전극이 있는지 다시 보지 않는다. 부르는 쪽이 이미 아는
+    경우(패키지에 든 예제)에 쓴다 — 가입할 때마다 1.4MB 를 파싱할 이유가 없다.
+    """
+    folder = _folder(root, owner_id, source_path)
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / path.name
+    shutil.copyfile(path, target)
+    return Placed(
+        sequence=sequence,
+        filename=path.name,
+        path=str(target),
+        size_bytes=target.stat().st_size,
+    )
+
+
 def discard(root: Path, owner_id: int, source_path: str) -> None:
     """그 `.in` 에서 나온 보관본을 전부 지운다."""
     shutil.rmtree(_folder(root, owner_id, source_path), ignore_errors=True)

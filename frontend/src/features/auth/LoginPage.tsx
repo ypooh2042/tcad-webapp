@@ -34,7 +34,7 @@ export function LoginPage() {
     <div className="centered">
       <form className="card auth" onSubmit={submit}>
         <h1>TCAD</h1>
-        <p className="muted">SUPREM-IV.GS 공정 시뮬레이션</p>
+        <p className="muted">SUPREM-IV.GS 공정 시뮬레이션 + DevSim 소자 해석</p>
 
         <label htmlFor="email">이메일</label>
         <input

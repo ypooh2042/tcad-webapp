@@ -73,12 +73,12 @@ structure out=10_vth_implant.str
 
 
 ##11. oxide etch
-etch dry oxide thick=0.05
+etch dry oxide thick=0.08
 structure out=11_oxide_etch.str
 
 
 ##12. gate oxide
-diffuse time=30 temp=1000 dryo2
+diffuse time=12 temp=1000 dryo2
 structure out=12_gate_oxide.str
 
 
@@ -176,7 +176,6 @@ etch continue x=2.8 y=-3
 etch done x=2.5 y=-3
 structure out=23_via_etch.str
 
-
 ##24. photoresit strip
 etch photoresist all
 structure out=24_pr_strip.str
@@ -190,4 +189,3 @@ etch continue x=5 y=-0.8
 etch continue x=5 y=-2
 etch done x=-1 y=-2
 structure out=25_metal_contact.str
-

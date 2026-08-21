@@ -27,11 +27,40 @@ function Gate() {
   const [view, setView] = useState<View>('process')
   // 공정 결과에서 "소자 해석" 을 누르면 구조를 들고 화면을 넘어간다.
   const [handoff, setHandoff] = useState<Handoff | null>(null)
+  //: 소자 해석이 도는 중인지. 화면을 옮기기 전에 알려 주려고 들고 있다.
+  const [deviceBusy, setDeviceBusy] = useState(false)
+  //: 소자 해석 화면을 한 번이라도 열었는지. 열지도 않은 화면을 미리 받아 둘
+  //: 이유는 없다(묶음이 24KB 다).
+  const [deviceOpened, setDeviceOpened] = useState(false)
 
   const handOff = useCallback((jobId: number, sequence: number) => {
     setHandoff({ jobId, sequence })
+    setDeviceOpened(true)
     setView('device')
   }, [])
+
+  /**
+   * 화면을 옮긴다. 해석이 도는 중이면 먼저 물어본다.
+   *
+   * 잡 자체는 서버에서 계속 돈다 — 화면을 옮긴다고 멈추지 않는다. 그래도
+   * 묻는 이유는 진행률을 놓치기 쉬워서다. 옮겨도 잃지 않도록 소자 해석 화면은
+   * 내려놓지 않는다(아래 `hidden`).
+   */
+  const goTo = useCallback(
+    (next: View) => {
+      if (next !== 'device' && deviceBusy) {
+        const ok = window.confirm(
+          '소자 해석이 진행 중입니다.\n' +
+            '화면을 옮겨도 해석은 서버에서 계속 돌고, 돌아오면 이어서 볼 수 있습니다.\n' +
+            '옮길까요?',
+        )
+        if (!ok) return
+      }
+      if (next === 'device') setDeviceOpened(true)
+      setView(next)
+    },
+    [deviceBusy],
+  )
 
   // 확인이 끝나기 전에 로그인 화면을 띄우면, 이미 로그인한 사용자에게도
   // 한 번 깜빡이며 보인다.
@@ -44,7 +73,7 @@ function Gate() {
         type="button"
         role="tab"
         aria-selected={view === 'process'}
-        onClick={() => setView('process')}
+        onClick={() => goTo('process')}
       >
         공정
       </button>
@@ -52,9 +81,9 @@ function Gate() {
         type="button"
         role="tab"
         aria-selected={view === 'device'}
-        onClick={() => setView('device')}
+        onClick={() => goTo('device')}
       >
-        소자 해석
+        소자 해석{deviceBusy ? ' ●' : ''}
       </button>
     </nav>
   )
@@ -75,8 +104,12 @@ function Gate() {
           <WorkspacePage viewTabs={tabs} onAnalyse={handOff} />
         </Suspense>
       </div>
-      {view === 'device' ? (
-        <div className="view">
+      {/*
+        한 번 연 뒤에는 **내려놓지 않는다.** 조건을 다 짜 놓고 공정 탭을 잠깐
+        들렀다 오면 처음부터 다시 짜야 했고, 돌고 있던 해석의 진행률도 놓쳤다.
+      */}
+      {deviceOpened ? (
+        <div hidden={view !== 'device'} className="view">
           <header className="app-header">
             <strong>TCAD</strong>
             {tabs}
@@ -88,7 +121,12 @@ function Gate() {
           <Suspense
             fallback={<div className="centered muted">소자 해석 준비 중…</div>}
           >
-            <DevSimPage handoff={handoff} onHandoffUsed={() => setHandoff(null)} />
+            <DevSimPage
+              handoff={handoff}
+              onHandoffUsed={() => setHandoff(null)}
+              onBusyChange={setDeviceBusy}
+              active={view === 'device'}
+            />
           </Suspense>
         </div>
       ) : null}

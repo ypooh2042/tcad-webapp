@@ -6,6 +6,7 @@
  * 사용자가 몇 분 동안 "실행 중" 세 글자만 본다.
  */
 import { useEffect, useMemo, useState } from 'react'
+import { ApiError } from '../../api/client'
 import { devsim } from '../../api/endpoints'
 import type { IvDataset, IvFailure, JobDetail } from '../../api/types'
 import { formatDuration } from '../jobs/duration'
@@ -40,6 +41,9 @@ export function RunResult({ job }: { job: JobDetail | null }) {
   const [dataset, setDataset] = useState<IvDataset | null>(null)
   const [bias, setBias] = useState<string | null>(null)
   const [logScale, setLogScale] = useState(false)
+  const [label, setLabel] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState<string | null>(null)
   const elapsed = useElapsed(
     job?.elapsed_seconds ?? null,
     job?.status === 'running',
@@ -53,12 +57,15 @@ export function RunResult({ job }: { job: JobDetail | null }) {
       return
     }
     let cancelled = false
+    // 표가 아니라 **산출물**에서 읽는다. 표에는 사용자가 이름을 붙여 저장한
+    // 것만 들어간다 — 돌린 것을 전부 쌓으면 정작 비교하고 싶은 둘을 그 안에서
+    // 찾아야 한다.
     devsim
-      .run(job.id)
-      .then((detail) => {
+      .result(job.id)
+      .then((found) => {
         if (cancelled) return
-        setDataset(detail.data)
-        setBias(dominantBias(detail.data))
+        setDataset(found)
+        setBias(dominantBias(found))
       })
       .catch(() => {
         // 결과가 아직 안 실렸을 수 있다. 로그와 상태는 그대로 보여준다.
@@ -74,6 +81,22 @@ export function RunResult({ job }: { job: JobDetail | null }) {
   )
 
   const failures = dataset?.failures ?? []
+
+  async function save() {
+    if (!job || !label.trim()) return
+    setSaving(true)
+    setSaved(null)
+    try {
+      const stored = await devsim.save(job.id, label.trim())
+      setSaved(`"${stored.label}" 로 저장했습니다.`)
+    } catch (error) {
+      setSaved(
+        error instanceof ApiError ? error.message : '저장하지 못했습니다.',
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
 
   if (!job) {
     return <p className="hint">해석을 실행하면 여기에 곡선이 나옵니다.</p>
@@ -172,6 +195,28 @@ export function RunResult({ job }: { job: JobDetail | null }) {
               figures: figuresOf(one),
             }))}
           />
+
+          {/* 남길 것은 사용자가 고른다. 돌린 것을 전부 쌓으면 비교 목록에서
+              정작 보고 싶은 둘을 찾아야 한다. */}
+          <div className="save-run">
+            <input
+              value={label}
+              placeholder="이 해석에 붙일 이름"
+              aria-label="해석 이름"
+              onChange={(event) => {
+                setLabel(event.target.value)
+                setSaved(null)
+              }}
+            />
+            <button
+              type="button"
+              onClick={save}
+              disabled={saving || !label.trim()}
+            >
+              저장
+            </button>
+          </div>
+          {saved ? <p className="hint">{saved}</p> : null}
         </>
       ) : null}
 

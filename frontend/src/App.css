@@ -1043,3 +1043,65 @@ button.analyse {
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
+
+/*
+ * 모형을 바꾸는 선택에 붙는 경고. 안내 문구(.notice)와 같은 자리에 두되 색으로
+ * 구분한다 — 눈에 안 띄면 결과가 왜 달라졌는지 되짚을 단서가 없다.
+ */
+.devsim-bar .notice.caution {
+  color: #ffd32a;
+}
+
+.devsim-bar .notice.caution::before {
+  content: '⚠ ';
+}
+
+/* 해석에 이름을 붙여 남기는 자리. */
+.save-run {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.save-run input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 3px 6px;
+  font-size: 13px;
+}
+
+/* 비교 화면에서 어느 코드·구조에서 나온 결과인지. */
+.origins {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+.origins li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.origins input {
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  padding: 1px 5px;
+  font-size: 12px;
+}
+
+.origins .link {
+  background: none;
+  border: none;
+  border-bottom: 1px dashed var(--border);
+  color: var(--text);
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+}
