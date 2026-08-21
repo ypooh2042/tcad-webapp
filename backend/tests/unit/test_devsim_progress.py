@@ -31,7 +31,7 @@ class TestScanDevsimProgress:
 
     def test_reports_the_last_bias_point(self, tmp_path) -> None:
         write_stream(tmp_path, 3)
-        assert scan_devsim_progress(tmp_path, total=10).latest == "1V"
+        assert scan_devsim_progress(tmp_path, total=10).latest == "1V 풀림"
 
     def test_no_stream_yet_means_nothing_solved(self, tmp_path) -> None:
         found = scan_devsim_progress(tmp_path, total=10)
@@ -81,3 +81,53 @@ class TestPruneKeepsDevsimResults:
         left = sorted(p.name for p in tmp_path.iterdir())
         assert left == ["iv.json"]
         assert freed == 11000
+
+
+class TestMovingBetweenCurves:
+    """곡선 사이를 옮기는 동안에도 화면이 살아 있어야 한다.
+
+    단계 하나를 옮기는 데 실측 solve 4회가 든다. 그동안 아무 줄도 안 나가면
+    진행률이 멈춰 서서, 사용자는 해석이 죽은 줄 안다.
+
+    다만 **푼 점으로 세면 안 된다.** 옮기는 것은 바이어스 점이 아니다 —
+    세면 분자가 분모를 넘는다.
+    """
+
+    def write(self, workdir: Path, lines: list[str]) -> None:
+        (workdir / "iv.jsonl").write_text("\n".join(lines) + "\n")
+
+    def moving(self, vg: float) -> str:
+        return json.dumps({"phase": "moving", "steps": {"Vg": vg}})
+
+    def solved(self, vd: float) -> str:
+        return json.dumps(
+            {"sweep": vd, "steps": {"Vg": 1.0}, "currents": {"Vd": 1e-6}, "ok": True}
+        )
+
+    def test_moving_does_not_count_as_a_solved_point(self, tmp_path) -> None:
+        self.write(tmp_path, [self.moving(1.0), self.solved(0.0)])
+        found = scan_devsim_progress(tmp_path, total=10)
+        assert found.done == 1
+
+    def test_says_what_it_is_doing(self, tmp_path) -> None:
+        self.write(tmp_path, [self.solved(0.0), self.moving(2.0)])
+        assert "옮기는 중" in scan_devsim_progress(tmp_path, total=10).latest
+
+    def test_names_the_step_it_is_moving_to(self, tmp_path) -> None:
+        self.write(tmp_path, [self.moving(2.0)])
+        assert "Vg=2V" in scan_devsim_progress(tmp_path, total=10).latest
+
+    def test_a_solved_point_takes_the_message_back(self, tmp_path) -> None:
+        self.write(tmp_path, [self.moving(1.0), self.solved(0.5)])
+        latest = scan_devsim_progress(tmp_path, total=10).latest
+        assert latest == "Vg=1V, 0.5V 풀림"
+
+    def test_only_moving_so_far_means_nothing_solved(self, tmp_path) -> None:
+        self.write(tmp_path, [self.moving(0.0)])
+        assert scan_devsim_progress(tmp_path, total=10).done == 0
+
+    def test_a_marker_without_steps_is_still_not_counted(self, tmp_path) -> None:
+        # 단계 전압원이 없으면 조합이 비어 있다. 해석기는 그때 표시를 내보내지
+        # 않지만, 옛 잡의 기록을 읽을 수도 있으니 세지는 않는다.
+        self.write(tmp_path, [json.dumps({"phase": "moving", "steps": {}})])
+        assert scan_devsim_progress(tmp_path, total=5).done == 0

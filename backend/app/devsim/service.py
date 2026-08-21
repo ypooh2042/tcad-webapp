@@ -129,6 +129,9 @@ def _read_dataset(workdir: Path, total: int) -> dict[str, Any] | None:
             if not line.strip():
                 continue
             entry = json.loads(line)
+            # 곡선 사이를 옮기는 표시는 점이 아니다. 곡선에도 실패에도 넣지 않는다.
+            if entry.get("phase") == "moving":
+                continue
             # 흘려보낸 줄에는 푼 점과 건너뛴 점이 섞여 있다. 섞인 채로 곡선에
             # 넣으면 전류가 없는 점에서 그래프가 0 으로 뚝 떨어진다.
             if entry.get("ok") is False or "currents" not in entry:

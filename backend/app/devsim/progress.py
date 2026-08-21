@@ -25,8 +25,15 @@ def _describe(row: dict) -> str:
     return ", ".join(parts)
 
 
+#: 곡선 사이를 옮기는 중이라는 표시. 바이어스 점이 아니다.
+MOVING = "moving"
+
+
 def scan_devsim_progress(workdir: Path, total: int) -> Progress | None:
     """푼 바이어스 점 수. 셀 수 없으면 `None`.
+
+    `latest` 는 **완성된 문구**다. 점을 풀었을 때와 곡선 사이를 옮기는 중일 때
+    어미가 다른데, 화면에서 어미를 붙이면 "옮기는 중 풀림" 같은 말이 나온다.
 
     `0/0` 을 돌려주지 않는다. 화면이 "0단계 중 0단계"라고 거짓말을 하게 된다.
     """
@@ -56,6 +63,13 @@ def scan_devsim_progress(workdir: Path, total: int) -> Progress | None:
         except ValueError:
             # 해석기가 줄을 쓰는 도중에 읽었다. 다음 폴링에서 온전해진다.
             continue
+        if row.get("phase") == MOVING:
+            # 옮기는 데 실측 solve 4회가 든다. 그동안 아무 말도 없으면 진행률이
+            # 멈춰 서서 사용자는 해석이 죽은 줄 안다. 다만 **점으로 세지는
+            # 않는다** — 옮기는 것은 바이어스 점이 아니고, 세면 분자가 분모를
+            # 넘는다.
+            latest = f"{_describe(row)} 로 옮기는 중"
+            continue
         done += 1
-        latest = _describe(row)
+        latest = f"{_describe(row)} 풀림"
     return Progress(done=done, total=total, latest=latest)

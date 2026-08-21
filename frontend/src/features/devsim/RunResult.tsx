@@ -96,9 +96,9 @@ export function RunResult({ job }: { job: JobDetail | null }) {
 
       {job.progress ? (
         <div className="progress">
-          {job.progress.latest
-            ? `${job.progress.latest} 풀림 · `
-            : '첫 점 푸는 중 · '}
+          {/* 문구는 서버가 완성해 준다. 점을 풀었을 때와 곡선 사이를 옮기는
+              중일 때 어미가 달라, 여기서 붙이면 "옮기는 중 풀림" 이 된다. */}
+          {job.progress.latest ? `${job.progress.latest} · ` : '첫 점 푸는 중 · '}
           {job.progress.done}/{job.progress.total}
         </div>
       ) : null}

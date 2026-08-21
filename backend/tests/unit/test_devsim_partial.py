@@ -91,3 +91,30 @@ class TestSucceeded:
 
     def test_nothing_solved_is_a_failure(self) -> None:
         assert self._result(0, 15).succeeded is False
+
+
+class TestMovingMarkers:
+    """곡선 사이를 옮기는 표시는 곡선에도 실패에도 들어가지 않는다."""
+
+    def test_ignored_when_rebuilding_from_the_stream(self, tmp_path) -> None:
+        (tmp_path / STREAM_FILENAME).write_text(
+            "\n".join(
+                [
+                    json.dumps({"phase": "moving", "steps": {"Vg": 1.0}}),
+                    line(0.0, True),
+                    json.dumps({"phase": "moving", "steps": {"Vg": 2.0}}),
+                    line(0.5, True),
+                ]
+            )
+            + "\n"
+        )
+        found = _read_dataset(tmp_path, total=2)
+        assert found is not None
+        assert found["completed"] == 2
+        assert found["failures"] == []
+
+    def test_only_markers_is_nothing(self, tmp_path) -> None:
+        (tmp_path / STREAM_FILENAME).write_text(
+            json.dumps({"phase": "moving", "steps": {}}) + "\n"
+        )
+        assert _read_dataset(tmp_path, total=2) is None

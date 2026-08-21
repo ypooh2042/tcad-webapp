@@ -248,6 +248,9 @@ class Solver:
         """
         current = self.applied[bias]
         span = target - current
+        if span == 0.0:
+            # 이미 그 전압이다. 한 번 더 푸는 것은 같은 답을 다시 얻는 일이다.
+            return
         steps = max(1, int(abs(span) / MAX_BIAS_STEP + 0.999))
         for index in range(1, steps + 1):
             value = current + span * index / steps
@@ -339,25 +342,45 @@ def run(payload: dict) -> dict:
             file=sys.stderr,
         )
 
+    #: 직전 곡선의 **시작점** 상태. 다음 곡선으로 넘어갈 때 여기로 되돌린다.
+    curve_start: tuple[dict, dict[str, float]] | None = None
+
     try:
         for combination in plan["steps"]:
+            # 옮길 곳이 있을 때만 알린다. 단계 전압원이 없으면 곡선이 하나뿐이라
+            # 옮기는 일 자체가 없다 — 그때도 표시를 내보내면 진행률이 빈
+            # 문구로 시작한다.
+            if combination or curve_start is not None:
+                record({"phase": "moving", "steps": dict(combination)})
             try:
+                if curve_start is not None:
+                    # **되감지 않고 되돌린다.**
+                    #
+                    # 스윕은 곡선마다 처음부터 훑으므로, 앞 곡선이 끝난 자리
+                    # (스윕 전압의 끝)에서 시작으로 내려와야 한다. 예전에는 그
+                    # 길을 0.25V 씩 실제로 풀어 내려왔다 — 실측으로 전환 한 번에
+                    # solve 12회 5.5초였고 그중 8회가 이 되감기였다. 그동안
+                    # 화면은 한 칸도 안 움직인다.
+                    #
+                    # 직류 정상상태에는 이력이 없다. 곡선 시작점의 해를 이미
+                    # 떠 두었으므로 그대로 복원하면 같은 자리에 한 번에 선다.
+                    restore(curve_start[0])
+                    solver.reset_to(curve_start[1])
                 for name, value in combination.items():
                     solver.ramp_to(name, value)
-                # 스윕은 늘 처음부터 다시 훑는다. 앞 곡선의 끝에서 이어가면 첫
-                # 점이 이력에 오염된다.
                 solver.ramp_to(sweep_name, sweep_values[0])
             except Exception as error:
                 # 곡선의 출발점부터 안 풀렸다. 이 조합은 통째로 못 얻는다.
                 restore(baseline)
                 solver.reset_to(baseline_bias)
+                curve_start = None
                 for value in sweep_values:
                     give_up(combination, value, error)
                 continue
 
-            # 이 곡선 안에서 마지막으로 성공한 자리.
-            good = snapshot(payload)
-            good_bias = dict(solver.applied)
+            # 이 곡선의 시작 상태. 다음 곡선이 여기로 돌아온다.
+            curve_start = (snapshot(payload), dict(solver.applied))
+            good, good_bias = curve_start[0], curve_start[1]
 
             for value in sweep_values:
                 try:
