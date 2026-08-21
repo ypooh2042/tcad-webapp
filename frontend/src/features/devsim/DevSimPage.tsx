@@ -25,7 +25,7 @@ import {
   defaultSpec,
   pointCount,
   problemsOf,
-  nameOfInterface,
+  nameFromMap,
   removeElectrode,
   renameElectrode,
   renameInterface,
@@ -151,21 +151,30 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
   const problems = useMemo(() => (spec ? problemsOf(spec) : []), [spec])
   const points = useMemo(() => (spec ? pointCount(spec) : 0), [spec])
 
+  // 아래 셋은 **`spec` 통째가 아니라 실제로 읽는 부분**에만 매단다.
+  //
+  // `spec` 에 걸면 전압을 한 글자 칠 때마다 새 참조가 되고, 그것이 그대로
+  // 단면 그림의 다시 그리기로 번진다 — 내용은 하나도 안 바뀌었는데도. 조건을
+  // 불변으로 갱신하므로(`{...spec, biases: ...}`) 전극을 안 건드린 갱신에서는
+  // `spec.electrodes` 가 같은 배열 그대로다.
+  const electrodes = spec?.electrodes
+  const interfaceNames = spec?.interface_names
+
   const owners = useMemo(() => {
     const map: Record<string, string> = {}
-    for (const electrode of spec?.electrodes ?? []) {
+    for (const electrode of electrodes ?? []) {
       for (const key of electrode.interfaces) map[key] = electrode.label
     }
     return map
-  }, [spec])
+  }, [electrodes])
 
   const chips = useMemo(
     () =>
-      (spec?.electrodes ?? []).map((electrode, index) => ({
+      (electrodes ?? []).map((electrode, index) => ({
         label: electrode.label,
         color: colorOfIndex(index),
       })),
-    [spec],
+    [electrodes],
   )
 
   const describeInterface = useCallback(
@@ -179,8 +188,8 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
   )
 
   const nameOf = useCallback(
-    (key: string) => (spec ? nameOfInterface(spec, key) : key),
-    [spec],
+    (key: string) => nameFromMap(interfaceNames, key),
+    [interfaceNames],
   )
 
   const edit = useCallback(

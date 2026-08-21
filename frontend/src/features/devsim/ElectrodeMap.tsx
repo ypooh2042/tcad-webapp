@@ -72,6 +72,19 @@ export function ElectrodeMap({
   height = 360,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  /**
+   * 미리 그려 둔 삼각형 층.
+   *
+   * 삼각형이 nmos 8,813개, cmos 16,248개다. 커서를 계면 위로 옮길 때마다,
+   * 전압을 한 글자 칠 때마다 그걸 다시 칠하면 손에 걸린다. 구조와 캔버스
+   * 크기가 그대로면 삼각형도 그대로이므로 한 번 그려 두고 얹기만 한다.
+   * (`plot/SurfaceView.tsx` 가 컷 선을 끌 때 쓰는 방식과 같다.)
+   */
+  const layerRef = useRef<{
+    canvas: HTMLCanvasElement
+    surface: SurfaceResponse
+    key: string
+  } | null>(null)
   const [hovered, setHovered] = useState<string | null>(null)
   const [picked, setPicked] = useState<Picked | null>(null)
   const [width, setWidth] = useState(0)
@@ -120,18 +133,33 @@ export function ElectrodeMap({
     const geometry = surfaceGeometry(boundsOf(surface), shown, height)
 
     // 재질 단면. 값은 그리지 않는다 — 여기서 볼 것은 어디에 무엇이 붙어 있는지다.
-    surface.triangles.forEach((triangle, index) => {
-      context.fillStyle = solidOf(surface.materials[index])
-      context.beginPath()
-      triangle.forEach((vertex, at) => {
-        const x = geometry.px(surface.x[vertex])
-        const y = geometry.py(surface.y[vertex])
-        if (at === 0) context.moveTo(x, y)
-        else context.lineTo(x, y)
+    const key = `${shown}x${height}@${ratio}`
+    const cached = layerRef.current
+    const reuse = cached !== null && cached.surface === surface && cached.key === key
+
+    if (!reuse) {
+      const layer = document.createElement('canvas')
+      layer.width = canvas.width
+      layer.height = canvas.height
+      const lc = layer.getContext('2d')
+      if (!lc) return
+      lc.setTransform(ratio, 0, 0, ratio, 0, 0)
+      surface.triangles.forEach((triangle, index) => {
+        lc.fillStyle = solidOf(surface.materials[index])
+        lc.beginPath()
+        triangle.forEach((vertex, at) => {
+          const x = geometry.px(surface.x[vertex])
+          const y = geometry.py(surface.y[vertex])
+          if (at === 0) lc.moveTo(x, y)
+          else lc.lineTo(x, y)
+        })
+        lc.closePath()
+        lc.fill()
       })
-      context.closePath()
-      context.fill()
-    })
+      layerRef.current = { canvas: layer, surface, key }
+    }
+    // 버퍼는 물리 픽셀 크기이고 이 컨텍스트는 논리 좌표계다. 크기를 지정해 얹는다.
+    context.drawImage(layerRef.current!.canvas, 0, 0, shown, height)
 
     const strokeInterface = (one: DevSimInterface, bold: boolean) => {
       context.strokeStyle = colorOf(one.key)

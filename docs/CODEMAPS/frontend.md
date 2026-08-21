@@ -3,7 +3,17 @@
 **마지막 갱신:** 2026-08-21
 **진입점:** `frontend/src/main.tsx` → `App.tsx` → `features/workspace/WorkspacePage.tsx`
 
-React 19 + TypeScript + Vite 단일 페이지 앱. 라우터가 없다 — 화면이 하나뿐이고
+React 19 + TypeScript + Vite 단일 페이지 앱. **캔버스는 미리 그려 둔 삼각형 층을 얹는다.** 단면의 삼각형이 nmos 8,813개,
+cmos 16,248개다. 커서를 옮길 때마다 다시 칠하면 손에 걸리므로, 구조와 캔버스
+크기가 그대로면 한 번 그려 두고 `drawImage` 로 얹기만 한다
+(`plot/SurfaceView.tsx`, `features/devsim/ElectrodeMap.tsx`).
+
+그 위쪽에서는 **memo 의존성을 좁게 잡는다.** `spec` 통째에 매달면 전압을 한
+글자 칠 때마다 새 참조가 되고, 내용이 안 바뀌었는데도 다시 그리기로 번진다 —
+실제로 그렇게 됐다. 읽는 부분(`spec.electrodes`, `spec.interface_names`)에만
+매단다.
+
+라우터가 없다 — 화면이 하나뿐이고
 로그인 여부로만 갈린다.
 
 ---

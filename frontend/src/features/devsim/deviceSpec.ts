@@ -219,7 +219,21 @@ export function renameElectrode(
  * 실행에서 같은 계면을 못 찾는다.
  */
 export function nameOfInterface(spec: DeviceSpec, key: string): string {
-  return spec.interface_names?.[key] ?? key
+  return nameFromMap(spec.interface_names, key)
+}
+
+/**
+ * 이름표만 들고 찾는다.
+ *
+ * 화면은 `spec` 통째가 아니라 `spec.interface_names` 에만 매달려야 한다 —
+ * 조건 전체에 매달면 전압을 한 글자 칠 때마다 새 참조가 되고, 그것이 단면
+ * 그림의 다시 그리기로 번진다.
+ */
+export function nameFromMap(
+  names: Record<string, string> | undefined,
+  key: string,
+): string {
+  return names?.[key] ?? key
 }
 
 export function renameInterface(
