@@ -24,9 +24,8 @@ COORDINATE_DIGITS = 12
 
 
 def _bias_of_electrode(spec: DeviceSpec) -> dict[str, str]:
-    return {
-        label: bias.name for bias in spec.biases for label in bias.electrodes
-    }
+    """전극 이름 → 그 전극을 모는 전압원 이름. 1:1 이다."""
+    return {bias.electrode: bias.name for bias in spec.biases}
 
 
 def _doping_points(

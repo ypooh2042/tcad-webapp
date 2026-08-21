@@ -3,7 +3,7 @@ import { request } from './client'
 import type { JobStatus,
   Artifact,
   DeviceSpec,
-  DevSimElectrodes,
+  DevSimInterfaces,
   DevSimRunDetail,
   DevSimRunSummary,
   DevSimSubmitResponse,
@@ -232,10 +232,10 @@ export const devsim = {
   /** 해석 입력으로 쓸 수 있는 공정 실행들. `.str` 은 파일 목록에 안 나온다. */
   structures: () => request<StructureSource[]>('/api/devsim/structures'),
 
-  /** 구조에서 자동으로 찾은 전극과 뒷면 후보. */
-  electrodes: (jobId: number, sequence: number, gateModel?: GateModel) =>
-    request<DevSimElectrodes>(
-      `/api/devsim/jobs/${jobId}/artifacts/${sequence}/electrodes` +
+  /** 구조에서 자동으로 찾은 계면 — 금속 접촉과 뒷면 경계. */
+  interfaces: (jobId: number, sequence: number, gateModel?: GateModel) =>
+    request<DevSimInterfaces>(
+      `/api/devsim/jobs/${jobId}/artifacts/${sequence}/interfaces` +
         (gateModel ? `?gate_model=${gateModel}` : ''),
     ),
 
@@ -255,7 +255,7 @@ export const devsim = {
 export type {
   Artifact,
   DeviceSpec,
-  DevSimElectrodes,
+  DevSimInterfaces,
   DevSimRunDetail,
   DevSimRunSummary,
   DevSimSubmitResponse,

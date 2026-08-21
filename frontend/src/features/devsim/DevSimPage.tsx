@@ -2,25 +2,36 @@
  * 소자 해석 화면.
  *
  * 공정 편집 창과 일부러 분리했다. 여기로 넘어오는 것은 `.str` 구조 하나뿐이고,
- * 사용자는 파이썬을 보지 않는다 — 구조를 고르고, 전극에 전압원을 붙이고,
- * 스윕을 돌린다.
+ * 사용자는 파이썬을 보지 않는다 — 구조를 고르고, 단면에서 계면을 눌러 전극에
+ * 붙이고, 전극마다 전압을 정해 스윕을 돌린다.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ApiError } from '../../api/client'
 import { devsim, plot } from '../../api/endpoints'
 import type {
   DeviceSpec,
-  DevSimElectrode,
+  DevSimInterface,
   GateModel,
   StructureSource,
   SurfaceResponse,
 } from '../../api/types'
+import { Splitter } from '../../components/Splitter'
 import { useJob } from '../jobs/useJob'
+import { usePanelWidth } from '../workspace/usePanelWidth'
 import { CompareView } from './CompareView'
-import { defaultSpec, pointCount, problemsOf } from './deviceSpec'
-import { ElectrodeMap, type PickedBox } from './ElectrodeMap'
+import {
+  addElectrode,
+  assignInterface,
+  defaultSpec,
+  pointCount,
+  problemsOf,
+  removeElectrode,
+  renameElectrode,
+  unassignInterface,
+} from './deviceSpec'
+import { ElectrodeMap } from './ElectrodeMap'
 import { RunResult } from './RunResult'
-import { SourceEditor } from './SourceEditor'
+import { colorOfIndex, SourceEditor } from './SourceEditor'
 
 export interface Handoff {
   jobId: number
@@ -50,14 +61,14 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
   const [selection, setSelection] = useState<Selection | null>(null)
   const [gateModel, setGateModel] = useState<GateModel>('semiconductor')
 
-  const [electrodes, setElectrodes] = useState<DevSimElectrode[]>([])
+  const [interfaces, setInterfaces] = useState<DevSimInterface[]>([])
   const [surface, setSurface] = useState<SurfaceResponse | null>(null)
   const [spec, setSpec] = useState<DeviceSpec | null>(null)
-  const [picking, setPicking] = useState(false)
 
   const [jobId, setJobId] = useState<number | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [tab, setTab] = useState<'run' | 'compare'>('run')
+  const [runWidth, setRunWidth] = usePanelWidth('tcad.width.devsim', 420)
 
   const { job } = useJob(jobId)
 
@@ -92,29 +103,26 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
     onHandoffUsed()
   }, [handoff, onHandoffUsed])
 
-  // 구조가 바뀌면 전극과 조건을 처음부터 다시 만든다. 예전 조건을 그대로 두면
-  // 이름은 남아 있는데 가리키는 전극이 없는 상태가 된다.
+  // 구조가 바뀌면 계면과 조건을 처음부터 다시 만든다. 예전 조건을 그대로 두면
+  // 이름은 남아 있는데 가리키는 계면이 없는 상태가 된다.
   useEffect(() => {
     if (!selection) return
     let cancelled = false
     setMessage(null)
-    setElectrodes([])
+    setInterfaces([])
     setSpec(null)
     Promise.all([
-      devsim.electrodes(selection.jobId, selection.sequence, gateModel),
+      devsim.interfaces(selection.jobId, selection.sequence, gateModel),
       plot.surface(selection.jobId, selection.sequence, null),
     ])
       .then(([found, drawn]) => {
         if (cancelled) return
-        setElectrodes(found.electrodes)
+        setInterfaces(found.interfaces)
         setSurface(drawn)
-        setSpec(defaultSpec(found.electrodes))
+        setSpec(defaultSpec(found.interfaces))
         // 뒷면 후보는 반도체만 있어도 늘 딸려 온다. 그것까지 세면 금속이
-        // 하나도 없는 단계에서도 "전극을 찾았다"가 되어 버린다.
-        const metal = found.electrodes.filter(
-          (electrode) => electrode.origin === 'detected',
-        )
-        if (metal.length === 0) {
+        // 하나도 없는 단계에서도 "계면을 찾았다"가 되어 버린다.
+        if (found.interfaces.every((one) => one.origin === 'backside')) {
           setMessage(
             '이 구조에는 금속 전극이 없습니다. 금속 배선까지 끝난 단계를 골라 주세요.',
           )
@@ -131,38 +139,47 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
   const problems = useMemo(() => (spec ? problemsOf(spec) : []), [spec])
   const points = useMemo(() => (spec ? pointCount(spec) : 0), [spec])
 
-  const mapped = useMemo(() => {
-    if (!spec) return []
-    const byKey = new Map(electrodes.map((one) => [one.key, one]))
-    return spec.electrodes.map((choice) => ({
-      label: choice.label,
-      segments:
-        choice.origin === 'picked'
-          ? boxOutline(choice.box)
-          : (byKey.get(choice.key ?? choice.label)?.segments ??
-            byKey.get(choice.origin === 'backside' ? 'body' : '')?.segments ??
-            []),
-      active: true,
-    }))
-  }, [spec, electrodes])
+  const owners = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const electrode of spec?.electrodes ?? []) {
+      for (const key of electrode.interfaces) map[key] = electrode.label
+    }
+    return map
+  }, [spec])
 
-  const addPicked = useCallback(
-    (box: PickedBox) => {
-      setPicking(false)
-      setSpec((current) => {
-        if (!current) return current
-        let index = current.electrodes.length + 1
-        while (current.electrodes.some((one) => one.label === `E${index}`)) index++
-        return {
-          ...current,
-          electrodes: [
-            ...current.electrodes,
-            { origin: 'picked', label: `E${index}`, box },
-          ],
-        }
-      })
+  const chips = useMemo(
+    () =>
+      (spec?.electrodes ?? []).map((electrode, index) => ({
+        label: electrode.label,
+        color: colorOfIndex(index),
+      })),
+    [spec],
+  )
+
+  const describeInterface = useCallback(
+    (key: string) => {
+      const found = interfaces.find((one) => one.key === key)
+      if (!found) return key
+      const where = found.origin === 'backside' ? '뒷면 경계' : '금속 접촉'
+      return `${where} · ${found.materials.join(', ')} · 변 ${found.edge_count}개`
     },
+    [interfaces],
+  )
+
+  const edit = useCallback(
+    (change: (current: DeviceSpec) => DeviceSpec) =>
+      setSpec((current) => (current ? change(current) : current)),
     [],
+  )
+
+  const createFor = useCallback(
+    (key: string) =>
+      edit((current) => {
+        const grown = addElectrode(current)
+        const added = grown.electrodes[grown.electrodes.length - 1]
+        return assignInterface(grown, key, added.label)
+      }),
+    [edit],
   )
 
   async function run() {
@@ -242,27 +259,47 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
       {tab === 'compare' ? (
         <CompareView />
       ) : (
-        <div className="devsim-body">
+        // 폭은 인라인 스타일로 준다. 드래그 중에는 값이 계속 바뀌므로 CSS
+        // 클래스로는 표현할 수 없다.
+        <div
+          className="devsim-body"
+          style={{ gridTemplateColumns: `minmax(0, 1fr) auto ${runWidth}px` }}
+        >
           <section className="devsim-map">
-            {surface ? (
-              <ElectrodeMap
-                surface={surface}
-                electrodes={mapped}
-                picking={picking}
-                onPick={addPicked}
-              />
+            {surface && spec ? (
+              <>
+                <ElectrodeMap
+                  surface={surface}
+                  interfaces={interfaces}
+                  owners={owners}
+                  electrodes={chips}
+                  onAssign={(key, label) =>
+                    edit((current) => assignInterface(current, key, label))
+                  }
+                  onUnassign={(key) =>
+                    edit((current) => unassignInterface(current, key))
+                  }
+                  onCreate={createFor}
+                />
+                <SourceEditor
+                  spec={spec}
+                  onChange={setSpec}
+                  onAddElectrode={() => edit(addElectrode)}
+                  onRemoveElectrode={(label) =>
+                    edit((current) => removeElectrode(current, label))
+                  }
+                  onRenameElectrode={(from, to) =>
+                    edit((current) => renameElectrode(current, from, to))
+                  }
+                  describeInterface={describeInterface}
+                />
+              </>
             ) : (
               <p className="hint">구조를 불러오는 중…</p>
             )}
-            {spec ? (
-              <SourceEditor
-                spec={spec}
-                onChange={setSpec}
-                picking={picking}
-                onPickingChange={setPicking}
-              />
-            ) : null}
           </section>
+
+          <Splitter width={runWidth} onChange={setRunWidth} label="해석 패널 폭" />
 
           <aside className="devsim-run">
             <div className="devsim-actions">
@@ -290,21 +327,4 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
       )}
     </div>
   )
-}
-
-/** 직접 찍은 전극은 서버가 그 안의 경계를 골라낸다. 화면에는 상자를 그린다. */
-function boxOutline(box?: {
-  x_min: number
-  x_max: number
-  y_min: number
-  y_max: number
-}): number[][] {
-  if (!box) return []
-  const { x_min, x_max, y_min, y_max } = box
-  return [
-    [x_min, y_min, x_max, y_min],
-    [x_max, y_min, x_max, y_max],
-    [x_max, y_max, x_min, y_max],
-    [x_min, y_max, x_min, y_min],
-  ]
 }

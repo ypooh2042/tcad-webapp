@@ -26,17 +26,18 @@ def contacts():
 def spec_payload(**overrides) -> dict:
     payload = {
         "electrodes": [
-            {"origin": "detected", "key": "source", "label": "S"},
-            {"origin": "detected", "key": "gate", "label": "G"},
-            {"origin": "detected", "key": "drain", "label": "D"},
-            {"origin": "backside", "label": "B"},
+            {"label": "S", "interfaces": ["source"]},
+            {"label": "G", "interfaces": ["gate"]},
+            {"label": "D", "interfaces": ["drain"]},
+            {"label": "B", "interfaces": ["body"]},
         ],
         "biases": [
-            {"name": "Vs", "electrodes": ["S", "B"], "role": "const", "value": 0.0},
-            {"name": "Vg", "electrodes": ["G"], "role": "step", "values": [0.0, 1.0]},
+            {"name": "Vs", "electrode": "S", "role": "const", "value": 0.0},
+            {"name": "Vb", "electrode": "B", "role": "const", "value": 0.0},
+            {"name": "Vg", "electrode": "G", "role": "step", "values": [0.0, 1.0]},
             {
                 "name": "Vd",
-                "electrodes": ["D"],
+                "electrode": "D",
                 "role": "sweep",
                 "sweep": {"start": 0.0, "stop": 1.0, "step": 0.5},
             },
@@ -56,55 +57,39 @@ class TestResolve:
         found = resolve_electrodes(contacts, spec)
         assert sorted(e.name for e in found) == ["B", "D", "G", "S"]
 
-    def test_keeps_the_geometry_of_the_detected_electrode(self, contacts, spec) -> None:
+    def test_keeps_the_geometry_of_the_interface(self, contacts, spec) -> None:
         found = {e.name: e for e in resolve_electrodes(contacts, spec)}
         assert found["G"].materials == ("poly",)
         assert found["S"].materials == ("silicon",)
 
-    def test_unknown_key_is_refused(self, contacts) -> None:
+    def test_unknown_interface_is_refused(self, contacts) -> None:
         payload = spec_payload()
-        payload["electrodes"][0]["key"] = "collector"
+        payload["electrodes"][0]["interfaces"] = ["collector"]
         with pytest.raises(ElectrodeNotFound, match="collector"):
             resolve_electrodes(contacts, DeviceSpec.model_validate(payload))
 
-    def test_picked_box_selects_boundary_edges(self, contacts) -> None:
-        depth = max(c.y for c in contacts.coordinates)
+    def test_merges_the_edges_of_every_interface_it_holds(self, contacts) -> None:
+        """여러 계면을 한 전극에 붙이면 변이 합쳐진다 — 그것이 등전위다."""
+        single = {e.name: e for e in resolve_electrodes(
+            contacts, DeviceSpec.model_validate(spec_payload())
+        )}
         payload = spec_payload()
-        payload["electrodes"][3] = {
-            "origin": "picked",
-            "label": "B",
-            "box": {
-                "x_min": -0.1,
-                "x_max": 1.0,
-                "y_min": depth - 0.01,
-                "y_max": depth + 0.01,
-            },
-        }
-        found = {e.name: e for e in resolve_electrodes(
+        payload["electrodes"][0]["interfaces"] = ["source", "body"]
+        payload["electrodes"] = [e for e in payload["electrodes"] if e["label"] != "B"]
+        payload["biases"] = [b for b in payload["biases"] if b["electrode"] != "B"]
+        merged = {e.name: e for e in resolve_electrodes(
             contacts, DeviceSpec.model_validate(payload)
         )}
-        body = found["B"]
-        assert body.edges
-        # 상자가 왼쪽 절반만 덮었으므로 뒷면 전체보다 좁아야 한다.
-        assert body.extent.x_max <= 1.0
+        assert len(merged["S"].edges) == len(single["S"].edges) + len(
+            single["B"].edges
+        )
 
-    def test_empty_box_is_refused(self, contacts) -> None:
-        payload = spec_payload()
-        payload["electrodes"][3] = {
-            "origin": "picked",
-            "label": "B",
-            "box": {"x_min": 9.0, "x_max": 9.1, "y_min": 9.0, "y_max": 9.1},
-        }
-        with pytest.raises(ElectrodeNotFound, match="B"):
-            resolve_electrodes(contacts, DeviceSpec.model_validate(payload))
-
-    def test_missing_backside_is_refused(self, contacts) -> None:
-        """뒷면 경계가 없는 구조에 backside 전극을 걸면 조용히 넘어가면 안 된다."""
+    def test_an_electrode_may_be_left_out(self, contacts) -> None:
         payload = spec_payload()
         payload["electrodes"] = [
             e for e in payload["electrodes"] if e["label"] != "B"
         ]
-        payload["biases"][0]["electrodes"] = ["S"]
+        payload["biases"] = [b for b in payload["biases"] if b["electrode"] != "B"]
         spec = DeviceSpec.model_validate(payload)
         assert len(resolve_electrodes(contacts, spec)) == 3
 
@@ -127,9 +112,10 @@ class TestPayload:
     def test_lists_contacts_with_their_bias_source(self, payload) -> None:
         by_name = {c["name"]: c for c in payload["contacts"]}
         assert set(by_name) == {"S", "G", "D", "B"}
+        # 전압원은 전극마다 하나다. 기판도 자기 전압원을 갖는다.
         assert by_name["D"]["bias"] == "Vd"
         assert by_name["S"]["bias"] == "Vs"
-        assert by_name["B"]["bias"] == "Vs"
+        assert by_name["B"]["bias"] == "Vb"
 
     def test_doping_is_given_for_semiconductor_regions_only(self, payload) -> None:
         semiconductors = {
@@ -158,4 +144,4 @@ class TestPayload:
         assert plan["total"] == 6
 
     def test_constant_biases_are_listed(self, payload) -> None:
-        assert payload["plan"]["constants"] == {"Vs": 0.0}
+        assert payload["plan"]["constants"] == {"Vs": 0.0, "Vb": 0.0}

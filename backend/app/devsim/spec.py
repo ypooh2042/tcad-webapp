@@ -4,20 +4,23 @@
 쓴 고정 스크립트가 읽는다) 크기와 짜임새는 사용자가 정한다. 여기서 막지 않으면
 바이어스 점 10만 개짜리 요청이 컨테이너 안에서 타임아웃까지 돌게 된다.
 
-전압원(`Bias`)과 전극(`ElectrodeChoice`)을 나눈 이유:
+세 계층이 있고, 사용자가 손대는 것은 가운데 하나뿐이다.
 
-    전극은 **구조에서 나온다** — 같은 금속 덩어리는 같은 전위라는 규칙이
-    등전위를 이미 보장한다.
-    전압원은 **사용자가 만든다** — 서로 다른 전극을 하나로 묶고 싶을 때
-    (기판을 소스에 단다) 쓰는 것이 이 계층이다.
+    계면(interface)  **구조에서 나온다.** 금속 덩어리 하나, 뒷면 하나.
+                     사용자가 만들거나 고칠 수 없다 — 반도체 표면 아무 데나
+                     접촉을 걸 수 있게 하면 소자가 아니라 수치 실험이 된다.
+    전극(electrode)  **사용자가 계면을 묶는다.** 이름을 붙이고, 단면에서 계면을
+                     골라 붙인다. 한 계면은 한 전극에만 속한다.
+    전압원(bias)     **전극마다 정확히 하나.** 역할(스윕/단계/고정)과 전압을
+                     정한다. 여러 계면을 한 전위로 묶고 싶으면 전극 쪽에서
+                     계면을 여러 개 붙이면 된다 — 전압원이 전극을 여러 개
+                     거느리게 하면 같은 일을 두 군데서 할 수 있게 된다.
 """
 
 from __future__ import annotations
 
 from enum import Enum
 from itertools import product
-from typing import Literal
-
 from pydantic import BaseModel, Field, model_validator
 
 from app.devsim.electrodes import GateModel
@@ -47,42 +50,23 @@ class BiasRole(str, Enum):
     CONST = "const"
 
 
-class Box(BaseModel):
-    """화면에서 찍은 사각 범위(µm). 이 안에 든 경계 변을 전극으로 삼는다."""
-
-    x_min: float
-    x_max: float
-    y_min: float
-    y_max: float
-
-    @model_validator(mode="after")
-    def _ordered(self) -> Box:
-        if self.x_min > self.x_max or self.y_min > self.y_max:
-            raise ValueError("범위의 최소가 최대보다 큽니다")
-        return self
-
-
 class ElectrodeChoice(BaseModel):
-    """해석에 쓸 전극 하나.
+    """해석에 쓸 전극 하나. 계면 몇 개를 한 전위로 묶은 것이다.
 
-    `detected` 구조에서 자동으로 찾은 것. `key` 는 자동으로 붙은 이름
-                (source/gate/drain/contactN)이고, 같은 구조·같은 게이트 모델이면
-                항상 같게 나오므로 안정적인 열쇠다.
-    `backside`  뒷면 경계 전체. 기판 접촉이 공정 코드에 없을 때 쓴다.
-    `picked`    화면에서 찍은 상자 안의 경계.
+    `interfaces` 는 자동으로 찾은 계면의 열쇠들이다(source/gate/drain/contactN/
+    body). 같은 구조·같은 게이트 모델이면 늘 같게 나오므로 안정적인 이름이다.
+    좌표를 받지 않는 이유: 스펙은 저장되고 다시 쓰이는데, 그 사이 다른 구조에
+    붙으면 좌표가 안 맞는다. 이름만 받아 구조에서 다시 찾으면 안 맞을 때
+    조용히 엉뚱한 자리를 잡는 대신 오류가 난다.
     """
 
-    origin: Literal["detected", "backside", "picked"]
     label: str = Field(min_length=1, max_length=32)
-    key: str | None = Field(default=None, max_length=32)
-    box: Box | None = None
+    interfaces: list[str] = Field(min_length=1, max_length=16)
 
     @model_validator(mode="after")
-    def _needs_its_own_field(self) -> ElectrodeChoice:
-        if self.origin == "detected" and not self.key:
-            raise ValueError("자동 추출 전극에는 key 가 필요합니다")
-        if self.origin == "picked" and self.box is None:
-            raise ValueError("화면에서 찍은 전극에는 범위가 필요합니다")
+    def _no_repeats(self) -> ElectrodeChoice:
+        if len(set(self.interfaces)) != len(self.interfaces):
+            raise ValueError(f"{self.label}: 같은 계면이 여러 번 들어 있습니다")
         return self
 
 
@@ -93,10 +77,15 @@ class SweepRange(BaseModel):
 
 
 class Bias(BaseModel):
-    """전압원 하나. 연결된 전극들이 같은 전위를 갖는다."""
+    """전압원 하나. 전극 하나를 몰아준다.
+
+    전극과 1:1 이다. 하나의 전압원이 전극을 여러 개 거느리게 하면 "여러 계면을
+    한 전위로" 라는 같은 일을 전극 쪽과 전압원 쪽 두 군데서 할 수 있게 되고,
+    화면에서는 그 두 길이 서로를 덮어쓴다.
+    """
 
     name: str = Field(min_length=1, max_length=32)
-    electrodes: list[str] = Field(min_length=1, max_length=8)
+    electrode: str = Field(min_length=1, max_length=32)
     role: BiasRole
     value: float | None = Field(default=None, ge=-MAX_ABS_VOLTS, le=MAX_ABS_VOLTS)
     values: list[float] | None = Field(default=None, max_length=16)
@@ -155,33 +144,47 @@ class DeviceSpec(BaseModel):
             for combination in product(*(b.points() for b in steps))
         ]
 
+    def bias_of(self, label: str) -> Bias:
+        return next(bias for bias in self.biases if bias.electrode == label)
+
     @model_validator(mode="after")
     def _consistent(self) -> DeviceSpec:
         labels = [electrode.label for electrode in self.electrodes]
         if len(labels) != len(set(labels)):
             raise ValueError("전극 이름이 겹칩니다")
 
+        # 한 계면은 한 전극에만 속한다. 두 전극이 같은 계면을 물면 같은 변에
+        # 서로 다른 전위를 걸겠다는 뜻이 되고, 솔버가 무엇을 골랐는지 알 수 없다.
+        owner: dict[str, str] = {}
+        for electrode in self.electrodes:
+            for key in electrode.interfaces:
+                if key in owner:
+                    raise ValueError(
+                        f"계면 {key!r} 가 두 전극({owner[key]}, {electrode.label})에"
+                        " 걸려 있습니다"
+                    )
+                owner[key] = electrode.label
+
         sweeps = [b for b in self.biases if b.role is BiasRole.SWEEP]
         if len(sweeps) != 1:
             raise ValueError("스윕 전압원은 정확히 하나여야 합니다")
 
         known = set(labels)
-        claimed: dict[str, str] = {}
+        driven: dict[str, str] = {}
         for bias in self.biases:
-            for label in bias.electrodes:
-                if label not in known:
-                    raise ValueError(f"{label!r} 라는 전극이 없습니다")
-                if label in claimed:
-                    raise ValueError(
-                        f"전극 {label!r} 가 두 전압원({claimed[label]}, {bias.name})에"
-                        " 걸려 있습니다"
-                    )
-                claimed[label] = bias.name
+            if bias.electrode not in known:
+                raise ValueError(f"{bias.electrode!r} 라는 전극이 없습니다")
+            if bias.electrode in driven:
+                raise ValueError(
+                    f"전극 {bias.electrode!r} 에 전압원이 둘"
+                    f"({driven[bias.electrode]}, {bias.name}) 붙어 있습니다"
+                )
+            driven[bias.electrode] = bias.name
 
-        loose = known - set(claimed)
+        loose = known - set(driven)
         if loose:
             raise ValueError(
-                f"전압원에 안 걸린 전극이 있습니다: {', '.join(sorted(loose))}"
+                f"전압원이 없는 전극이 있습니다: {', '.join(sorted(loose))}"
             )
 
         if len(sweeps[0].points()) > MAX_SWEEP_POINTS:

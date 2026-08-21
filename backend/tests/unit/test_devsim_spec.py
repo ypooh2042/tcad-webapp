@@ -20,17 +20,18 @@ from app.devsim.spec import (
 def build(**overrides) -> dict:
     payload = {
         "electrodes": [
-            {"origin": "detected", "key": "source", "label": "source"},
-            {"origin": "detected", "key": "gate", "label": "gate"},
-            {"origin": "detected", "key": "drain", "label": "drain"},
-            {"origin": "backside", "label": "body"},
+            {"label": "source", "interfaces": ["source"]},
+            {"label": "gate", "interfaces": ["gate"]},
+            {"label": "drain", "interfaces": ["drain"]},
+            {"label": "body", "interfaces": ["body"]},
         ],
         "biases": [
-            {"name": "Vs", "electrodes": ["source", "body"], "role": "const", "value": 0.0},
-            {"name": "Vg", "electrodes": ["gate"], "role": "step", "values": [0.0, 1.0]},
+            {"name": "Vs", "electrode": "source", "role": "const", "value": 0.0},
+            {"name": "Vb", "electrode": "body", "role": "const", "value": 0.0},
+            {"name": "Vg", "electrode": "gate", "role": "step", "values": [0.0, 1.0]},
             {
                 "name": "Vd",
-                "electrodes": ["drain"],
+                "electrode": "drain",
                 "role": "sweep",
                 "sweep": {"start": 0.0, "stop": 2.0, "step": 0.5},
             },
@@ -63,6 +64,22 @@ class TestValidSpec:
         assert spec.sweep_bias().name == "Vd"
         assert [b.name for b in spec.step_biases()] == ["Vg"]
 
+    def test_every_electrode_has_exactly_one_source(self) -> None:
+        spec = DeviceSpec.model_validate(build())
+        for electrode in spec.electrodes:
+            assert spec.bias_of(electrode.label).electrode == electrode.label
+
+    def test_an_electrode_can_hold_several_interfaces(self) -> None:
+        """여러 계면을 한 전위로 묶는 길은 전극 쪽 하나뿐이다."""
+        payload = build()
+        payload["electrodes"][0]["interfaces"] = ["source", "body"]
+        payload["electrodes"] = [
+            e for e in payload["electrodes"] if e["label"] != "body"
+        ]
+        payload["biases"] = [b for b in payload["biases"] if b["electrode"] != "body"]
+        spec = DeviceSpec.model_validate(payload)
+        assert spec.electrodes[0].interfaces == ["source", "body"]
+
     def test_counts_the_bias_points(self) -> None:
         spec = DeviceSpec.model_validate(build())
         # 스윕 5점 × 게이트 2단계
@@ -76,28 +93,49 @@ class TestValidSpec:
 class TestRejections:
     def test_needs_exactly_one_sweep(self) -> None:
         payload = build()
-        payload["biases"][1]["role"] = "sweep"
-        payload["biases"][1]["sweep"] = {"start": 0.0, "stop": 1.0, "step": 0.5}
+        payload["biases"][2]["role"] = "sweep"
+        payload["biases"][2]["sweep"] = {"start": 0.0, "stop": 1.0, "step": 0.5}
         with pytest.raises(ValidationError, match="스윕"):
             DeviceSpec.model_validate(payload)
 
     def test_rejects_no_sweep_at_all(self) -> None:
         payload = build()
-        payload["biases"][2]["role"] = "const"
-        payload["biases"][2]["value"] = 1.0
+        payload["biases"][3]["role"] = "const"
+        payload["biases"][3]["value"] = 1.0
         with pytest.raises(ValidationError, match="스윕"):
             DeviceSpec.model_validate(payload)
 
-    def test_rejects_an_electrode_used_by_two_sources(self) -> None:
+    def test_rejects_two_sources_on_one_electrode(self) -> None:
+        # 전압원과 전극은 1:1 이다. 둘이 붙으면 어느 전위가 걸리는지 알 수 없다.
         payload = build()
-        payload["biases"][0]["electrodes"] = ["source", "body", "drain"]
-        with pytest.raises(ValidationError, match="두 전압원"):
+        payload["biases"][1]["electrode"] = "source"
+        with pytest.raises(ValidationError, match="전압원이 둘"):
             DeviceSpec.model_validate(payload)
 
     def test_rejects_an_unknown_electrode(self) -> None:
         payload = build()
-        payload["biases"][0]["electrodes"] = ["substrate"]
+        payload["biases"][0]["electrode"] = "substrate"
         with pytest.raises(ValidationError, match="전극"):
+            DeviceSpec.model_validate(payload)
+
+    def test_rejects_an_interface_claimed_by_two_electrodes(self) -> None:
+        """한 계면에 두 전위를 걸 수는 없다."""
+        payload = build()
+        payload["electrodes"][3]["interfaces"] = ["body", "source"]
+        with pytest.raises(ValidationError, match="두 전극"):
+            DeviceSpec.model_validate(payload)
+
+    def test_rejects_the_same_interface_twice_in_one_electrode(self) -> None:
+        payload = build()
+        payload["electrodes"][0]["interfaces"] = ["source", "source"]
+        with pytest.raises(ValidationError, match="여러 번"):
+            DeviceSpec.model_validate(payload)
+
+    def test_rejects_an_electrode_with_no_interface(self) -> None:
+        # 계면이 없는 전극은 걸 데가 없다.
+        payload = build()
+        payload["electrodes"][0]["interfaces"] = []
+        with pytest.raises(ValidationError):
             DeviceSpec.model_validate(payload)
 
     def test_rejects_duplicate_electrode_labels(self) -> None:
@@ -106,39 +144,39 @@ class TestRejections:
         with pytest.raises(ValidationError, match="이름"):
             DeviceSpec.model_validate(payload)
 
-    def test_rejects_an_electrode_left_unconnected(self) -> None:
+    def test_rejects_an_electrode_with_no_source(self) -> None:
         payload = build()
-        payload["biases"][0]["electrodes"] = ["source"]
-        with pytest.raises(ValidationError, match="전압원"):
+        payload["biases"] = payload["biases"][1:]
+        with pytest.raises(ValidationError, match="전압원이 없는"):
             DeviceSpec.model_validate(payload)
 
     def test_rejects_a_zero_step(self) -> None:
         payload = build()
-        payload["biases"][2]["sweep"]["step"] = 0.0
+        payload["biases"][3]["sweep"]["step"] = 0.0
         with pytest.raises(ValidationError):
             DeviceSpec.model_validate(payload)
 
     def test_rejects_too_many_points_in_total(self) -> None:
         """축마다는 멀쩡해도 곱이 크면 거절한다. 곡선족이 그렇게 커진다."""
         payload = build()
-        payload["biases"][1]["values"] = [float(v) for v in range(16)]
-        payload["biases"][2]["sweep"] = {"start": 0.0, "stop": 50.0, "step": 0.5}
+        payload["biases"][2]["values"] = [float(v) for v in range(16)]
+        payload["biases"][3]["sweep"] = {"start": 0.0, "stop": 50.0, "step": 0.5}
         with pytest.raises(ValidationError, match="바이어스 점"):
             DeviceSpec.model_validate(payload)
 
     def test_rejects_too_many_points_on_one_axis(self) -> None:
         payload = build()
-        payload["biases"][1]["values"] = [0.0]
-        payload["biases"][2]["sweep"] = {"start": 0.0, "stop": 100.0, "step": 0.001}
+        payload["biases"][2]["values"] = [0.0]
+        payload["biases"][3]["sweep"] = {"start": 0.0, "stop": 100.0, "step": 0.001}
         with pytest.raises(ValidationError, match="스윕 점"):
             DeviceSpec.model_validate(payload)
 
     def test_the_cap_is_reachable_but_not_exceeded(self) -> None:
         payload = build()
-        payload["biases"][1]["values"] = [0.0, 1.0]
+        payload["biases"][2]["values"] = [0.0, 1.0]
         # 단계 2 개이므로 스윕을 상한의 절반만큼 놓으면 총수가 딱 상한이 된다.
         half = MAX_TOTAL_POINTS // 2
-        payload["biases"][2]["sweep"] = {
+        payload["biases"][3]["sweep"] = {
             "start": 0.0,
             "stop": (half - 1) * 0.5,
             "step": 0.5,
@@ -154,19 +192,7 @@ class TestRejections:
 
     def test_step_needs_values(self) -> None:
         payload = build()
-        payload["biases"][1]["values"] = []
-        with pytest.raises(ValidationError):
-            DeviceSpec.model_validate(payload)
-
-    def test_picked_electrode_needs_a_box(self) -> None:
-        payload = build()
-        payload["electrodes"].append({"origin": "picked", "label": "extra"})
-        with pytest.raises(ValidationError):
-            DeviceSpec.model_validate(payload)
-
-    def test_detected_electrode_needs_a_key(self) -> None:
-        payload = build()
-        payload["electrodes"][0] = {"origin": "detected", "label": "source"}
+        payload["biases"][2]["values"] = []
         with pytest.raises(ValidationError):
             DeviceSpec.model_validate(payload)
 
@@ -183,11 +209,10 @@ class TestRoles:
         assert BiasRole.STEP.value == "step"
         assert BiasRole.CONST.value == "const"
 
-    def test_step_combinations_are_the_cartesian_product(self) -> None:
+    def test_a_source_without_an_electrode_is_refused(self) -> None:
         payload = build()
         payload["biases"].append(
-            {"name": "Vb", "electrodes": [], "role": "step", "values": [0.0, -1.0]}
+            {"name": "Vx", "electrode": "", "role": "const", "value": 0.0}
         )
-        # 전극이 없는 전압원은 거부돼야 한다.
         with pytest.raises(ValidationError):
             DeviceSpec.model_validate(payload)

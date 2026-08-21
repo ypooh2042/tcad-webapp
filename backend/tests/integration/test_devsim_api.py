@@ -34,17 +34,18 @@ def spec_body(**overrides) -> dict:
     body = {
         "label": "기본 조건",
         "electrodes": [
-            {"origin": "detected", "key": "source", "label": "S"},
-            {"origin": "detected", "key": "gate", "label": "G"},
-            {"origin": "detected", "key": "drain", "label": "D"},
-            {"origin": "backside", "label": "B"},
+            {"label": "S", "interfaces": ["source"]},
+            {"label": "G", "interfaces": ["gate"]},
+            {"label": "D", "interfaces": ["drain"]},
+            {"label": "B", "interfaces": ["body"]},
         ],
         "biases": [
-            {"name": "Vs", "electrodes": ["S", "B"], "role": "const", "value": 0.0},
-            {"name": "Vg", "electrodes": ["G"], "role": "step", "values": [0.0, 1.0]},
+            {"name": "Vs", "electrode": "S", "role": "const", "value": 0.0},
+            {"name": "Vb", "electrode": "B", "role": "const", "value": 0.0},
+            {"name": "Vg", "electrode": "G", "role": "step", "values": [0.0, 1.0]},
             {
                 "name": "Vd",
-                "electrodes": ["D"],
+                "electrode": "D",
                 "role": "sweep",
                 "sweep": {"start": 0.0, "stop": 1.0, "step": 0.5},
             },
@@ -134,16 +135,16 @@ async def structure_job(app, tmp_path):
         return job.id
 
 
-class TestElectrodes:
+class TestInterfaces:
     async def test_finds_source_gate_drain_and_backside(
         self, client, structure_job
     ) -> None:
         response = await client.get(
-            f"/api/devsim/jobs/{structure_job}/artifacts/1/electrodes"
+            f"/api/devsim/jobs/{structure_job}/artifacts/1/interfaces"
         )
         assert response.status_code == 200
         body = response.json()
-        assert [e["key"] for e in body["electrodes"]] == [
+        assert [e["key"] for e in body["interfaces"]] == [
             "source",
             "gate",
             "drain",
@@ -151,14 +152,14 @@ class TestElectrodes:
         ]
 
     def _by_key(self, body: dict) -> dict:
-        return {e["key"]: e for e in body["electrodes"]}
+        return {e["key"]: e for e in body["interfaces"]}
 
     async def test_reports_where_each_electrode_sits(
         self, client, structure_job
     ) -> None:
         body = (
             await client.get(
-                f"/api/devsim/jobs/{structure_job}/artifacts/1/electrodes"
+                f"/api/devsim/jobs/{structure_job}/artifacts/1/interfaces"
             )
         ).json()
         found = self._by_key(body)
@@ -169,10 +170,10 @@ class TestElectrodes:
     async def test_gives_segments_to_draw(self, client, structure_job) -> None:
         body = (
             await client.get(
-                f"/api/devsim/jobs/{structure_job}/artifacts/1/electrodes"
+                f"/api/devsim/jobs/{structure_job}/artifacts/1/interfaces"
             )
         ).json()
-        for electrode in body["electrodes"]:
+        for electrode in body["interfaces"]:
             assert electrode["segments"]
             assert all(len(segment) == 4 for segment in electrode["segments"])
             assert electrode["edge_count"] == len(electrode["segments"])
@@ -182,7 +183,7 @@ class TestElectrodes:
     ) -> None:
         body = (
             await client.get(
-                f"/api/devsim/jobs/{structure_job}/artifacts/1/electrodes",
+                f"/api/devsim/jobs/{structure_job}/artifacts/1/interfaces",
                 params={"gate_model": "conductor"},
             )
         ).json()
@@ -206,7 +207,7 @@ class TestElectrodes:
             stolen = job.id
 
         response = await client.get(
-            f"/api/devsim/jobs/{stolen}/artifacts/1/electrodes"
+            f"/api/devsim/jobs/{stolen}/artifacts/1/interfaces"
         )
         # 403 이면 남의 잡이 존재한다는 사실이 새어 나간다.
         assert response.status_code == 404
@@ -277,7 +278,7 @@ class TestSubmit:
         self, client, structure_job
     ) -> None:
         spec = spec_body()
-        spec["electrodes"][0]["key"] = "collector"
+        spec["electrodes"][0]["interfaces"] = ["collector"]
         response = await client.post(
             "/api/devsim/jobs",
             json={"job_id": structure_job, "sequence": 1, "spec": spec},
@@ -289,8 +290,8 @@ class TestSubmit:
         self, client, structure_job
     ) -> None:
         spec = spec_body()
-        spec["biases"][1]["role"] = "sweep"
-        spec["biases"][1]["sweep"] = {"start": 0.0, "stop": 1.0, "step": 0.5}
+        spec["biases"][2]["role"] = "sweep"
+        spec["biases"][2]["sweep"] = {"start": 0.0, "stop": 1.0, "step": 0.5}
         response = await client.post(
             "/api/devsim/jobs",
             json={"job_id": structure_job, "sequence": 1, "spec": spec},
@@ -301,8 +302,8 @@ class TestSubmit:
         self, client, structure_job
     ) -> None:
         spec = spec_body()
-        spec["biases"][2]["sweep"] = {"start": 0.0, "stop": 90.0, "step": 0.5}
-        spec["biases"][1]["values"] = [float(v) for v in range(8)]
+        spec["biases"][3]["sweep"] = {"start": 0.0, "stop": 90.0, "step": 0.5}
+        spec["biases"][2]["values"] = [float(v) for v in range(8)]
         response = await client.post(
             "/api/devsim/jobs",
             json={"job_id": structure_job, "sequence": 1, "spec": spec},

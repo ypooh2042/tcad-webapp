@@ -1,12 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import type { DevSimElectrode } from '../../api/types'
-import { defaultSpec, pointCount, problemsOf } from './deviceSpec'
+import type { DevSimInterface } from '../../api/types'
+import {
+  addElectrode,
+  assignInterface,
+  defaultSpec,
+  ownerOf,
+  pointCount,
+  problemsOf,
+  removeElectrode,
+  renameElectrode,
+  unassignInterface,
+} from './deviceSpec'
 
-function electrode(
+function detected(
   key: string,
-  origin: DevSimElectrode['origin'] = 'detected',
+  origin: DevSimInterface['origin'] = 'metal',
   x = 0,
-): DevSimElectrode {
+): DevSimInterface {
   return {
     key,
     origin,
@@ -19,14 +29,14 @@ function electrode(
 }
 
 const MOSFET = [
-  electrode('source', 'detected', 1.2),
-  electrode('gate', 'detected', 1.85),
-  electrode('drain', 'detected', 2.5),
-  electrode('body', 'backside', 0),
+  detected('source', 'metal', 1.2),
+  detected('gate', 'metal', 1.85),
+  detected('drain', 'metal', 2.5),
+  detected('body', 'backside', 0),
 ]
 
 describe('defaultSpec', () => {
-  it('전극을 전부 데려온다', () => {
+  it('계면마다 전극을 하나씩 만든다', () => {
     const spec = defaultSpec(MOSFET)
     expect(spec.electrodes.map((e) => e.label)).toEqual([
       'source',
@@ -34,46 +44,143 @@ describe('defaultSpec', () => {
       'drain',
       'body',
     ])
+    expect(spec.electrodes.map((e) => e.interfaces)).toEqual([
+      ['source'],
+      ['gate'],
+      ['drain'],
+      ['body'],
+    ])
+  })
+
+  it('전극마다 전압원을 정확히 하나씩 붙인다', () => {
+    // 1전극-1전압원. 기판도 자기 전압원을 갖는다.
+    const spec = defaultSpec(MOSFET)
+    expect(spec.biases).toHaveLength(4)
+    expect(spec.biases.map((b) => b.electrode).sort()).toEqual([
+      'body',
+      'drain',
+      'gate',
+      'source',
+    ])
   })
 
   it('게이트를 단계 전압원으로 놓는다', () => {
-    const spec = defaultSpec(MOSFET)
-    const gate = spec.biases.find((b) => b.electrodes.includes('gate'))
+    const gate = defaultSpec(MOSFET).biases.find((b) => b.electrode === 'gate')
     expect(gate?.role).toBe('step')
     expect(gate?.values?.length).toBeGreaterThan(1)
   })
 
-  it('드레인을 스윕 전압원으로 놓는다', () => {
-    const spec = defaultSpec(MOSFET)
-    const sweep = spec.biases.find((b) => b.role === 'sweep')
-    expect(sweep?.electrodes).toEqual(['drain'])
+  it('가장 오른쪽 금속을 스윕으로 놓는다', () => {
+    const sweep = defaultSpec(MOSFET).biases.find((b) => b.role === 'sweep')
+    expect(sweep?.electrode).toBe('drain')
   })
 
-  it('소스와 기판을 한 전압원에 묶어 0V 로 둔다', () => {
-    // 서로 다른 전극을 하나로 묶는 것이 전압원 계층의 존재 이유다.
+  it('나머지는 0V 고정이다', () => {
     const spec = defaultSpec(MOSFET)
-    const ground = spec.biases.find((b) => b.role === 'const')
-    expect(ground?.electrodes.sort()).toEqual(['body', 'source'])
-    expect(ground?.value).toBe(0)
+    for (const label of ['source', 'body']) {
+      const bias = spec.biases.find((b) => b.electrode === label)
+      expect(bias?.role).toBe('const')
+      expect(bias?.value).toBe(0)
+    }
   })
 
   it('만들자마자 제출할 수 있어야 한다', () => {
     expect(problemsOf(defaultSpec(MOSFET))).toEqual([])
   })
 
-  it('전극이 둘뿐이어도 스윕 하나는 만든다', () => {
+  it('계면이 둘뿐이어도 스윕 하나는 만든다', () => {
     const spec = defaultSpec([
-      electrode('source', 'detected', 0),
-      electrode('drain', 'detected', 1),
+      detected('source', 'metal', 0),
+      detected('drain', 'metal', 1),
     ])
     expect(spec.biases.filter((b) => b.role === 'sweep')).toHaveLength(1)
     expect(problemsOf(spec)).toEqual([])
   })
 
-  it('전극이 없으면 전압원도 없다', () => {
+  it('계면이 없으면 전극도 전압원도 없다', () => {
     const spec = defaultSpec([])
     expect(spec.electrodes).toEqual([])
     expect(spec.biases).toEqual([])
+  })
+})
+
+describe('ownerOf', () => {
+  it('계면을 물고 있는 전극을 알려 준다', () => {
+    expect(ownerOf(defaultSpec(MOSFET), 'gate')).toBe('gate')
+  })
+
+  it('아무도 안 물었으면 null', () => {
+    const spec = unassignInterface(defaultSpec(MOSFET), 'gate')
+    expect(ownerOf(spec, 'gate')).toBeNull()
+  })
+})
+
+describe('assignInterface', () => {
+  it('계면을 다른 전극으로 옮긴다', () => {
+    // 한 계면이 두 전극에 걸리면 같은 변에 두 전위를 걸겠다는 뜻이 된다.
+    const spec = assignInterface(defaultSpec(MOSFET), 'body', 'source')
+    expect(ownerOf(spec, 'body')).toBe('source')
+    expect(spec.electrodes.find((e) => e.label === 'source')?.interfaces).toEqual(
+      ['source', 'body'],
+    )
+    expect(spec.electrodes.find((e) => e.label === 'body')?.interfaces).toEqual([])
+  })
+
+  it('이미 그 전극에 있으면 그대로 둔다', () => {
+    const spec = defaultSpec(MOSFET)
+    expect(assignInterface(spec, 'gate', 'gate')).toEqual(spec)
+  })
+
+  it('없는 전극으로는 옮기지 않는다', () => {
+    const spec = defaultSpec(MOSFET)
+    expect(assignInterface(spec, 'gate', '없는전극')).toEqual(spec)
+  })
+
+  it('원본을 바꾸지 않는다', () => {
+    const spec = defaultSpec(MOSFET)
+    const before = JSON.stringify(spec)
+    assignInterface(spec, 'body', 'source')
+    expect(JSON.stringify(spec)).toBe(before)
+  })
+})
+
+describe('addElectrode / removeElectrode / renameElectrode', () => {
+  it('전극을 더하면 전압원도 같이 생긴다', () => {
+    const spec = addElectrode(defaultSpec(MOSFET))
+    expect(spec.electrodes).toHaveLength(5)
+    expect(spec.biases).toHaveLength(5)
+    const added = spec.electrodes[4]
+    expect(spec.biases.some((b) => b.electrode === added.label)).toBe(true)
+  })
+
+  it('새 전극은 이름이 겹치지 않는다', () => {
+    const spec = addElectrode(addElectrode(defaultSpec(MOSFET)))
+    const labels = spec.electrodes.map((e) => e.label)
+    expect(new Set(labels).size).toBe(labels.length)
+  })
+
+  it('새로 만든 전극은 계면이 없어 아직 제출할 수 없다', () => {
+    const spec = addElectrode(defaultSpec(MOSFET))
+    expect(problemsOf(spec).join(' ')).toContain('계면')
+  })
+
+  it('전극을 빼면 전압원도 같이 빠진다', () => {
+    const spec = removeElectrode(defaultSpec(MOSFET), 'body')
+    expect(spec.electrodes.map((e) => e.label)).not.toContain('body')
+    expect(spec.biases.some((b) => b.electrode === 'body')).toBe(false)
+    expect(problemsOf(spec)).toEqual([])
+  })
+
+  it('이름을 바꾸면 전압원이 가리키는 곳도 따라간다', () => {
+    const spec = renameElectrode(defaultSpec(MOSFET), 'drain', '출력')
+    expect(ownerOf(spec, 'drain')).toBe('출력')
+    expect(spec.biases.find((b) => b.role === 'sweep')?.electrode).toBe('출력')
+    expect(problemsOf(spec)).toEqual([])
+  })
+
+  it('이미 있는 이름으로는 바꾸지 않는다', () => {
+    const spec = defaultSpec(MOSFET)
+    expect(renameElectrode(spec, 'drain', 'source')).toEqual(spec)
   })
 })
 
@@ -96,11 +203,11 @@ describe('pointCount', () => {
     expect(
       pointCount({
         label: 'x',
-        electrodes: [{ origin: 'detected', key: 'a', label: 'a' }],
+        electrodes: [{ label: 'a', interfaces: ['a'] }],
         biases: [
           {
             name: 'V',
-            electrodes: ['a'],
+            electrode: 'a',
             role: 'sweep',
             sweep: { start: 0, stop: 1, step: 0.3 },
           },
@@ -135,22 +242,14 @@ describe('problemsOf', () => {
     expect(problemsOf(spec).join(' ')).toContain('스윕')
   })
 
-  it('전압원에 안 걸린 전극을 짚는다', () => {
-    const spec = {
-      ...base,
-      biases: base.biases.filter((b) => b.role !== 'const'),
-    }
-    expect(problemsOf(spec).join(' ')).toContain('source')
+  it('계면이 하나도 안 붙은 전극을 짚는다', () => {
+    const spec = unassignInterface(base, 'body')
+    expect(problemsOf(spec).join(' ')).toContain('body')
   })
 
-  it('한 전극이 두 전압원에 걸리면 짚는다', () => {
-    const spec = {
-      ...base,
-      biases: base.biases.map((b) =>
-        b.role === 'sweep' ? { ...b, electrodes: ['drain', 'source'] } : b,
-      ),
-    }
-    expect(problemsOf(spec).join(' ')).toContain('source')
+  it('전압원 없는 전극을 짚는다', () => {
+    const spec = { ...base, biases: base.biases.filter((b) => b.electrode !== 'body') }
+    expect(problemsOf(spec).join(' ')).toContain('body')
   })
 
   it('점이 너무 많으면 짚는다', () => {
@@ -165,11 +264,11 @@ describe('problemsOf', () => {
     expect(problemsOf(spec).join(' ')).toContain('점')
   })
 
-  it('전압원에 전극이 하나도 없으면 짚는다', () => {
+  it('단계 전압이 비면 짚는다', () => {
     const spec = {
       ...base,
       biases: base.biases.map((b) =>
-        b.role === 'step' ? { ...b, electrodes: [] } : b,
+        b.role === 'step' ? { ...b, values: [] } : b,
       ),
     }
     expect(problemsOf(spec).length).toBeGreaterThan(0)

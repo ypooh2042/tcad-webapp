@@ -2,8 +2,9 @@
 
 세 가지를 한다.
 
-1. **구조에서 전극을 찾아 보여준다.** 화면이 직접 `.str` 을 읽지 않는다 —
-   그러면 파서를 두 벌 유지하게 된다. 플롯 쪽과 같은 이유다.
+1. **구조에서 계면을 찾아 보여준다.** 화면이 직접 `.str` 을 읽지 않는다 —
+   그러면 파서를 두 벌 유지하게 된다. 플롯 쪽과 같은 이유다. 고를 수 있는
+   것은 이 목록이 전부다. 임의의 경계를 전극으로 지정하게 두지 않는다.
 2. **해석을 제출한다.** 제출 시점에 `.str` 을 잡 작업디렉토리로 복사한다.
    원본 잡의 산출물은 유휴·쿼터 스윕에 지워질 수 있는데, 그때 해석 입력이
    사라져 있으면 안 된다.
@@ -36,12 +37,7 @@ from app.api.throttle import throttle_submit
 from app.auth.models import Session
 from app.core.config import Settings
 from app.db.models import Artifact, DevSimResult, Job, JobKind, JobStatus
-from app.devsim.electrodes import (
-    Electrode,
-    GateModel,
-    backside_candidate,
-    detect_electrodes,
-)
+from app.devsim.electrodes import Electrode, GateModel, detect_interfaces
 from app.devsim.resolve import ElectrodeNotFound, resolve_electrodes
 from app.devsim.service import place_structure
 from app.devsim.spec import DeviceSpec, total_points
@@ -63,12 +59,13 @@ class ExtentResponse(BaseModel):
     y_max: float
 
 
-class ElectrodeResponse(BaseModel):
-    """자동으로 찾은 전극 하나."""
+class InterfaceResponse(BaseModel):
+    """자동으로 찾은 계면 하나. 전극에 붙일 수 있는 최소 단위다."""
 
-    #: 스펙이 이 전극을 가리킬 때 쓰는 열쇠. 같은 구조·같은 게이트 모델이면
+    #: 스펙이 이 계면을 가리킬 때 쓰는 열쇠. 같은 구조·같은 게이트 모델이면
     #: 항상 같게 나온다.
     key: str
+    #: `metal` 금속-반도체(또는 금속-절연막) 접촉, `backside` 뒷면 경계.
     origin: str
     kind: str
     materials: list[str]
@@ -78,10 +75,10 @@ class ElectrodeResponse(BaseModel):
     segments: list[list[float]]
 
 
-class ElectrodesResponse(BaseModel):
+class InterfacesResponse(BaseModel):
     filename: str
     gate_model: str
-    electrodes: list[ElectrodeResponse]
+    interfaces: list[InterfaceResponse]
 
 
 class SubmitRequest(BaseModel):
@@ -148,12 +145,10 @@ def _segments(structure: Structure, electrode: Electrode) -> list[list[float]]:
     return lines
 
 
-def _describe(
-    structure: Structure, electrode: Electrode, origin: str
-) -> ElectrodeResponse:
-    return ElectrodeResponse(
+def _describe(structure: Structure, electrode: Electrode) -> InterfaceResponse:
+    return InterfaceResponse(
         key=electrode.name,
-        origin=origin,
+        origin=electrode.origin,
         kind=electrode.kind.value,
         materials=list(electrode.materials),
         extent=ExtentResponse(
@@ -167,30 +162,25 @@ def _describe(
     )
 
 
-@router.get("/jobs/{job_id}/artifacts/{sequence}/electrodes")
-async def electrodes(
+@router.get("/jobs/{job_id}/artifacts/{sequence}/interfaces")
+async def interfaces(
     gate_model: GateModel = Query(default=GateModel.SEMICONDUCTOR),
     artifact: Artifact = Depends(owned_artifact),
-) -> ElectrodesResponse:
-    """구조에서 자동으로 찾은 전극과 뒷면 후보.
+) -> InterfacesResponse:
+    """구조에서 자동으로 찾은 계면 — 금속 접촉과 뒷면 경계.
 
     규칙은 SUPREM 원본의 `IS_CONT`(`upstream/src/include/device.h:35`) 를 옮긴
-    것이다. 같은 금속 덩어리에 붙은 계면은 하나의 전극이 되고, 그래서 등전위가
-    **구성상** 보장된다.
+    것이다. 같은 금속 덩어리에 닿은 변은 하나의 계면이 되고, 그래서 그 안의
+    등전위는 **구성상** 보장된다. 여러 계면을 한 전위로 묶는 것은 전극이 한다.
     """
     structure = _structure(artifact)
-    found = [
-        _describe(structure, electrode, "detected")
-        for electrode in detect_electrodes(structure, gate_model=gate_model)
-    ]
-    backside = backside_candidate(structure)
-    if backside is not None:
-        found.append(_describe(structure, backside, "backside"))
-
-    return ElectrodesResponse(
+    return InterfacesResponse(
         filename=artifact.filename,
         gate_model=gate_model.value,
-        electrodes=found,
+        interfaces=[
+            _describe(structure, found)
+            for found in detect_interfaces(structure, gate_model=gate_model)
+        ],
     )
 
 

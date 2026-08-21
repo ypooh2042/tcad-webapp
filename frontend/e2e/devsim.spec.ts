@@ -14,6 +14,27 @@ test.afterEach(async ({ page }) => {
   await logOut(page)
 })
 
+/**
+ * 단면에서 계면 하나를 눌러 쪽지를 띄운다.
+ *
+ * 좌표를 계산하지 않고 훑는다. `surfaceGeometry` 는 비율을 유지하며 가운데
+ * 정렬하고 눈금 여백을 두므로, 시험이 그 수식을 복제하면 여백을 손볼 때마다
+ * 같이 깨진다.
+ */
+async function clickInterface(
+  page: import('@playwright/test').Page,
+  name: RegExp,
+) {
+  const map = page.locator('.electrode-map')
+  const box = (await map.boundingBox())!
+  const popover = page.getByRole('dialog', { name })
+  for (let y = box.height - 4; y > 0; y -= 5) {
+    await map.click({ position: { x: box.width / 2, y } })
+    if (await popover.isVisible()) return popover
+  }
+  return popover
+}
+
 /** 공정을 돌려 알루미늄 전극이 있는 구조를 하나 만든다. */
 async function runProcess(page: import('@playwright/test').Page) {
   await createProject(page, 'contacts')
@@ -39,7 +60,7 @@ test('공정 결과를 소자 해석으로 넘겨 I-V 를 뽑는다', async ({
   // 결과에서 넘긴다. `.str` 은 파일 목록에 안 나오므로 이것이 주 경로다.
   await page.getByRole('button', { name: '소자 해석' }).click()
 
-  // 전극이 자동으로 잡혀야 한다 — source / gate / drain / body.
+  // 계면마다 전극이 하나씩 자동으로 잡혀야 한다 — source / gate / drain / body.
   const editor = page.locator('.source-editor')
   await expect(editor.getByRole('textbox', { name: '전극 1 이름' })).toHaveValue(
     'source',
@@ -73,9 +94,9 @@ test('공정 결과를 소자 해석으로 넘겨 I-V 를 뽑는다', async ({
   await expect(page.locator('.figure-table')).toBeVisible()
 })
 
-test('전압원을 묶으면 전극이 한쪽에만 걸린다', async ({ page, context }) => {
-  // 한 전극이 두 전위를 가질 수는 없다. 화면에서 그 상태를 만들 수 있으면
-  // 사용자는 서버가 거절할 때까지 이유를 모른다.
+test('전극마다 전압원이 하나씩 붙는다', async ({ page, context }) => {
+  // 1전극-1전압원. 전압원이 전극을 여러 개 거느리면 "여러 계면을 한 전위로"
+  // 라는 같은 일을 전극 쪽과 전압원 쪽 두 군데서 할 수 있게 된다.
   test.setTimeout(180_000)
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await signUp(page, uniqueEmail('bias'))
@@ -83,17 +104,75 @@ test('전압원을 묶으면 전극이 한쪽에만 걸린다', async ({ page, c
   await runProcess(page)
   await page.getByRole('button', { name: '소자 해석' }).click()
 
-  const ground = page.locator('.bias[data-role="const"]')
-  await expect(ground.getByText('source')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.bias')).toHaveCount(4, { timeout: 30_000 })
+  // 기판도 자기 전압원을 갖는다.
+  await expect(page.locator('.bias .drives')).toHaveText([
+    '→ source',
+    '→ gate',
+    '→ drain',
+    '→ body',
+  ])
+  // 전극을 고르는 체크박스는 없다.
+  await expect(page.locator('.bias input[type="checkbox"]')).toHaveCount(0)
+  await expect(page.locator('.bias[data-role="sweep"]')).toHaveCount(1)
+})
 
-  // drain 은 스윕 전압원에 걸려 있다. 접지에 체크하면 저쪽에서 떨어져야 한다.
-  const sweep = page.locator('.bias[data-role="sweep"]')
-  await ground.getByRole('checkbox').nth(2).check()
+test('계면을 다른 전극으로 옮기면 전극 옆 표시가 따라간다', async ({
+  page,
+  context,
+}) => {
+  // 전극 지정은 단면 위에서 한다. 이름만 보고 고르면 그게 구조의 어디인지
+  // 알 수 없다.
+  test.setTimeout(180_000)
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signUp(page, uniqueEmail('assign'))
 
-  await expect(sweep.getByRole('checkbox').nth(2)).not.toBeChecked()
-  // 스윕 전압원에 남은 전극이 없으므로 실행을 막아야 한다.
+  await runProcess(page)
+  await page.getByRole('button', { name: '소자 해석' }).click()
+
+  const list = page.locator('.electrode-list li')
+  await expect(list).toHaveCount(4, { timeout: 30_000 })
+  await expect(list.nth(0).locator('.chip')).toHaveText(['source'])
+  await expect(list.nth(3).locator('.chip')).toHaveText(['body'])
+
+  // 뒷면 계면을 눌러 쪽지를 띄운다.
+  //
+  // 좌표를 미리 계산해 두지 않는다. 단면은 비율을 유지하며 가운데 정렬되고
+  // 눈금 여백까지 있어서, 시험이 그 수식을 복제하면 여백을 고칠 때마다 같이
+  // 깨진다. 아래에서부터 훑어 올라가며 찾는다.
+  const popover = await clickInterface(page, /body/)
+  await expect(popover).toBeVisible()
+
+  // source 전극으로 옮긴다.
+  await popover.getByRole('button', { name: /source/ }).click()
+
+  await expect(list.nth(0).locator('.chip')).toHaveText(['source', 'body'])
+  // 원래 있던 전극에는 계면이 없어져 실행이 막힌다.
   await expect(page.locator('.problems')).toBeVisible()
   await expect(page.getByRole('button', { name: '해석 실행' })).toBeDisabled()
+})
+
+test('해석 패널 폭을 끌어서 바꾼다', async ({ page, context }) => {
+  test.setTimeout(180_000)
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signUp(page, uniqueEmail('split'))
+
+  await runProcess(page)
+  await page.getByRole('button', { name: '소자 해석' }).click()
+
+  const panel = page.locator('.devsim-run')
+  await expect(panel).toBeVisible({ timeout: 30_000 })
+  const before = (await panel.boundingBox())!.width
+
+  const splitter = page.getByRole('separator', { name: '해석 패널 폭' })
+  const grip = (await splitter.boundingBox())!
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(grip.x - 120, grip.y + grip.height / 2, { steps: 8 })
+  await page.mouse.up()
+
+  const after = (await panel.boundingBox())!.width
+  expect(after).toBeGreaterThan(before + 80)
 })
 
 test('금속이 없는 단계에는 전극이 없다고 알려 준다', async ({

@@ -28,17 +28,18 @@ function describe(spec: DeviceSpec): Map<string, string> {
     spec.gate_model === 'conductor' ? '이상 도체' : '반도체',
   )
   fields.set('온도', `${spec.temperature_k ?? 300} K`)
-  fields.set(
-    '전극',
-    spec.electrodes
-      .map((electrode) => electrode.label)
-      .sort()
-      .join(', '),
-  )
+  for (const electrode of spec.electrodes) {
+    // 전극마다 어떤 계면을 물고 있는지가 곧 "무엇을 같은 전위로 묶었나" 다.
+    // 두 해석이 다른 곡선을 냈다면 여기가 첫 번째 의심처다.
+    fields.set(
+      `전극 ${electrode.label}`,
+      [...electrode.interfaces].sort().join(' + ') || '계면 없음',
+    )
+  }
   for (const bias of spec.biases) {
     fields.set(
       `전압원 ${bias.name}`,
-      `${[...bias.electrodes].sort().join('+') || '연결 없음'} · ${formatSweep(bias)}`,
+      `${bias.electrode} · ${formatSweep(bias)}`,
     )
   }
   return fields

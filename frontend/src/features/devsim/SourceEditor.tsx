@@ -1,12 +1,15 @@
 /**
- * 전극과 전압원을 손보는 패널.
+ * 전극과 전압원 패널.
  *
- * 두 계층을 일부러 나눠 두었다.
+ * 세 계층이 있고 사용자가 손대는 자리가 각각 다르다.
  *
- *   전극은 **구조에서 나온다.** 같은 금속 덩어리는 같은 전위라는 규칙이
- *   등전위를 이미 보장하므로, 사용자가 묶어 줄 것이 없다.
- *   전압원은 **사용자가 만든다.** 서로 다른 전극을 하나로 묶고 싶을 때
- *   (기판을 소스에 단다) 쓰는 자리가 여기다.
+ *   계면  **구조에서 나온다.** 금속 접촉 하나, 뒷면 하나. 목록에 없는 경계를
+ *         전극으로 만들 수는 없다 — 반도체 표면 아무 데나 접촉을 걸면 소자가
+ *         아니라 수치 실험이 된다.
+ *   전극  여기 목록에서 만들고·지우고·이름을 붙인다. **어느 계면이 붙느냐는
+ *         단면 그림에서 정한다** — 이름만 보고 고르면 그게 구조의 어디인지
+ *         알 수 없다.
+ *   전압원 전극마다 정확히 하나. 어느 전극을 모는지는 못 바꾼다.
  */
 import type { Bias, BiasRole, DeviceSpec } from '../../api/types'
 import { CURVE_COLORS } from './IvChart'
@@ -14,9 +17,11 @@ import { CURVE_COLORS } from './IvChart'
 interface Props {
   spec: DeviceSpec
   onChange: (spec: DeviceSpec) => void
-  /** 화면에서 경계를 찍는 중인지. 켜면 지도에서 끌어 범위를 그린다. */
-  picking: boolean
-  onPickingChange: (picking: boolean) => void
+  onAddElectrode: () => void
+  onRemoveElectrode: (label: string) => void
+  onRenameElectrode: (from: string, to: string) => void
+  /** 계면 열쇠 → 사람이 읽을 설명. 전극 옆에 붙여 보여준다. */
+  describeInterface: (key: string) => string
 }
 
 function replaceBias(spec: DeviceSpec, index: number, bias: Bias): DeviceSpec {
@@ -40,122 +45,63 @@ const ROLE_LABEL: Record<BiasRole, string> = {
   const: '고정',
 }
 
+export function colorOfIndex(index: number): string {
+  return CURVE_COLORS[index % CURVE_COLORS.length]
+}
+
 export function SourceEditor({
   spec,
   onChange,
-  picking,
-  onPickingChange,
+  onAddElectrode,
+  onRemoveElectrode,
+  onRenameElectrode,
+  describeInterface,
 }: Props) {
-  const used = new Map<string, string>()
-  for (const bias of spec.biases) {
-    for (const label of bias.electrodes) used.set(label, bias.name)
-  }
-
-  function renameElectrode(index: number, label: string) {
-    const before = spec.electrodes[index].label
-    onChange({
-      ...spec,
-      electrodes: spec.electrodes.map((electrode, at) =>
-        at === index ? { ...electrode, label } : electrode,
-      ),
-      // 전압원이 이름으로 전극을 가리킨다. 같이 안 바꾸면 연결이 끊긴다.
-      biases: spec.biases.map((bias) => ({
-        ...bias,
-        electrodes: bias.electrodes.map((one) => (one === before ? label : one)),
-      })),
-    })
-  }
-
-  function removeElectrode(index: number) {
-    const label = spec.electrodes[index].label
-    onChange({
-      ...spec,
-      electrodes: spec.electrodes.filter((_, at) => at !== index),
-      biases: spec.biases.map((bias) => ({
-        ...bias,
-        electrodes: bias.electrodes.filter((one) => one !== label),
-      })),
-    })
-  }
-
-  function toggleConnection(index: number, label: string) {
-    const bias = spec.biases[index]
-    const connected = bias.electrodes.includes(label)
-    // 다른 전압원에 걸려 있던 것은 떼어 온다. 한 전극이 두 전위를 가질 수는 없다.
-    const cleaned = connected
-      ? spec.biases
-      : spec.biases.map((one) => ({
-          ...one,
-          electrodes: one.electrodes.filter((each) => each !== label),
-        }))
-    const next = connected
-      ? bias.electrodes.filter((one) => one !== label)
-      : [...cleaned[index].electrodes, label]
-    onChange({
-      ...spec,
-      biases: cleaned.map((one, at) =>
-        at === index ? { ...one, electrodes: next } : one,
-      ),
-    })
-  }
-
-  function changeRole(index: number, role: BiasRole) {
-    const bias = spec.biases[index]
-    onChange(
-      replaceBias(spec, index, {
-        ...bias,
-        role,
-        value: role === 'const' ? (bias.value ?? 0) : undefined,
-        values: role === 'step' ? (bias.values ?? [0, 1, 2]) : undefined,
-        sweep:
-          role === 'sweep'
-            ? (bias.sweep ?? { start: 0, stop: 2, step: 0.25 })
-            : undefined,
-      }),
-    )
-  }
-
-  function addBias() {
-    const name = `V${spec.biases.length + 1}`
-    onChange({
-      ...spec,
-      biases: [...spec.biases, { name, electrodes: [], role: 'const', value: 0 }],
-    })
-  }
+  const colorOf = new Map(
+    spec.electrodes.map((electrode, index) => [
+      electrode.label,
+      colorOfIndex(index),
+    ]),
+  )
 
   return (
     <div className="source-editor">
       <section>
         <h3>전극</h3>
         <p className="hint">
-          같은 금속 덩어리에 닿은 계면은 하나의 전극입니다. 이름은 바꿔도 됩니다.
+          단면에서 계면을 눌러 전극에 붙입니다. 한 계면은 한 전극에만 속하고, 한
+          전극에 여러 계면을 붙이면 그 계면들이 같은 전위가 됩니다.
         </p>
         <ul className="electrode-list">
           {spec.electrodes.map((electrode, index) => (
-            <li key={`${electrode.origin}-${index}`}>
+            <li key={electrode.label}>
               <span
                 className="swatch"
-                style={{
-                  background: CURVE_COLORS[index % CURVE_COLORS.length],
-                }}
+                style={{ background: colorOfIndex(index) }}
                 aria-hidden="true"
               />
               <input
                 value={electrode.label}
                 aria-label={`전극 ${index + 1} 이름`}
-                onChange={(event) => renameElectrode(index, event.target.value)}
+                onChange={(event) =>
+                  onRenameElectrode(electrode.label, event.target.value)
+                }
               />
-              <span className="origin">
-                {electrode.origin === 'detected'
-                  ? electrode.key
-                  : electrode.origin === 'backside'
-                    ? '뒷면'
-                    : '직접 지정'}
+              <span className="attached">
+                {electrode.interfaces.length === 0 ? (
+                  <em className="empty">계면 없음</em>
+                ) : (
+                  electrode.interfaces.map((key) => (
+                    <span className="chip" key={key} title={describeInterface(key)}>
+                      {key}
+                    </span>
+                  ))
+                )}
               </span>
               <button
                 type="button"
                 className="ghost"
-                onClick={() => removeElectrode(index)}
+                onClick={() => onRemoveElectrode(electrode.label)}
                 aria-label={`${electrode.label} 전극 빼기`}
               >
                 ×
@@ -163,26 +109,28 @@ export function SourceEditor({
             </li>
           ))}
         </ul>
-        <button
-          type="button"
-          className={picking ? 'primary' : ''}
-          onClick={() => onPickingChange(!picking)}
-        >
-          {picking ? '지도에서 범위를 끌어 주세요' : '화면에서 경계 찍기'}
+        <button type="button" onClick={onAddElectrode}>
+          전극 추가
         </button>
       </section>
 
       <section>
         <h3>전압원</h3>
         <p className="hint">
-          전극을 하나의 전압원에 묶으면 같은 전위가 걸립니다. 스윕은 하나만 둘 수
-          있고, 그것이 곡선의 가로축이 됩니다.
+          전극마다 전압원이 하나씩 있습니다. 스윕은 하나만 둘 수 있고 그것이
+          곡선의 가로축이 됩니다. 여러 계면을 한 전위로 묶으려면 전압원이 아니라
+          전극 쪽에서 계면을 여러 개 붙이세요.
         </p>
         {spec.biases.map((bias, index) => (
           // data-role 을 둔다. 역할 <select> 안에는 세 선택지의 글자가 모두
           // 들어 있어, 글자로 고르면 어느 전압원이든 다 걸린다.
-          <div className="bias" data-role={bias.role} key={index}>
+          <div className="bias" data-role={bias.role} key={bias.electrode}>
             <div className="bias-head">
+              <span
+                className="swatch"
+                style={{ background: colorOf.get(bias.electrode) ?? '#888' }}
+                aria-hidden="true"
+              />
               <input
                 className="bias-name"
                 value={bias.name}
@@ -193,12 +141,27 @@ export function SourceEditor({
                   )
                 }
               />
+              <span className="drives" title="이 전압원이 모는 전극">
+                → {bias.electrode}
+              </span>
               <select
                 value={bias.role}
                 aria-label={`${bias.name} 역할`}
-                onChange={(event) =>
-                  changeRole(index, event.target.value as BiasRole)
-                }
+                onChange={(event) => {
+                  const role = event.target.value as BiasRole
+                  onChange(
+                    replaceBias(spec, index, {
+                      ...bias,
+                      role,
+                      value: role === 'const' ? (bias.value ?? 0) : undefined,
+                      values: role === 'step' ? (bias.values ?? [0, 1, 2]) : undefined,
+                      sweep:
+                        role === 'sweep'
+                          ? (bias.sweep ?? { start: 0, stop: 2, step: 0.25 })
+                          : undefined,
+                    }),
+                  )
+                }}
               >
                 {(['sweep', 'step', 'const'] as BiasRole[]).map((role) => (
                   <option key={role} value={role}>
@@ -206,37 +169,6 @@ export function SourceEditor({
                   </option>
                 ))}
               </select>
-              <button
-                type="button"
-                className="ghost"
-                aria-label={`${bias.name} 빼기`}
-                onClick={() =>
-                  onChange({
-                    ...spec,
-                    biases: spec.biases.filter((_, at) => at !== index),
-                  })
-                }
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="bias-electrodes">
-              {spec.electrodes.map((electrode) => {
-                const owner = used.get(electrode.label)
-                const mine = owner === bias.name
-                return (
-                  <label key={electrode.label} className={mine ? 'on' : ''}>
-                    <input
-                      type="checkbox"
-                      checked={mine}
-                      onChange={() => toggleConnection(index, electrode.label)}
-                    />
-                    {electrode.label}
-                    {owner && !mine ? <em> ({owner})</em> : null}
-                  </label>
-                )
-              })}
             </div>
 
             {bias.role === 'const' ? (
@@ -302,9 +234,6 @@ export function SourceEditor({
             ) : null}
           </div>
         ))}
-        <button type="button" onClick={addBias}>
-          전압원 추가
-        </button>
       </section>
     </div>
   )

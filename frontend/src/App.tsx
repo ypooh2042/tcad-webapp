@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useState } from 'react'
 import { AuthProvider, useAuth } from './features/auth/AuthContext'
+import { AccountBar } from './features/auth/AccountBar'
 import { LoginPage } from './features/auth/LoginPage'
 import type { Handoff } from './features/devsim/DevSimPage'
 import './App.css'
@@ -76,7 +77,14 @@ function Gate() {
       </div>
       {view === 'device' ? (
         <div className="view">
-          <header className="app-header">{tabs}</header>
+          <header className="app-header">
+            <strong>TCAD</strong>
+            {tabs}
+            <div className="spacer" />
+            {/* 이 화면에도 나가는 길이 있어야 한다. 공정 쪽 머리말은 숨겨져
+                있어서 그 버튼은 눌리지 않는다. */}
+            <AccountBar />
+          </header>
           <Suspense
             fallback={<div className="centered muted">소자 해석 준비 중…</div>}
           >

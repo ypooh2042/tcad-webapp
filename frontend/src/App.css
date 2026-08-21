@@ -568,7 +568,6 @@ body.resizing { user-select: none; cursor: col-resize; }
 
 .devsim-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
   gap: 0;
   flex: 1;
   min-height: 0;
@@ -581,9 +580,7 @@ body.resizing { user-select: none; cursor: col-resize; }
   min-width: 0;
 }
 
-.devsim-run {
-  border-left: 1px solid var(--border);
-}
+
 
 .devsim-actions {
   display: flex;
@@ -596,10 +593,6 @@ body.resizing { user-select: none; cursor: col-resize; }
   display: block;
   border: 1px solid var(--border);
   background: var(--bg);
-}
-
-.electrode-map.picking {
-  cursor: crosshair;
 }
 
 .field {
@@ -890,4 +883,112 @@ button.analyse {
   padding: 12px;
   overflow-y: auto;
   min-width: 0;
+}
+
+
+/* ── 단면 위 계면 고르기 ──────────────────────────────────────────── */
+
+.electrode-map-wrap {
+  position: relative;
+}
+
+.electrode-map {
+  cursor: pointer;
+}
+
+/*
+ * 계면을 누르면 뜨는 쪽지. 누른 자리에 붙는다 — 목록으로 빼면 지금 어느 계면을
+ * 두고 고르는 중인지 다시 찾아야 한다.
+ */
+.interface-popover {
+  position: absolute;
+  transform: translate(-50%, 8px);
+  z-index: 5;
+  min-width: 190px;
+  max-width: 260px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  padding: 8px 10px;
+}
+
+.popover-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.popover-head strong {
+  font-size: 13px;
+}
+
+.popover-head .ghost {
+  margin-left: auto;
+}
+
+.popover-choices {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.popover-choices button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text);
+  padding: 3px 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.popover-choices button:hover {
+  border-color: var(--border);
+}
+
+.popover-choices button.on {
+  border-color: var(--accent);
+}
+
+.popover-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* ── 전극에 붙은 계면 ─────────────────────────────────────────────── */
+
+.attached {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.attached .chip {
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 0 5px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.attached .empty {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--error);
+}
+
+.bias-head .drives {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
 }

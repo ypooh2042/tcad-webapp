@@ -88,7 +88,21 @@ class ContactEdge:
 
 @dataclass(frozen=True, slots=True)
 class Electrode:
-    """등전위 단위 하나."""
+    """등전위 단위 하나.
+
+    두 가지 자리에서 쓴다.
+
+    **자동으로 찾은 계면** — `detect_electrodes` / `backside_candidate` 가 내는
+    것. 사용자가 만들어 내는 것이 아니라 구조에서 나온다. 금속 덩어리 하나가
+    계면 하나이고, 뒷면 경계가 계면 하나다.
+
+    **사용자가 묶은 전극** — `resolve.resolve_electrodes` 가 여러 계면의 변을
+    합쳐 만든 것. 소자 해석이 실제로 접촉으로 거는 단위이며, 전압원 하나가
+    여기에 1:1 로 붙는다.
+
+    구조가 같아서 한 자료형을 쓴다. 합쳐도 "등전위인 변들의 묶음"이라는 뜻이
+    달라지지 않는다.
+    """
 
     name: str
     kind: ContactKind
@@ -96,6 +110,8 @@ class Electrode:
     materials: tuple[str, ...]
     edges: tuple[ContactEdge, ...]
     extent: Extent
+    #: 이 계면이 어디서 나왔는지. 화면이 금속 접촉과 뒷면을 구분해 보여준다.
+    origin: str = "metal"
 
     def edges_by_region(self) -> dict[int, tuple[ContactEdge, ...]]:
         """영역별로 나눈다. DevSim 접촉은 영역 하나에만 붙일 수 있다."""
@@ -250,7 +266,12 @@ def _name_electrodes(
             name = f"contact{extra}"
         electrodes.append(
             Electrode(
-                name=name, kind=kind, materials=materials, edges=edges, extent=extent
+                name=name,
+                kind=kind,
+                materials=materials,
+                edges=edges,
+                extent=extent,
+                origin="metal",
             )
         )
     return tuple(electrodes)
@@ -261,7 +282,7 @@ def detect_electrodes(
     *,
     gate_model: GateModel = GateModel.SEMICONDUCTOR,
 ) -> tuple[Electrode, ...]:
-    """금속에서 전극을 찾는다.
+    """금속에서 계면을 찾는다.
 
     덩어리 하나가 전극 하나다. 한 덩어리가 여러 영역에 닿아도 전극은 하나이고,
     그래서 등전위가 **구성상** 보장된다 — 사용자가 따로 묶어 줄 필요가 없다.
@@ -324,4 +345,23 @@ def backside_candidate(structure: Structure) -> Electrode | None:
         materials=touched,
         edges=tuple(edges),
         extent=extent_of(structure, tuple(edges)),
+        origin="backside",
     )
+
+
+def detect_interfaces(
+    structure: Structure,
+    *,
+    gate_model: GateModel = GateModel.SEMICONDUCTOR,
+) -> tuple[Electrode, ...]:
+    """해석에 쓸 수 있는 계면 전부 — 금속 접촉과 뒷면.
+
+    사용자가 고를 수 있는 것은 이 목록이 전부다. 임의의 경계를 전극이라고
+    지정하게 두지 않는다 — 반도체 표면 아무 데나 접촉을 걸면 소자가 아니라
+    수치 실험이 되고, 그 결과를 곡선이라고 읽게 된다.
+    """
+    found = list(detect_electrodes(structure, gate_model=gate_model))
+    backside = backside_candidate(structure)
+    if backside is not None:
+        found.append(backside)
+    return tuple(found)

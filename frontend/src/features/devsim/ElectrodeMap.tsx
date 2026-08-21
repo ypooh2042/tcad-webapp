@@ -1,35 +1,43 @@
 /**
- * 구조 그림 위에 전극을 얹어 보여주고, 화면에서 경계를 찍게 한다.
+ * 단면 위에서 계면을 고르고 전극에 붙인다.
+ *
+ * 전극 지정이 여기서 일어난다. 목록에서 하는 것은 전극을 만들고·지우고·이름을
+ * 붙이는 것까지고, **어느 계면이 어느 전극인지는 그림 위에서 정한다** — 이름만
+ * 보고 고르면 그게 구조의 어디인지 알 수 없다.
+ *
+ * 커서를 계면 가까이 가져가면 배경이 어두워지고 그 계면만 밝게 남는다. 누르면
+ * 어느 전극에 붙일지 고르는 쪽지가 뜬다.
  *
  * 그리기와 좌표 되돌리기가 `surfaceGeometry` 하나를 같이 쓴다. 각자 같은 수식을
- * 따로 갖고 있으면 여백을 고칠 때 한쪽만 고쳐져 찍은 자리와 그린 자리가 어긋난다
- * (플롯 쪽이 같은 이유로 그렇게 되어 있다).
+ * 따로 갖고 있으면 여백을 고칠 때 한쪽만 고쳐져 짚은 자리와 그린 자리가 어긋난다.
  */
-import { useEffect, useRef, useState } from 'react'
-import type { SurfaceResponse } from '../../api/types'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { DevSimInterface, SurfaceResponse } from '../../api/types'
 import { solidOf } from '../../plot/materials'
 import { surfaceGeometry } from '../../plot/surfaceGeometry'
-import { CURVE_COLORS } from './IvChart'
+import { nearestInterface, type HitCandidate } from './hitTest'
 
-export interface MappedElectrode {
+/** 계면으로 칠 커서 거리(px). 늘 무언가 잡히면 화면이 계속 어두워진다. */
+const HOVER_RADIUS = 14
+
+/** 아직 전극에 안 붙은 계면의 색. */
+const UNASSIGNED = '#8892a0'
+
+export interface ElectrodeChip {
   label: string
-  segments: number[][]
-  active: boolean
-}
-
-export interface PickedBox {
-  x_min: number
-  x_max: number
-  y_min: number
-  y_max: number
+  color: string
 }
 
 interface Props {
   surface: SurfaceResponse
-  electrodes: MappedElectrode[]
-  /** 켜면 끌어서 사각형을 그릴 수 있다. 놓으면 그 범위를 돌려준다. */
-  picking: boolean
-  onPick?: (box: PickedBox) => void
+  interfaces: DevSimInterface[]
+  /** 계면 열쇠 → 전극 이름. 안 붙었으면 없다. */
+  owners: Record<string, string>
+  electrodes: ElectrodeChip[]
+  onAssign: (key: string, label: string) => void
+  onUnassign: (key: string) => void
+  /** 이 계면을 담을 전극을 새로 만든다. */
+  onCreate: (key: string) => void
   height?: number
 }
 
@@ -42,23 +50,46 @@ function boundsOf(surface: SurfaceResponse) {
   }
 }
 
-/** 찍었다고 볼 최소 크기(px). 이보다 작으면 그냥 클릭한 것이다. */
-const MIN_DRAG_PX = 4
+interface Picked {
+  key: string
+  x: number
+  y: number
+}
 
 export function ElectrodeMap({
   surface,
+  interfaces,
+  owners,
   electrodes,
-  picking,
-  onPick,
-  height = 320,
+  onAssign,
+  onUnassign,
+  onCreate,
+  height = 360,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const [drag, setDrag] = useState<{
-    x0: number
-    y0: number
-    x1: number
-    y1: number
-  } | null>(null)
+  const [hovered, setHovered] = useState<string | null>(null)
+  const [picked, setPicked] = useState<Picked | null>(null)
+  const [width, setWidth] = useState(0)
+
+  const colorOf = useMemo(() => {
+    const byLabel = new Map(electrodes.map((one) => [one.label, one.color]))
+    return (key: string) => byLabel.get(owners[key] ?? '') ?? UNASSIGNED
+  }, [electrodes, owners])
+
+  // 히트테스트에 쓸 화면 좌표. 그리기와 같은 변환을 쓴다.
+  const candidates: HitCandidate[] = useMemo(() => {
+    if (width === 0 || surface.x.length === 0) return []
+    const geometry = surfaceGeometry(boundsOf(surface), width, height)
+    return interfaces.map((one) => ({
+      key: one.key,
+      segments: one.segments.map(([x0, y0, x1, y1]) => [
+        geometry.px(x0),
+        geometry.py(y0),
+        geometry.px(x1),
+        geometry.py(y1),
+      ]),
+    }))
+  }, [interfaces, surface, width, height])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -67,14 +98,18 @@ export function ElectrodeMap({
     if (!context) return
 
     const ratio = window.devicePixelRatio || 1
-    const width = canvas.clientWidth
-    canvas.width = Math.max(1, Math.round(width * ratio))
+    const shown = canvas.clientWidth
+    // 크기가 0 이면 그리지 않는다. 화면이 숨겨져 있을 때 그렇게 된다.
+    if (shown === 0 || height === 0) return
+    if (shown !== width) setWidth(shown)
+
+    canvas.width = Math.max(1, Math.round(shown * ratio))
     canvas.height = Math.max(1, Math.round(height * ratio))
     context.setTransform(ratio, 0, 0, ratio, 0, 0)
-    context.clearRect(0, 0, width, height)
-
+    context.clearRect(0, 0, shown, height)
     if (surface.x.length === 0) return
-    const geometry = surfaceGeometry(boundsOf(surface), width, height)
+
+    const geometry = surfaceGeometry(boundsOf(surface), shown, height)
 
     // 재질 단면. 값은 그리지 않는다 — 여기서 볼 것은 어디에 무엇이 붙어 있는지다.
     surface.triangles.forEach((triangle, index) => {
@@ -90,91 +125,153 @@ export function ElectrodeMap({
       context.fill()
     })
 
-    // 전극. 굵게 덧그어 어디가 접촉면인지 한눈에 보이게 한다.
-    electrodes.forEach((electrode, index) => {
-      context.strokeStyle = CURVE_COLORS[index % CURVE_COLORS.length]
-      context.lineWidth = electrode.active ? 4 : 2
-      context.globalAlpha = electrode.active ? 1 : 0.45
+    const strokeInterface = (one: DevSimInterface, bold: boolean) => {
+      context.strokeStyle = colorOf(one.key)
+      context.lineWidth = bold ? 5 : 2.5
       context.lineCap = 'round'
       context.beginPath()
-      for (const [x0, y0, x1, y1] of electrode.segments) {
+      for (const [x0, y0, x1, y1] of one.segments) {
         context.moveTo(geometry.px(x0), geometry.py(y0))
         context.lineTo(geometry.px(x1), geometry.py(y1))
       }
       context.stroke()
-    })
-    context.globalAlpha = 1
-
-    if (drag) {
-      context.strokeStyle = '#ffffff'
-      context.setLineDash([4, 3])
-      context.lineWidth = 1
-      context.strokeRect(
-        Math.min(drag.x0, drag.x1),
-        Math.min(drag.y0, drag.y1),
-        Math.abs(drag.x1 - drag.x0),
-        Math.abs(drag.y1 - drag.y0),
-      )
-      context.setLineDash([])
     }
-  }, [surface, electrodes, drag, height])
+
+    for (const one of interfaces) {
+      if (one.key === hovered) continue
+      strokeInterface(one, false)
+    }
+
+    const focus = interfaces.find((one) => one.key === hovered)
+    if (focus) {
+      // 배경을 덮어 어둡게 한 뒤 그 위에 짚은 계면만 다시 그린다. 순서가 반대면
+      // 밝힌 계면까지 같이 어두워진다.
+      context.fillStyle = 'rgba(10, 12, 16, 0.62)'
+      context.fillRect(0, 0, shown, height)
+      strokeInterface(focus, true)
+
+      const owner = owners[focus.key]
+      const text = owner ? `${focus.key} → ${owner}` : `${focus.key} · 전극 없음`
+      context.font =
+        '12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+      const padding = 6
+      const textWidth = context.measureText(text).width
+      let left = geometry.px((focus.extent.x_min + focus.extent.x_max) / 2)
+      left = Math.min(
+        Math.max(left - textWidth / 2 - padding, 2),
+        shown - textWidth - padding * 2 - 2,
+      )
+      const top = Math.max(2, geometry.py(focus.extent.y_min) - 26)
+      context.fillStyle = 'rgba(0, 0, 0, 0.8)'
+      context.fillRect(left, top, textWidth + padding * 2, 20)
+      context.fillStyle = '#ffffff'
+      context.textBaseline = 'middle'
+      context.fillText(text, left + padding, top + 10)
+    }
+  }, [surface, interfaces, owners, hovered, height, width, colorOf])
 
   function at(event: React.PointerEvent<HTMLCanvasElement>) {
     const rect = event.currentTarget.getBoundingClientRect()
     return { x: event.clientX - rect.left, y: event.clientY - rect.top }
   }
 
-  function start(event: React.PointerEvent<HTMLCanvasElement>) {
-    if (!picking) return
-    const point = at(event)
-    event.currentTarget.setPointerCapture(event.pointerId)
-    setDrag({ x0: point.x, y0: point.y, x1: point.x, y1: point.y })
-  }
-
-  function move(event: React.PointerEvent<HTMLCanvasElement>) {
-    if (!drag) return
-    const point = at(event)
-    setDrag({ ...drag, x1: point.x, y1: point.y })
-  }
-
-  function finish(event: React.PointerEvent<HTMLCanvasElement>) {
-    if (!drag) return
-    const canvas = event.currentTarget
-    const width = canvas.clientWidth
-    setDrag(null)
-    if (
-      Math.abs(drag.x1 - drag.x0) < MIN_DRAG_PX ||
-      Math.abs(drag.y1 - drag.y0) < MIN_DRAG_PX
-    ) {
-      // 살짝 흔들린 클릭이다. 점 하나짜리 전극을 만들면 접촉 변이 없어 거절된다.
-      return
-    }
-    const geometry = surfaceGeometry(boundsOf(surface), width, height)
-    const xs = [geometry.unpx(drag.x0), geometry.unpx(drag.x1)].map(
-      geometry.clampX,
-    )
-    const ys = [geometry.unpy(drag.y0), geometry.unpy(drag.y1)].map(
-      geometry.clampY,
-    )
-    onPick?.({
-      x_min: Math.min(...xs),
-      x_max: Math.max(...xs),
-      y_min: Math.min(...ys),
-      y_max: Math.max(...ys),
-    })
-  }
-
   return (
-    <canvas
-      ref={canvasRef}
-      className={`electrode-map${picking ? ' picking' : ''}`}
-      style={{ width: '100%', height }}
-      onPointerDown={start}
-      onPointerMove={move}
-      onPointerUp={finish}
-      onPointerCancel={() => setDrag(null)}
-      role="img"
-      aria-label="전극 지도"
-    />
+    <div className="electrode-map-wrap">
+      <canvas
+        ref={canvasRef}
+        className="electrode-map"
+        style={{ width: '100%', height }}
+        onPointerMove={(event) => {
+          const point = at(event)
+          setHovered(nearestInterface(point.x, point.y, candidates, HOVER_RADIUS))
+        }}
+        onPointerLeave={() => setHovered(null)}
+        onClick={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect()
+          const x = event.clientX - rect.left
+          const y = event.clientY - rect.top
+          const key = nearestInterface(x, y, candidates, HOVER_RADIUS)
+          setPicked(key ? { key, x, y } : null)
+        }}
+        role="img"
+        aria-label="단면 — 계면을 눌러 전극에 붙입니다"
+      />
+
+      {picked ? (
+        <div
+          className="interface-popover"
+          style={{ left: picked.x, top: picked.y }}
+          role="dialog"
+          aria-label={`${picked.key} 계면`}
+        >
+          <div className="popover-head">
+            <strong>{picked.key}</strong>
+            <span className="origin">
+              {interfaces.find((one) => one.key === picked.key)?.origin ===
+              'backside'
+                ? '뒷면 경계'
+                : '금속 접촉'}
+            </span>
+            <button
+              type="button"
+              className="ghost"
+              aria-label="닫기"
+              onClick={() => setPicked(null)}
+            >
+              ×
+            </button>
+          </div>
+          <p className="hint">어느 전극에 붙일까요?</p>
+          <ul className="popover-choices">
+            {electrodes.map((electrode) => {
+              const mine = owners[picked.key] === electrode.label
+              return (
+                <li key={electrode.label}>
+                  <button
+                    type="button"
+                    className={mine ? 'on' : ''}
+                    onClick={() => {
+                      onAssign(picked.key, electrode.label)
+                      setPicked(null)
+                    }}
+                  >
+                    <span
+                      className="swatch"
+                      style={{ background: electrode.color }}
+                      aria-hidden="true"
+                    />
+                    {electrode.label}
+                    {mine ? ' ✓' : ''}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+          <div className="popover-actions">
+            <button
+              type="button"
+              onClick={() => {
+                onCreate(picked.key)
+                setPicked(null)
+              }}
+            >
+              새 전극으로
+            </button>
+            {owners[picked.key] ? (
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  onUnassign(picked.key)
+                  setPicked(null)
+                }}
+              >
+                떼어 내기
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
   )
 }

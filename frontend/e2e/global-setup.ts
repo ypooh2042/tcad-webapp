@@ -18,6 +18,13 @@ const BACKEND_ROOT = new URL('../../backend/', import.meta.url).pathname
 /** setup 이 만든 백엔드 환경변수를 워커 프로세스에 넘기는 통로. */
 export const ENV_FILE = join(tmpdir(), 'tcad-e2e-env.json')
 const PYTHON = join(BACKEND_ROOT, '.venv/bin/python')
+/** 시작할 때 세션 저장소를 비우는 한 줄짜리 스크립트. */
+const FLUSH_SESSIONS = [
+  'import asyncio, os, redis.asyncio as redis',
+  'client = redis.from_url(os.environ["TCAD_REDIS_URL"])',
+  'asyncio.run(client.flushdb())',
+].join('; ')
+
 const API_PORT = 8123
 const ADMIN_URL =
   process.env.TCAD_TEST_DATABASE_URL ??
@@ -111,6 +118,14 @@ export default async function globalSetup() {
     // E2E 잡은 작고 빨라야 한다.
     TCAD_JOB_TIMEOUT_SECONDS: '120',
   }
+
+  // **세션 저장소를 비우고 시작한다.**
+  //
+  // 데이터베이스는 실행마다 새로 만들지만 Redis 는 오래 떠 있는 컨테이너를
+  // 함께 쓴다. 앞선 실행이 남긴 세션이 그대로 살아 있어(유휴 30분) 동시 접속
+  // 정원을 채우고, 그러면 다음 실행이 첫 가입부터 "정원에 도달했습니다" 로
+  // 무너진다 — 실제로 48개 중 41개가 그렇게 연달아 깨졌다.
+  run(PYTHON, ['-c', FLUSH_SESSIONS], env)
 
   run(PYTHON, ['-m', 'alembic', 'upgrade', 'head'], env)
 

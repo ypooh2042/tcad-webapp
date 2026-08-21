@@ -20,11 +20,7 @@ import { files as fileApi } from '../../api/endpoints'
 import { FileBrowser } from '../files/FileBrowser'
 import { tabLabels } from '../files/tabLabels'
 import { useAuth } from '../auth/AuthContext'
-import {
-  occupancyLabel,
-  occupancyTitle,
-  useOccupancy,
-} from '../auth/useOccupancy'
+import { AccountBar } from '../auth/AccountBar'
 import { AdminPanel } from '../admin/AdminPanel'
 import { DocsPanel } from '../docs/DocsPanel'
 import { SupremEditor } from '../editor/SupremEditor'
@@ -43,7 +39,7 @@ interface Props {
 }
 
 export function WorkspacePage({ viewTabs, onAnalyse }: Props = {}) {
-  const { user, logout, clear } = useAuth()
+  const { clear } = useAuth()
   const [showFiles, setShowFiles] = useState(false)
   const [jobId, setJobId] = useState<number | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -53,9 +49,6 @@ export function WorkspacePage({ viewTabs, onAnalyse }: Props = {}) {
   const [resultWidth, setResultWidth] = usePanelWidth('tcad.width.result', 400)
   const [docsWidth, setDocsWidth] = usePanelWidth('tcad.width.docs', 360)
   const viewport = useViewportWidth()
-  //: 지금 몇 명이 쓰고 있는지. 정원이 차면 다음 사람이 못 들어오므로, 자리를
-  //: 비워 줄지 판단하려면 들어와 있는 사람이 볼 수 있어야 한다.
-  const occupancy = useOccupancy()
 
   const report = useCallback(
     (error: unknown) => {
@@ -181,28 +174,7 @@ export function WorkspacePage({ viewTabs, onAnalyse }: Props = {}) {
           파일 열기
         </button>
         <div className="spacer" />
-        {occupancy && (
-          <span
-            className={
-              occupancy.occupied >= occupancy.capacity
-                ? 'muted occupancy full'
-                : 'muted occupancy'
-            }
-            title={occupancyTitle(occupancy)}
-          >
-            {occupancyLabel(occupancy)}
-          </span>
-        )}
-        <span className="muted">{user?.email}</span>
-        {/* 관리자에게만 보인다. 일반 사용자가 눌러 봐야 서버가 403 을 준다. */}
-        {user?.role === 'admin' && (
-          <button className="link" onClick={() => setShowAdmin(true)}>
-            관리자
-          </button>
-        )}
-        <button className="link" onClick={() => void logout()}>
-          로그아웃
-        </button>
+        <AccountBar onOpenAdmin={() => setShowAdmin(true)} />
       </header>
 
       <div className="toolbar">

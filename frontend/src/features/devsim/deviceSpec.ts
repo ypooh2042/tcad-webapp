@@ -5,7 +5,7 @@
  * 것이다 — 제출해 봐야 422 를 받는 것과, 실행 버튼 옆에 무엇이 잘못됐는지 떠
  * 있는 것은 다르다. 규칙이 갈리면 서버 쪽이 맞다.
  */
-import type { Bias, DeviceSpec, DevSimElectrode } from '../../api/types'
+import type { Bias, DeviceSpec, DevSimInterface } from '../../api/types'
 
 /** 서버의 `MAX_TOTAL_POINTS` 와 같아야 한다. */
 export const MAX_TOTAL_POINTS = 300
@@ -58,60 +58,158 @@ export function pointCount(spec: DeviceSpec): number {
 }
 
 /**
- * 자동으로 찾은 전극에서 쓸 만한 첫 조건을 만든다.
+ * 자동으로 찾은 계면에서 쓸 만한 첫 조건을 만든다.
  *
- * 게이트는 곡선족을 만드는 단계로, 게이트가 아닌 것 중 가장 오른쪽을 스윕으로
- * 놓는다. 나머지는 접지에 함께 묶는다 — MOSFET 출력 특성이 늘 그 모양이다.
+ * 계면마다 전극 하나, 전극마다 전압원 하나. 게이트는 곡선족을 만드는 단계로,
+ * 게이트가 아닌 금속 중 가장 오른쪽을 스윕으로 놓는다. 나머지는 0V 고정이다 —
+ * MOSFET 출력 특성이 늘 그 모양이다.
  */
-export function defaultSpec(electrodes: DevSimElectrode[]): DeviceSpec {
-  const spec: DeviceSpec = {
-    label: '기본 조건',
-    electrodes: electrodes.map((electrode) => ({
-      origin: electrode.origin,
-      key: electrode.origin === 'detected' ? electrode.key : undefined,
-      label: electrode.key,
-    })),
-    biases: [],
-    gate_model: 'semiconductor',
+export function defaultSpec(interfaces: DevSimInterface[]): DeviceSpec {
+  if (interfaces.length === 0) {
+    return { label: '기본 조건', electrodes: [], biases: [], gate_model: 'semiconductor' }
   }
-  if (electrodes.length === 0) return spec
 
-  const gates = electrodes.filter(
-    (electrode) => electrode.key === 'gate' || electrode.kind === 'insulator',
+  const gates = interfaces.filter(
+    (one) => one.key === 'gate' || one.kind === 'insulator',
   )
-  const others = electrodes.filter((electrode) => !gates.includes(electrode))
+  const others = interfaces.filter((one) => !gates.includes(one))
   const ordered = [...others].sort(
     (a, b) => a.extent.x_min + a.extent.x_max - (b.extent.x_min + b.extent.x_max),
   )
-  const swept = ordered.pop()
-  const grounded = ordered
+  // 뒷면은 스윕으로 삼지 않는다. 기판을 흔드는 것은 특수한 실험이고, 첫 조건이
+  // 그것이면 사용자는 자기가 무엇을 보고 있는지 알기 어렵다.
+  const sweepable = ordered.filter((one) => one.origin !== 'backside')
+  const swept = sweepable[sweepable.length - 1] ?? ordered[ordered.length - 1]
 
-  const biases: Bias[] = []
-  if (grounded.length) {
-    biases.push({
-      name: 'V0',
-      electrodes: grounded.map((electrode) => electrode.key),
-      role: 'const',
-      value: 0,
-    })
+  return {
+    label: '기본 조건',
+    electrodes: interfaces.map((one) => ({
+      label: one.key,
+      interfaces: [one.key],
+    })),
+    biases: interfaces.map((one) => {
+      if (gates.includes(one)) {
+        return {
+          name: `V${one.key}`,
+          electrode: one.key,
+          role: 'step' as const,
+          values: [...DEFAULT_STEPS],
+        }
+      }
+      if (one === swept) {
+        return {
+          name: `V${one.key}`,
+          electrode: one.key,
+          role: 'sweep' as const,
+          sweep: { ...DEFAULT_SWEEP },
+        }
+      }
+      return {
+        name: `V${one.key}`,
+        electrode: one.key,
+        role: 'const' as const,
+        value: 0,
+      }
+    }),
+    gate_model: 'semiconductor',
   }
-  for (const gate of gates) {
-    biases.push({
-      name: `V${gate.key}`,
-      electrodes: [gate.key],
-      role: 'step',
-      values: [...DEFAULT_STEPS],
-    })
+}
+
+/** 이 계면을 물고 있는 전극. 아무도 안 물었으면 null. */
+export function ownerOf(spec: DeviceSpec, key: string): string | null {
+  const found = spec.electrodes.find((electrode) =>
+    electrode.interfaces.includes(key),
+  )
+  return found ? found.label : null
+}
+
+/**
+ * 계면을 전극에 붙인다. 다른 전극에 있었으면 떼어 온다.
+ *
+ * 한 계면이 두 전극에 걸리면 같은 변에 서로 다른 전위를 걸겠다는 뜻이 되고,
+ * 솔버가 무엇을 골랐는지 알 수 없다. 그래서 "추가"가 아니라 "이동"이다.
+ */
+export function assignInterface(
+  spec: DeviceSpec,
+  key: string,
+  label: string,
+): DeviceSpec {
+  if (!spec.electrodes.some((electrode) => electrode.label === label)) return spec
+  if (ownerOf(spec, key) === label) return spec
+  return {
+    ...spec,
+    electrodes: spec.electrodes.map((electrode) => {
+      if (electrode.label === label) {
+        return { ...electrode, interfaces: [...electrode.interfaces, key] }
+      }
+      if (!electrode.interfaces.includes(key)) return electrode
+      return {
+        ...electrode,
+        interfaces: electrode.interfaces.filter((one) => one !== key),
+      }
+    }),
   }
-  if (swept) {
-    biases.push({
-      name: `V${swept.key}`,
-      electrodes: [swept.key],
-      role: 'sweep',
-      sweep: { ...DEFAULT_SWEEP },
-    })
+}
+
+export function unassignInterface(spec: DeviceSpec, key: string): DeviceSpec {
+  return {
+    ...spec,
+    electrodes: spec.electrodes.map((electrode) =>
+      electrode.interfaces.includes(key)
+        ? {
+            ...electrode,
+            interfaces: electrode.interfaces.filter((one) => one !== key),
+          }
+        : electrode,
+    ),
   }
-  return { ...spec, biases }
+}
+
+/** 빈 전극을 하나 더한다. 전압원도 같이 생긴다 — 둘은 1:1 이다. */
+export function addElectrode(spec: DeviceSpec, label?: string): DeviceSpec {
+  const taken = new Set(spec.electrodes.map((electrode) => electrode.label))
+  let name = label ?? `전극${spec.electrodes.length + 1}`
+  let counter = spec.electrodes.length + 1
+  while (taken.has(name)) {
+    counter += 1
+    name = `전극${counter}`
+  }
+  return {
+    ...spec,
+    electrodes: [...spec.electrodes, { label: name, interfaces: [] }],
+    biases: [
+      ...spec.biases,
+      { name: `V${name}`, electrode: name, role: 'const', value: 0 },
+    ],
+  }
+}
+
+export function removeElectrode(spec: DeviceSpec, label: string): DeviceSpec {
+  return {
+    ...spec,
+    electrodes: spec.electrodes.filter((electrode) => electrode.label !== label),
+    biases: spec.biases.filter((bias) => bias.electrode !== label),
+  }
+}
+
+export function renameElectrode(
+  spec: DeviceSpec,
+  from: string,
+  to: string,
+): DeviceSpec {
+  if (!to || spec.electrodes.some((electrode) => electrode.label === to)) {
+    return spec
+  }
+  return {
+    ...spec,
+    electrodes: spec.electrodes.map((electrode) =>
+      electrode.label === from ? { ...electrode, label: to } : electrode,
+    ),
+    // 전압원이 이름으로 전극을 가리킨다. 같이 안 바꾸면 연결이 끊긴다.
+    biases: spec.biases.map((bias) =>
+      bias.electrode === from ? { ...bias, electrode: to } : bias,
+    ),
+  }
 }
 
 /** 제출을 막을 이유들. 비어 있으면 보낼 수 있다. */
@@ -128,28 +226,45 @@ export function problemsOf(spec: DeviceSpec): string[] {
     problems.push('전극 이름이 겹칩니다.')
   }
 
+  const bare = spec.electrodes
+    .filter((electrode) => electrode.interfaces.length === 0)
+    .map((electrode) => electrode.label)
+  if (bare.length) {
+    problems.push(
+      `계면이 안 붙은 전극이 있습니다: ${bare.join(', ')}. 단면에서 계면을 눌러 붙여 주세요.`,
+    )
+  }
+
   const claimed = new Map<string, string>()
-  for (const bias of spec.biases) {
-    if (bias.electrodes.length === 0) {
-      problems.push(`${bias.name}: 연결된 전극이 없습니다.`)
-    }
-    for (const label of bias.electrodes) {
-      const owner = claimed.get(label)
+  for (const electrode of spec.electrodes) {
+    for (const key of electrode.interfaces) {
+      const owner = claimed.get(key)
       if (owner) {
         problems.push(
-          `전극 ${label} 이(가) 두 전압원(${owner}, ${bias.name})에 걸려 있습니다.`,
+          `계면 ${key} 이(가) 두 전극(${owner}, ${electrode.label})에 걸려 있습니다.`,
         )
       }
-      claimed.set(label, bias.name)
+      claimed.set(key, electrode.label)
     }
+  }
+
+  const driven = new Map<string, string>()
+  for (const bias of spec.biases) {
+    const owner = driven.get(bias.electrode)
+    if (owner) {
+      problems.push(
+        `전극 ${bias.electrode} 에 전압원이 둘(${owner}, ${bias.name}) 붙어 있습니다.`,
+      )
+    }
+    driven.set(bias.electrode, bias.name)
     if (bias.role === 'step' && !(bias.values ?? []).length) {
       problems.push(`${bias.name}: 단계 전압을 하나 이상 넣어 주세요.`)
     }
   }
 
-  const loose = labels.filter((label) => !claimed.has(label))
-  if (loose.length) {
-    problems.push(`전압원에 안 걸린 전극이 있습니다: ${loose.join(', ')}`)
+  const undriven = labels.filter((label) => !driven.has(label))
+  if (undriven.length) {
+    problems.push(`전압원이 없는 전극이 있습니다: ${undriven.join(', ')}`)
   }
 
   const total = pointCount(spec)

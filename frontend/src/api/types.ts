@@ -223,16 +223,17 @@ export interface DocsSearchHit {
 
 
 /**
- * 구조에서 자동으로 찾은 전극 하나.
+ * 구조에서 자동으로 찾은 계면 하나. 전극에 붙일 수 있는 최소 단위다.
  *
- * 규칙은 SUPREM 원본의 것을 그대로 옮긴 것이다(같은 금속 덩어리에 닿은 계면은
- * 하나의 전극). 그래서 등전위가 **구성상** 보장되고, 사용자가 따로 묶어 줄
- * 필요가 없다.
+ * 규칙은 SUPREM 원본의 것을 그대로 옮긴 것이다(같은 금속 덩어리에 닿은 변이
+ * 하나의 계면). 그 안의 등전위는 **구성상** 보장된다. 사용자가 고를 수 있는
+ * 것은 이 목록이 전부이며, 임의의 경계를 전극으로 지정할 수는 없다.
  */
-export interface DevSimElectrode {
-  /** 조건이 이 전극을 가리킬 때 쓰는 열쇠. 같은 구조면 항상 같다. */
+export interface DevSimInterface {
+  /** 조건이 이 계면을 가리킬 때 쓰는 열쇠. 같은 구조면 항상 같다. */
   key: string
-  origin: 'detected' | 'backside' | 'picked'
+  /** `metal` 금속 접촉, `backside` 뒷면 경계. */
+  origin: 'metal' | 'backside'
   kind: 'semiconductor' | 'insulator'
   materials: string[]
   extent: { x_min: number; x_max: number; y_min: number; y_max: number }
@@ -241,20 +242,26 @@ export interface DevSimElectrode {
   segments: number[][]
 }
 
-export interface DevSimElectrodes {
+export interface DevSimInterfaces {
   filename: string
   gate_model: GateModel
-  electrodes: DevSimElectrode[]
+  interfaces: DevSimInterface[]
 }
 
 export type GateModel = 'semiconductor' | 'conductor'
 
 export type BiasRole = 'sweep' | 'step' | 'const'
 
-/** 전압원 하나. 여기 묶인 전극들이 같은 전위를 갖는다. */
+/**
+ * 전압원 하나. 전극 **하나**를 몬다.
+ *
+ * 여러 계면을 한 전위로 묶는 길은 전극 쪽 하나뿐이다. 전압원이 전극을 여러 개
+ * 거느리게 하면 같은 일을 두 군데서 할 수 있게 되고, 화면에서는 그 두 길이
+ * 서로를 덮어쓴다.
+ */
 export interface Bias {
   name: string
-  electrodes: string[]
+  electrode: string
   role: BiasRole
   /** role='const' */
   value?: number
@@ -264,11 +271,11 @@ export interface Bias {
   sweep?: { start: number; stop: number; step: number }
 }
 
+/** 전극 하나. 계면 몇 개를 한 전위로 묶은 것이다. */
 export interface ElectrodeChoice {
-  origin: 'detected' | 'backside' | 'picked'
   label: string
-  key?: string
-  box?: { x_min: number; x_max: number; y_min: number; y_max: number }
+  /** 붙어 있는 계면들의 열쇠. 한 계면은 한 전극에만 속한다. */
+  interfaces: string[]
 }
 
 export interface DeviceSpec {
