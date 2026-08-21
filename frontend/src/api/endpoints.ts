@@ -255,6 +255,21 @@ export const devsim = {
   surface: (structureId: number) =>
     request<SurfaceResponse>(`/api/devsim/structures/${structureId}/surface`),
 
+  /**
+   * 맡아 둔 해석 조건. 없거나 지금 구조에 안 맞으면 404 —
+   * "기본값으로 시작하라" 는 뜻이다.
+   */
+  state: (structureId: number) =>
+    request<{ spec: DeviceSpec }>(
+      `/api/devsim/structures/${structureId}/state`,
+    ),
+
+  saveState: (structureId: number, spec: DeviceSpec) =>
+    request<null>(`/api/devsim/structures/${structureId}/state`, {
+      method: 'PUT',
+      body: { spec },
+    }),
+
   submit: (structureId: number, spec: DeviceSpec) =>
     request<DevSimSubmitResponse>('/api/devsim/jobs', {
       method: 'POST',

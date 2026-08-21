@@ -59,6 +59,9 @@ interface Props {
 /** 지금 보고 있는 보관 구조의 id. */
 type Selection = number
 
+/** 조건을 맡기기 전에 기다리는 시간. 편집기 상태와 같은 값이다. */
+const PERSIST_DEBOUNCE_MS = 1000
+
 function messageOf(error: unknown): string {
   // ApiError.message 는 detail 이 문자열이면 그걸 그대로 쓴다. 객체 detail 까지
   // 여기서 풀지 않는다 — client.ts 가 이미 사람이 읽을 문구를 만들어 둔다.
@@ -80,6 +83,9 @@ export function DevSimPage({
   const [surface, setSurface] = useState<SurfaceResponse | null>(null)
   const [spec, setSpec] = useState<DeviceSpec | null>(null)
 
+  //: 조건을 서버에서 받아 오는 중인지. 받아 오기 전에 저장하면 기본값이
+  //: 맡아 둔 조건을 덮어쓴다.
+  const [restoring, setRestoring] = useState(false)
   const [jobId, setJobId] = useState<number | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [tab, setTab] = useState<'run' | 'compare'>('run')
@@ -151,23 +157,49 @@ export function DevSimPage({
     setMessage(null)
     setInterfaces([])
     setSpec(null)
+    setRestoring(true)
     Promise.all([
       devsim.interfaces(selection, gateModel),
       devsim.surface(selection),
+      // 맡아 둔 조건. 없거나 지금 구조에 안 맞으면 404 가 오고 기본값으로 간다.
+      devsim.state(selection).catch(() => null),
     ])
-      .then(([found, drawn]) => {
+      .then(([found, drawn, stored]) => {
         if (cancelled) return
         setInterfaces(found.interfaces)
         setSurface(drawn)
-        setSpec(defaultSpec(found.interfaces))
+        setSpec(stored?.spec ?? defaultSpec(found.interfaces))
       })
       .catch((error) => {
         if (!cancelled) setMessage(messageOf(error))
+      })
+      .finally(() => {
+        if (!cancelled) setRestoring(false)
       })
     return () => {
       cancelled = true
     }
   }, [selection, gateModel])
+
+  /**
+   * 짜 둔 조건을 맡긴다.
+   *
+   * 전극에 이름을 붙이고 계면을 붙이고 전압을 정하는 데는 손이 꽤 간다. 그런데
+   * 새로고침 한 번에 전부 초기값으로 돌아갔다 — 편집기 탭을 맡아 두는 것과
+   * 같은 이유다.
+   *
+   * 한 글자마다 보내지 않고 잠깐 기다린다. 그리고 **받아 오는 중에는 보내지
+   * 않는다** — 기본값이 맡아 둔 조건을 덮어쓴다.
+   */
+  useEffect(() => {
+    if (selection === null || spec === null || restoring) return
+    const timer = window.setTimeout(() => {
+      // 못 쓸 조건은 서버가 거절한다. 화면에서 이미 빨갛게 알려 주고 있으므로
+      // 여기서 또 말하지 않는다.
+      void devsim.saveState(selection, spec).catch(() => undefined)
+    }, PERSIST_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [selection, spec, restoring])
 
   const problems = useMemo(() => (spec ? problemsOf(spec) : []), [spec])
   const points = useMemo(() => (spec ? pointCount(spec) : 0), [spec])

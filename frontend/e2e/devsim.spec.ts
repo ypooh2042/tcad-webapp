@@ -525,6 +525,41 @@ test('로그인 화면이 DevSim 도 함께 알린다', async ({ page }) => {
   await expect(page.getByText(/DevSim/)).toBeVisible()
 })
 
+test('짜 둔 조건이 새로고침을 견딘다', async ({ page, context }) => {
+  // 전극에 이름을 붙이고 전압을 정하는 데는 손이 꽤 간다. 새로고침 한 번에
+  // 전부 초기값으로 돌아가면 그 손이 매번 다시 든다.
+  test.setTimeout(180_000)
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signUp(page, uniqueEmail('persist'))
+
+  await page.getByRole('tab', { name: /소자 해석/ }).click()
+  const name = page.getByLabel('전극 1 이름')
+  await expect(name).toHaveValue('source', { timeout: 30_000 })
+
+  // 이름과 전압을 고친다.
+  await name.fill('')
+  await name.pressSequentially('pmos 소스')
+  await name.press('Enter')
+  const sweep = page.locator('.bias[data-role="sweep"]')
+  await sweep.getByLabel('점 개수').fill('4')
+
+  // 맡기는 데 마지막 손질 뒤 1초다.
+  await page.waitForTimeout(2000)
+  await page.reload()
+
+  await page.getByRole('tab', { name: /소자 해석/ }).click()
+  await expect(page.getByLabel('전극 1 이름')).toHaveValue('pmos 소스', {
+    timeout: 30_000,
+  })
+  await expect(
+    page.locator('.bias[data-role="sweep"]').getByLabel('점 개수'),
+  ).toHaveValue('4')
+  // 전압원이 가리키는 곳도 함께 돌아와야 한다.
+  await expect(page.locator('.bias').first().locator('.drives')).toHaveText(
+    '→ pmos 소스',
+  )
+})
+
 test('무엇을 전극으로 보는지 탭에 적혀 있다', async ({ page, context }) => {
   // 목록에 왜 일부 단계만 나오는지 알려주지 않으면, 사용자는 앱이 결과를
   // 잃어버린 줄 안다.

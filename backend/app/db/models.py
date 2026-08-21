@@ -342,6 +342,37 @@ class DevSimResult(Base):
     )
 
 
+class DevSimState(Base):
+    """소자 해석 조건을 사용자별로 맡아 둔다.
+
+    전극에 이름을 붙이고 계면을 붙이고 전압을 정하는 데는 손이 꽤 간다. 그런데
+    새로고침 한 번에 그것이 전부 초기값으로 돌아갔다 — 편집기 탭을 맡아 두는
+    것과 같은 이유로 여기도 맡아 둔다(`EditorState`).
+
+    **열쇠가 구조 id 가 아니라 `.in` 경로다.** 같은 공정 코드를 다시 돌리면
+    구조는 새로 생기고 옛것은 지워지는데(`app/devsim/catalog.py`), 구조 id 에
+    매달아 두면 코드를 한 번 고칠 때마다 조건도 함께 사라진다. 사용자가 기억하는
+    단위는 "내 nmos 설정" 이지 특정 실행이 아니다.
+
+    조건이 지금 구조에 안 맞으면(계면 이름이 달라졌다든지) 읽는 쪽에서 버리고
+    기본값으로 돌아간다. 맞지 않는 조건을 억지로 되살리면 사용자는 자기가 짠
+    적 없는 설정을 자기 것으로 알고 읽게 된다.
+    """
+
+    __tablename__ = "devsim_states"
+
+    owner_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    source_path: Mapped[str] = mapped_column(String(1024), primary_key=True)
+    #: 해석 조건(JSON). 통째로 두는 이유는 EditorState 와 같다 — 칼럼으로 쪼개면
+    #: 조건 모양이 바뀔 때마다 마이그레이션이 따라붙는다.
+    spec: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class InviteCode(Base):
     """가입 초대 코드.
 

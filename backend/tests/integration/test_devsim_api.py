@@ -722,3 +722,146 @@ class TestSavingRuns:
             "/api/devsim/runs", json={"job_id": stolen, "label": "가"}
         )
         assert response.status_code == 404
+
+
+class TestSavedConditions:
+    """짜 둔 해석 조건을 맡아 둔다.
+
+    전극에 이름을 붙이고 계면을 붙이고 전압을 정하는 데는 손이 꽤 간다. 그런데
+    새로고침 한 번에 전부 초기값으로 돌아갔다.
+
+    열쇠는 구조 id 가 아니라 `.in` 경로다. 같은 코드를 다시 돌리면 구조는 새로
+    생기고 옛것은 지워지므로, 구조에 매달면 코드를 고칠 때마다 조건이 사라진다.
+    """
+
+    async def test_nothing_saved_yet(self, client, saved) -> None:
+        response = await client.get(f"/api/devsim/structures/{saved}/state")
+        assert response.status_code == 404
+
+    async def test_saves_and_gives_it_back(self, client, saved) -> None:
+        spec = spec_body(label="내 조건")
+        spec["electrodes"][0]["label"] = "pmos 소스"
+        spec["biases"][0]["electrode"] = "pmos 소스"
+
+        put = await client.put(
+            f"/api/devsim/structures/{saved}/state", json={"spec": spec}
+        )
+        assert put.status_code == 204
+
+        body = (await client.get(f"/api/devsim/structures/{saved}/state")).json()
+        assert body["spec"]["label"] == "내 조건"
+        assert body["spec"]["electrodes"][0]["label"] == "pmos 소스"
+
+    async def test_saving_twice_replaces(self, client, saved) -> None:
+        await client.put(
+            f"/api/devsim/structures/{saved}/state",
+            json={"spec": spec_body(label="하나")},
+        )
+        await client.put(
+            f"/api/devsim/structures/{saved}/state",
+            json={"spec": spec_body(label="둘")},
+        )
+        body = (await client.get(f"/api/devsim/structures/{saved}/state")).json()
+        assert body["spec"]["label"] == "둘"
+
+    async def test_a_rerun_keeps_the_conditions(
+        self, app, client, tmp_path, saved
+    ) -> None:
+        """같은 `.in` 을 다시 돌려 구조가 새것으로 바뀌어도 조건은 남는다.
+
+        사용자가 기억하는 단위는 "내 nmos 설정" 이지 특정 실행이 아니다.
+        """
+        await client.put(
+            f"/api/devsim/structures/{saved}/state",
+            json={"spec": spec_body(label="내 조건")},
+        )
+
+        # 같은 `.in` 을 다시 돌린다. 워커는 그 `.in` 의 옛 구조를 지우고 새로
+        # 넣는다(`app/devsim/catalog.py`).
+        async with app.state.sessionmaker() as session:
+            await session.execute(
+                delete(SavedStructure).where(
+                    SavedStructure.source_path == "contacts.in"
+                )
+            )
+            await session.commit()
+        again = await store_structure(app, tmp_path, "contacts.in", "contacts.str")
+        body = (await client.get(f"/api/devsim/structures/{again}/state")).json()
+        assert body["spec"]["label"] == "내 조건"
+
+    async def test_conditions_do_not_leak_across_source_files(
+        self, app, client, tmp_path, saved
+    ) -> None:
+        await client.put(
+            f"/api/devsim/structures/{saved}/state",
+            json={"spec": spec_body(label="내 조건")},
+        )
+        other = await store_structure(app, tmp_path, "other.in", "other.str")
+        assert (
+            await client.get(f"/api/devsim/structures/{other}/state")
+        ).status_code == 404
+
+    async def test_conditions_that_no_longer_fit_are_dropped(
+        self, client, saved
+    ) -> None:
+        """구조가 달라져 계면이 안 맞으면 버리고 기본값으로 돌아간다.
+
+        맞지 않는 조건을 억지로 되살리면, 사용자는 자기가 짠 적 없는 설정을
+        자기 것으로 알고 읽게 된다.
+        """
+        spec = spec_body()
+        spec["electrodes"][0]["interfaces"] = ["source"]
+        await client.put(
+            f"/api/devsim/structures/{saved}/state", json={"spec": spec}
+        )
+        assert (
+            await client.get(f"/api/devsim/structures/{saved}/state")
+        ).status_code == 200
+
+        # 이제 없는 계면을 가리키도록 손으로 망가뜨린다.
+        broken = spec_body()
+        broken["electrodes"][0]["interfaces"] = ["collector"]
+        put = await client.put(
+            f"/api/devsim/structures/{saved}/state", json={"spec": broken}
+        )
+        # 애초에 저장 단계에서 막는다 — 못 쓸 조건을 맡아 둘 이유가 없다.
+        assert put.status_code == 422
+
+    async def test_a_broken_spec_is_refused(self, client, saved) -> None:
+        spec = spec_body()
+        spec["biases"][3]["role"] = "const"
+        spec["biases"][3]["value"] = 1.0
+        response = await client.put(
+            f"/api/devsim/structures/{saved}/state", json={"spec": spec}
+        )
+        assert response.status_code == 422
+
+    async def test_someone_elses_structure_is_not_found(
+        self, app, client, tmp_path
+    ) -> None:
+        async with app.state.sessionmaker() as session:
+            other = User(email="erin@example.com", password_hash="x", role="user")
+            session.add(other)
+            await session.flush()
+            row = SavedStructure(
+                owner_id=other.id,
+                source_path="theirs.in",
+                job_id=None,
+                sequence=1,
+                filename="theirs.str",
+                path=str(tmp_path / "theirs.str"),
+                size_bytes=10,
+            )
+            session.add(row)
+            await session.commit()
+            stolen = row.id
+
+        assert (
+            await client.get(f"/api/devsim/structures/{stolen}/state")
+        ).status_code == 404
+        assert (
+            await client.put(
+                f"/api/devsim/structures/{stolen}/state",
+                json={"spec": spec_body()},
+            )
+        ).status_code == 404

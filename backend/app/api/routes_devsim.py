@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from uuid import uuid4
 
@@ -35,7 +36,7 @@ from app.api.deps import (
 from app.api.throttle import throttle_submit
 from app.auth.models import Session
 from app.core.config import Settings
-from app.db.models import DevSimResult, Job, JobKind, SavedStructure
+from app.db.models import DevSimResult, DevSimState, Job, JobKind, SavedStructure
 from app.devsim.electrodes import Electrode, GateModel, detect_interfaces
 from app.devsim.resolve import ElectrodeNotFound, resolve_electrodes
 from app.devsim.screening import analysable
@@ -47,6 +48,8 @@ from app.plotting.loader import load_structure
 from app.plotting.surface import build_surface
 from app.str_parser.errors import StructureFormatError
 from app.str_parser.models import Structure
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/devsim", tags=["devsim"])
 
@@ -214,6 +217,69 @@ async def interfaces(
             for found in detect_interfaces(structure, gate_model=gate_model)
         ],
     )
+
+
+class StateBody(BaseModel):
+    spec: DeviceSpec
+
+
+class StateResponse(BaseModel):
+    spec: DeviceSpec
+
+
+@router.get("/structures/{structure_id}/state")
+async def read_state(
+    saved: SavedStructure = Depends(_owned_structure),
+    db: AsyncSession = Depends(get_db),
+) -> StateResponse:
+    """맡아 둔 해석 조건. 없거나 지금 구조에 안 맞으면 404.
+
+    404 는 "기본값으로 시작하라" 는 뜻이다. 맞지 않는 조건을 억지로 되살리면
+    사용자는 자기가 짠 적 없는 설정을 자기 것으로 알고 읽게 된다.
+    """
+    row = await db.get(DevSimState, (saved.owner_id, saved.source_path))
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="맡아 둔 조건이 없습니다"
+        )
+    try:
+        spec = DeviceSpec.model_validate_json(row.spec)
+        resolve_electrodes(_structure(saved), spec)
+    except (ValueError, ElectrodeNotFound):
+        logger.info(
+            "맡아 둔 조건이 지금 구조에 맞지 않아 버립니다: %s", saved.source_path
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="맡아 둔 조건이 지금 구조에 맞지 않습니다",
+        ) from None
+    return StateResponse(spec=spec)
+
+
+@router.put("/structures/{structure_id}/state", status_code=status.HTTP_204_NO_CONTENT)
+async def write_state(
+    payload: StateBody,
+    saved: SavedStructure = Depends(_owned_structure),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """해석 조건을 맡아 둔다. 지금 구조에 안 맞으면 거절한다.
+
+    못 쓸 조건을 맡아 두면, 다음에 열었을 때 조용히 버려지는 것으로 끝난다 —
+    저장이 된 줄 알았던 사용자에게는 그것이 곧 데이터를 잃은 일이다.
+    """
+    try:
+        resolve_electrodes(_structure(saved), payload.spec)
+    except ElectrodeNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)
+        ) from error
+
+    row = await db.get(DevSimState, (saved.owner_id, saved.source_path))
+    if row is None:
+        row = DevSimState(owner_id=saved.owner_id, source_path=saved.source_path)
+        db.add(row)
+    row.spec = payload.spec.model_dump_json()
+    await db.commit()
 
 
 @router.get("/structures/{structure_id}/surface")
