@@ -14,6 +14,7 @@
 import type { Bias, BiasRole, DeviceSpec } from '../../api/types'
 import { CURVE_COLORS } from './IvChart'
 import { sweepGap } from './deviceSpec'
+import { NameField } from './NameField'
 import { NumberField, NumberListField } from './NumberField'
 
 interface Props {
@@ -83,18 +84,20 @@ export function SourceEditor({
         </p>
         <ul className="electrode-list">
           {spec.electrodes.map((electrode, index) => (
-            <li key={electrode.label}>
+            // 키를 이름으로 삼지 않는다. 이름은 사용자가 고치는 값이라, 키로
+            // 쓰면 한 글자 칠 때마다 항목이 새로 만들어져 입력칸이 포커스를
+            // 잃는다(실제로 한 글자밖에 못 쳐졌다). 전극은 순서가 바뀌지
+            // 않으므로 자리 번호로 충분하다.
+            <li key={index}>
               <span
                 className="swatch"
                 style={{ background: colorOfIndex(index) }}
                 aria-hidden="true"
               />
-              <input
+              <NameField
+                label={`전극 ${index + 1} 이름`}
                 value={electrode.label}
-                aria-label={`전극 ${index + 1} 이름`}
-                onChange={(event) =>
-                  onRenameElectrode(electrode.label, event.target.value)
-                }
+                onCommit={(name) => onRenameElectrode(electrode.label, name)}
               />
               <span className="attached">
                 {electrode.interfaces.length === 0 ? (
@@ -132,21 +135,19 @@ export function SourceEditor({
         {spec.biases.map((bias, index) => (
           // data-role 을 둔다. 역할 <select> 안에는 세 선택지의 글자가 모두
           // 들어 있어, 글자로 고르면 어느 전압원이든 다 걸린다.
-          <div className="bias" data-role={bias.role} key={bias.electrode}>
+          <div className="bias" data-role={bias.role} key={index}>
             <div className="bias-head">
               <span
                 className="swatch"
                 style={{ background: colorOf.get(bias.electrode) ?? '#888' }}
                 aria-hidden="true"
               />
-              <input
+              <NameField
                 className="bias-name"
+                label={`전압원 ${index + 1} 이름`}
                 value={bias.name}
-                aria-label={`전압원 ${index + 1} 이름`}
-                onChange={(event) =>
-                  onChange(
-                    replaceBias(spec, index, { ...bias, name: event.target.value }),
-                  )
+                onCommit={(name) =>
+                  onChange(replaceBias(spec, index, { ...bias, name }))
                 }
               />
               <span className="drives" title="이 전압원이 모는 전극">

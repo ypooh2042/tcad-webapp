@@ -163,7 +163,7 @@ export function CompareView() {
   return (
     <div className="compare">
       <section className="compare-picker">
-        <h3>해석 고르기</h3>
+        <h3>해석 결과 선택</h3>
         {runs.length === 0 ? (
           <p className="hint">저장된 해석이 아직 없습니다.</p>
         ) : (
@@ -177,9 +177,8 @@ export function CompareView() {
                     onChange={() => toggle(run.job_id)}
                   />
                   <strong>{run.label}</strong>
-                  <span className="origin">
-                    {run.source_path || run.structure}
-                  </span>
+                  {/* 출처는 오른쪽 범례에만 둔다. 목록에까지 붙이면 이름이
+                      길어져 정작 고를 이름이 안 읽힌다. */}
                   {run.completed < run.total ? (
                     <em> ({run.completed}/{run.total}점)</em>
                   ) : null}

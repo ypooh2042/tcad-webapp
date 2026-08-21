@@ -309,6 +309,34 @@ test('같은 .in 을 다시 돌리면 그 구조가 갈아 끼워진다', async 
   await expect(picker).not.toContainText('contacts.str')
 })
 
+test('전극 이름을 여러 글자로 고칠 수 있다', async ({ page, context }) => {
+  // 예전에는 목록 항목의 key 가 이름이라, 한 글자 칠 때마다 항목이 새로
+  // 만들어지면서 입력칸이 포커스를 잃었다.
+  test.setTimeout(180_000)
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signUp(page, uniqueEmail('ename'))
+
+  await page.getByRole('tab', { name: /소자 해석/ }).click()
+  const name = page.getByLabel('전극 1 이름')
+  await expect(name).toHaveValue('source', { timeout: 30_000 })
+
+  await name.fill('')
+  await name.pressSequentially('pmos 소스')
+  await expect(name).toHaveValue('pmos 소스')
+
+  // 이어서 지울 수도 있어야 한다.
+  await name.press('End')
+  await name.press('Backspace')
+  await name.press('Backspace')
+  await expect(name).toHaveValue('pmos ')
+
+  // 다 치고 벗어나면 전압원이 가리키는 곳도 따라간다.
+  await name.press('Enter')
+  await expect(page.locator('.bias').first().locator('.drives')).toHaveText(
+    '→ pmos',
+  )
+})
+
 test('계면 이름을 바꾸면 전극 옆 표시도 따라간다', async ({ page, context }) => {
   test.setTimeout(180_000)
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
@@ -407,9 +435,14 @@ test('저장을 눌러야 비교 목록에 올라간다', async ({ page, context
   await expect(page.locator('.origins')).toContainText('contacts.in')
 
   // 이름을 고칠 수 있다.
+  //
+  // 한 글자씩 친다. fill() 은 통째로 넣어서, 글자마다 포커스를 잃는 종류의
+  // 결함을 못 잡는다(전극 이름 칸이 실제로 그랬다).
   await page.locator('.origins .link').click()
   const rename = page.locator('.origins input')
-  await rename.fill('얇은 산화막')
+  await rename.fill('')
+  await rename.pressSequentially('얇은 산화막')
+  await expect(rename).toHaveValue('얇은 산화막')
   await rename.press('Enter')
   await expect(page.locator('.compare-picker li').first()).toContainText(
     '얇은 산화막',

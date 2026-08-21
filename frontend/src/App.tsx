@@ -40,27 +40,16 @@ function Gate() {
   }, [])
 
   /**
-   * 화면을 옮긴다. 해석이 도는 중이면 먼저 물어본다.
+   * 화면을 옮긴다. **묻지 않는다.**
    *
-   * 잡 자체는 서버에서 계속 돈다 — 화면을 옮긴다고 멈추지 않는다. 그래도
-   * 묻는 이유는 진행률을 놓치기 쉬워서다. 옮겨도 잃지 않도록 소자 해석 화면은
-   * 내려놓지 않는다(아래 `hidden`).
+   * 한때 해석이 도는 중이면 확인창을 띄웠다. 잡은 서버에서 돌고 화면도
+   * 내려놓지 않으므로(아래 `hidden`) 옮겨도 잃는 것이 없다 — 물을 이유가
+   * 없는 확인창은 방해일 뿐이다. 도는 중이라는 것은 탭의 점(●)으로 알린다.
    */
-  const goTo = useCallback(
-    (next: View) => {
-      if (next !== 'device' && deviceBusy) {
-        const ok = window.confirm(
-          '소자 해석이 진행 중입니다.\n' +
-            '화면을 옮겨도 해석은 서버에서 계속 돌고, 돌아오면 이어서 볼 수 있습니다.\n' +
-            '옮길까요?',
-        )
-        if (!ok) return
-      }
-      if (next === 'device') setDeviceOpened(true)
-      setView(next)
-    },
-    [deviceBusy],
-  )
+  const goTo = useCallback((next: View) => {
+    if (next === 'device') setDeviceOpened(true)
+    setView(next)
+  }, [])
 
   // 확인이 끝나기 전에 로그인 화면을 띄우면, 이미 로그인한 사용자에게도
   // 한 번 깜빡이며 보인다.
