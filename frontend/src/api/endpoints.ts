@@ -1,6 +1,7 @@
 /** 백엔드 엔드포인트를 이름 있는 함수로 감싼다. 화면에서 경로 문자열을 다루지 않게. */
 import { request } from './client'
-import type { JobStatus,
+import type { JobConsole,
+  JobStatus,
   Artifact,
   DeviceSpec,
   DevSimInterfaces,
@@ -142,6 +143,13 @@ export const files = {
 
 export const jobs = {
   get: (jobId: number) => request<JobDetail>(`/api/jobs/${jobId}`),
+
+  /**
+   * 실행 출력. 잡이 끝난 뒤 한 번만 부른다 — 로그는 끝날 때 한 번 기록되므로
+   * 도는 동안 되풀이해 물을 것이 없다. 상태 조회와 나눠 둔 이유는
+   * `JobConsole` 주석 참조.
+   */
+  console: (jobId: number) => request<JobConsole>(`/api/jobs/${jobId}/console`),
 
   /** 대기 중이거나 실행 중인 잡을 멈춘다. 끝난 잡이면 서버가 409 로 거절한다. */
   cancel: (jobId: number) =>

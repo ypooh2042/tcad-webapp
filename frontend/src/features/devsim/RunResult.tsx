@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ApiError } from '../../api/client'
 import { devsim } from '../../api/endpoints'
-import type { IvDataset, IvFailure, JobDetail } from '../../api/types'
+import type { IvDataset, IvFailure, JobConsole, JobDetail } from '../../api/types'
 import { formatDuration } from '../jobs/duration'
 import { useElapsed } from '../jobs/useElapsed'
 import { dominantBias, figuresOf, seriesOf } from './figures'
@@ -39,11 +39,13 @@ const STATUS_LABEL: Record<string, string> = {
 
 interface Props {
   job: JobDetail | null
+  /** 실행 출력. 상태 조회와 나눠 받는다 — `JobConsole` 주석 참조. */
+  output?: JobConsole | null
   /** 도는 해석을 멈춘다. 큐에 있거나 도는 중일 때만 버튼이 뜬다. */
   onCancel?: () => void
 }
 
-export function RunResult({ job, onCancel }: Props) {
+export function RunResult({ job, output, onCancel }: Props) {
   const [dataset, setDataset] = useState<IvDataset | null>(null)
   const [bias, setBias] = useState<string | null>(null)
   const [logScale, setLogScale] = useState(false)
@@ -231,8 +233,8 @@ export function RunResult({ job, onCancel }: Props) {
         </>
       ) : null}
 
-      {job.log && job.status !== 'succeeded' ? (
-        <pre className="log">{job.log.slice(-4000)}</pre>
+      {output?.log && job.status !== 'succeeded' ? (
+        <pre className="log">{output.log.slice(-4000)}</pre>
       ) : null}
     </div>
   )

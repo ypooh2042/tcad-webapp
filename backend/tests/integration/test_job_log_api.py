@@ -95,8 +95,86 @@ class TestIsolation:
         assert response.status_code == 401
 
 
+class TestPollingStaysSmall:
+    """상태 조회는 로그를 싣지 않는다.
+
+    이 응답은 잡이 도는 동안 1.5 초마다 다시 받는다. 로그를 실으면 매번 실행
+    출력 전체가 따라오고, 실측으로 한 번에 97 KB 였다. 그 크기는 앞에 선
+    nginx 의 프록시 버퍼(기본 약 36 KB)를 넘겨 디스크로 흘려보내게 만드는데,
+    그 쓰기가 막히자 응답이 깨져 **완료를 영영 감지하지 못하고** 같은 요청을
+    무한히 반복했다. 로그는 따로 받는다.
+    """
+
+    async def test_detail_carries_no_log(self, app, alice, tmp_path) -> None:
+        job_id = await make_job(
+            app, alice, tmp_path, log="한참 긴 출력", write_file=True
+        )
+
+        detail = (await alice.get(f"/api/jobs/{job_id}")).json()
+
+        assert "log" not in detail
+        assert "log_truncated" not in detail
+
+    async def test_detail_still_says_how_it_ended(
+        self, app, alice, tmp_path
+    ) -> None:
+        """로그를 뺐다고 상태까지 잃으면 안 된다 — 화면이 볼 것은 이쪽이다."""
+        job_id = await make_job(app, alice, tmp_path, log="출력", write_file=True)
+
+        detail = (await alice.get(f"/api/jobs/{job_id}")).json()
+
+        assert detail["status"] == JobStatus.SUCCEEDED.value
+        assert detail["exit_code"] == 0
+
+
+class TestConsole:
+    """화면에 뿌릴 로그. 잡이 끝난 뒤 한 번만 받는다."""
+
+    async def test_owner_reads_the_stored_log(
+        self, app, alice, tmp_path
+    ) -> None:
+        job_id = await make_job(
+            app, alice, tmp_path, log="컴파일 완료", write_file=True
+        )
+
+        body = (await alice.get(f"/api/jobs/{job_id}/console")).json()
+
+        assert body["log"] == "컴파일 완료"
+        assert body["truncated"] is False
+
+    async def test_survives_cleanup(self, app, alice, tmp_path) -> None:
+        """작업디렉토리가 청소돼도 미리보기는 DB 에 남아 있다.
+
+        전문(`/log`)은 그때 410 이지만, 이쪽까지 사라지면 끝난 잡의 화면이
+        통째로 비어 버린다.
+        """
+        job_id = await make_job(
+            app, alice, tmp_path, log="남아 있어야 한다", write_file=False
+        )
+
+        body = (await alice.get(f"/api/jobs/{job_id}/console")).json()
+
+        assert body["log"] == "남아 있어야 한다"
+
+    async def test_other_user_cannot_read(
+        self, app, alice, bob, tmp_path
+    ) -> None:
+        # 로그에는 사용자가 쓴 코드가 그대로 들어 있다. 있는지조차 알리지 않는다.
+        job_id = await make_job(app, alice, tmp_path, log="비밀", write_file=True)
+
+        assert (await bob.get(f"/api/jobs/{job_id}/console")).status_code == 404
+
+    async def test_anonymous_is_rejected(self, app, alice, tmp_path) -> None:
+        job_id = await make_job(app, alice, tmp_path, log="비밀", write_file=True)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as guest:
+            assert (await guest.get(f"/api/jobs/{job_id}/console")).status_code == 401
+
+
 class TestTruncationFlag:
-    async def test_detail_reports_truncation(self, app, alice, tmp_path) -> None:
+    async def test_console_reports_truncation(self, app, alice, tmp_path) -> None:
         """화면은 이 값을 보고 전문 내려받기를 안내한다."""
         from app.runner.runner import _truncate_log
 
@@ -113,15 +191,15 @@ class TestTruncationFlag:
             await db.commit()
             job_id = job.id
 
-        detail = (await alice.get(f"/api/jobs/{job_id}")).json()
+        body = (await alice.get(f"/api/jobs/{job_id}/console")).json()
 
-        assert detail["log_truncated"] is True
+        assert body["truncated"] is True
 
     async def test_short_log_is_not_flagged(self, app, alice, tmp_path) -> None:
         job_id = await make_job(
             app, alice, tmp_path, log="짧다", write_file=True
         )
 
-        detail = (await alice.get(f"/api/jobs/{job_id}")).json()
+        body = (await alice.get(f"/api/jobs/{job_id}/console")).json()
 
-        assert detail["log_truncated"] is False
+        assert body["truncated"] is False

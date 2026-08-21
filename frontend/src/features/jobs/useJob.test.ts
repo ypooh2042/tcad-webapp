@@ -17,8 +17,6 @@ function detail(overrides: Partial<JobDetail> = {}): JobDetail {
     source_revision_id: 1,
     source_path: 'a.in',
     created_at: '2026-08-12T12:00:00+00:00',
-    log: null,
-    log_truncated: false,
     exit_code: null,
     elapsed_seconds: null,
     progress: null,
@@ -28,14 +26,19 @@ function detail(overrides: Partial<JobDetail> = {}): JobDetail {
 }
 
 // vi.mock 은 파일 맨 위로 끌어올려지므로, 목이 참조하는 값도 함께 올려야 한다.
-const { get } = vi.hoisted(() => ({ get: vi.fn() }))
+const { get, console: getConsole } = vi.hoisted(() => ({
+  get: vi.fn(),
+  console: vi.fn(),
+}))
 
-vi.mock('../../api/endpoints', () => ({ jobs: { get } }))
+vi.mock('../../api/endpoints', () => ({ jobs: { get, console: getConsole } }))
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
   get.mockReset()
   get.mockResolvedValue(detail())
+  getConsole.mockReset()
+  getConsole.mockResolvedValue({ log: '출력', truncated: false })
 })
 
 afterEach(() => {
@@ -102,5 +105,66 @@ describe('폴링', () => {
     const { result } = renderHook(() => useJob(1))
 
     await waitFor(() => expect(result.current.error).not.toBeNull())
+  })
+})
+
+
+describe('실행 출력은 따로 받는다', () => {
+  it('도는 동안에는 받지 않는다', async () => {
+    // 로그는 잡이 끝날 때 한 번 기록된다. 도는 중에 물어봐야 빈 값이고,
+    // 폴링마다 부르면 로그를 상태 조회에 실었던 옛 문제로 되돌아간다.
+    get.mockResolvedValue(detail({ status: 'running' }))
+    const { result } = renderHook(() => useJob(1))
+
+    await waitFor(() => expect(result.current.job?.status).toBe('running'))
+    expect(getConsole).not.toHaveBeenCalled()
+  })
+
+  it('끝나면 한 번 받는다', async () => {
+    get.mockResolvedValue(detail({ status: 'succeeded' }))
+    const { result } = renderHook(() => useJob(1))
+
+    await waitFor(() => expect(result.current.console?.log).toBe('출력'))
+    expect(getConsole).toHaveBeenCalledTimes(1)
+  })
+
+  it('실패한 잡의 출력도 받는다', async () => {
+    // 실패했을 때야말로 사용자가 로그를 본다.
+    get.mockResolvedValue(detail({ status: 'failed' }))
+    const { result } = renderHook(() => useJob(1))
+
+    await waitFor(() => expect(result.current.console?.log).toBe('출력'))
+  })
+
+  it('잘렸다는 표시가 함께 온다', async () => {
+    getConsole.mockResolvedValue({ log: '앞부분…', truncated: true })
+    get.mockResolvedValue(detail({ status: 'succeeded' }))
+    const { result } = renderHook(() => useJob(1))
+
+    await waitFor(() => expect(result.current.console?.truncated).toBe(true))
+  })
+
+  it('출력을 못 받아도 상태는 그대로 둔다', async () => {
+    // 로그는 곁다리다. 그것 때문에 "연결이 불안정" 이 뜨면 사용자는 잡이
+    // 실패한 줄 안다.
+    getConsole.mockRejectedValue(new Error('410'))
+    get.mockResolvedValue(detail({ status: 'succeeded' }))
+    const { result } = renderHook(() => useJob(1))
+
+    await waitFor(() => expect(result.current.job?.status).toBe('succeeded'))
+    expect(result.current.error).toBeNull()
+  })
+
+  it('잡이 바뀌면 앞의 출력을 보여주지 않는다', async () => {
+    get.mockResolvedValue(detail({ status: 'succeeded' }))
+    const { result, rerender } = renderHook(({ id }) => useJob(id), {
+      initialProps: { id: 1 },
+    })
+    await waitFor(() => expect(result.current.console?.log).toBe('출력'))
+
+    getConsole.mockResolvedValue({ log: '다른 출력', truncated: false })
+    rerender({ id: 2 })
+
+    await waitFor(() => expect(result.current.console?.log).toBe('다른 출력'))
   })
 })

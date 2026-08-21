@@ -7,19 +7,36 @@
  */
 import { useEffect, useState } from 'react'
 import { jobs } from '../../api/endpoints'
-import { isFinished, type JobDetail } from '../../api/types'
+import { isFinished, type JobConsole, type JobDetail } from '../../api/types'
 
 const POLL_INTERVAL_MS = 1500
 
 export function useJob(jobId: number | null) {
   const [job, setJob] = useState<JobDetail | null>(null)
   const [error, setError] = useState<Error | null>(null)
+  //: 실행 출력. 잡이 끝난 뒤 한 번만 받는다 — 상태 조회에 실으면 폴링마다
+  //: 출력 전체가 따라온다(`JobConsole` 주석 참조).
+  const [console, setConsole] = useState<JobConsole | null>(null)
 
   useEffect(() => {
     if (jobId === null) return
 
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | undefined
+
+    // 잡이 바뀌면 앞의 출력을 지운다. 남겨 두면 새 잡의 화면에 옛 로그가
+    // 잠깐 보인다.
+    setConsole(null)
+
+    async function loadConsole() {
+      try {
+        const body = await jobs.console(jobId!)
+        if (!cancelled) setConsole(body)
+      } catch {
+        // 출력은 곁다리다. 여기서 error 를 세우면 "연결이 불안정합니다" 가
+        // 떠서, 잡은 멀쩡히 끝났는데 실패한 것처럼 보인다.
+      }
+    }
 
     async function tick() {
       try {
@@ -28,7 +45,11 @@ export function useJob(jobId: number | null) {
         setJob(next)
         setError(null)
         // 끝난 잡은 상태가 더 바뀌지 않는다. 계속 물어봐야 같은 답이다.
-        if (isFinished(next.status)) return
+        // 출력은 끝날 때 한 번 기록되므로 이때 받으면 된다.
+        if (isFinished(next.status)) {
+          void loadConsole()
+          return
+        }
       } catch (caught) {
         if (cancelled) return
         // 워커 재시작 중에는 잠깐 실패할 수 있다. 한 번 실패했다고 멈추면
@@ -54,5 +75,5 @@ export function useJob(jobId: number | null) {
     setJob((current) => (current ? { ...current, status } : current))
   }
 
-  return { job, error, applyStatus }
+  return { job, error, console, applyStatus }
 }

@@ -56,11 +56,12 @@ class JobResponse(BaseModel):
 
 
 class JobDetailResponse(JobResponse):
-    log: str | None
-    #: 위 log 가 상한에 걸려 잘렸는지. 참이면 화면이 전문 내려받기를 안내한다.
-    #: 잘렸다는 말 없이 보여 주면 사용자는 로그가 그게 전부인 줄 알고 없는
-    #: 원인을 찾는다.
-    log_truncated: bool = False
+    #: **로그는 여기 싣지 않는다.** 이 응답은 잡이 도는 동안 1.5 초마다 다시
+    #: 받는다. 로그를 실으면 매번 실행 출력 전체가 따라오고, 실측으로 한 번에
+    #: 97 KB 였다 — 앞에 선 nginx 의 프록시 버퍼(기본 약 36 KB)를 넘겨 디스크로
+    #: 흘려보내게 만드는 크기다. 그 쓰기가 막히자 응답이 깨져 완료를 영영
+    #: 감지하지 못하고 같은 요청을 무한히 반복했다. 로그는 `/console` 로 따로,
+    #: 끝난 뒤 한 번만 받는다.
     exit_code: int | None
     #: 제출 시각. 화면은 잡 번호 대신 이걸로 실행을 가리킨다 — 번호는 전체
     #: 사용자가 공유하는 기본키라 혼자 두 번 돌려도 건너뛴다.
@@ -216,8 +217,6 @@ async def detail(
         created_at=_aware(job.created_at),
         elapsed_seconds=_elapsed_seconds(job),
         progress=_progress(job),
-        log=job.log,
-        log_truncated=was_truncated(job.log),
         exit_code=job.exit_code,
         artifacts=[
             ArtifactResponse(
@@ -259,6 +258,27 @@ async def cancel(
         status=JobStatus.CANCELLED.value,
         source_revision_id=job.source_revision_id,
     )
+
+
+class ConsoleResponse(BaseModel):
+    """화면에 뿌릴 실행 출력."""
+
+    #: DB 에 보관한 미리보기. 작업디렉토리가 청소돼도 남는다.
+    log: str | None
+    #: 위 log 가 상한에 걸려 잘렸는지. 참이면 화면이 전문 내려받기를 안내한다.
+    #: 잘렸다는 말 없이 보여 주면 사용자는 로그가 그게 전부인 줄 알고 없는
+    #: 원인을 찾는다.
+    truncated: bool = False
+
+
+@router.get("/jobs/{job_id}/console", response_model=ConsoleResponse)
+async def console(job: Job = Depends(owned_job)) -> ConsoleResponse:
+    """실행 출력. 상태 조회와 나눠 둔 이유는 `JobDetailResponse` 주석 참조.
+
+    로그는 잡이 끝날 때 한 번 기록되므로(`app/jobs/queue.py finish`), 도는
+    동안 여기를 되풀이해 부를 이유가 없다. 화면은 끝난 뒤 한 번만 받는다.
+    """
+    return ConsoleResponse(log=job.log, truncated=was_truncated(job.log))
 
 
 @router.get("/jobs/{job_id}/log", response_class=PlainTextResponse)

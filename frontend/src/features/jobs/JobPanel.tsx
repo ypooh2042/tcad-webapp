@@ -57,7 +57,7 @@ export function JobPanel({
   /** 결과 구조를 소자 해석으로 넘기는 신호. 없으면 버튼이 안 뜬다. */
   onAnalyse?: (jobId: number, sequence: number) => void
 }) {
-  const { job, error, applyStatus } = useJob(jobId)
+  const { job, error, console: output, applyStatus } = useJob(jobId)
   //: 실패한 잡에서는 로그가 전부다. 그때 차트 자리를 비켜 주면 한 화면에
   //: 더 많이 들어온다.
   const [logOnly, setLogOnly] = useState(false)
@@ -124,7 +124,7 @@ export function JobPanel({
             중단
           </button>
         )}
-        {job?.log_truncated ? (
+        {output?.truncated ? (
           /* 잘린 경우에만 띄운다. 늘 있으면 안내가 아니라 잡음이 된다. */
           <a className="link" href={jobs.logUrl(jobId)} download>
             로그 전문 내려받기
@@ -149,7 +149,7 @@ export function JobPanel({
 
       {/* 로그에는 사용자가 쓴 코드가 그대로 들어 있다. textContent 로만 넣는다. */}
       <pre className={logOnly ? 'log expanded' : 'log'}>
-        {job?.log ?? '아직 출력이 없습니다.'}
+        {output?.log ?? '아직 출력이 없습니다.'}
       </pre>
     </div>
   )

@@ -91,7 +91,7 @@ export function DevSimPage({
   const [tab, setTab] = useState<'run' | 'compare'>('run')
   const [runWidth, setRunWidth] = usePanelWidth('tcad.width.devsim', 420)
 
-  const { job, applyStatus } = useJob(jobId)
+  const { job, console: output, applyStatus } = useJob(jobId)
 
   useEffect(() => {
     if (!active) return
@@ -433,7 +433,7 @@ export function DevSimPage({
               </ul>
             ) : null}
             {message ? <p className="error">{message}</p> : null}
-            <RunResult job={job} onCancel={stop} />
+            <RunResult job={job} output={output} onCancel={stop} />
           </aside>
         </div>
       )}

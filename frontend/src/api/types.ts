@@ -45,13 +45,24 @@ export interface Artifact {
   size_bytes: number
 }
 
-export interface JobDetail extends Job {
+/**
+ * 실행 출력. **상태 조회와 나눠 두었다.**
+ *
+ * 상태 조회는 잡이 도는 동안 1.5 초마다 다시 받는다. 거기에 로그를 실으면
+ * 매번 출력 전체가 따라오고, 실측으로 한 번에 97 KB 였다 — 앞에 선 nginx 의
+ * 프록시 버퍼를 넘겨 디스크로 흘려보내게 만드는 크기다. 그 쓰기가 막히자
+ * 응답이 깨져 완료를 영영 감지하지 못하고 같은 요청을 무한히 반복했다.
+ */
+export interface JobConsole {
   log: string | null
   /**
    * 위 log 가 상한에 걸려 잘렸는지. 참이면 화면이 전문 내려받기를 안내한다.
    * 잘렸다는 말 없이 보여 주면 사용자는 로그가 그게 전부인 줄 안다.
    */
-  log_truncated: boolean
+  truncated: boolean
+}
+
+export interface JobDetail extends Job {
   exit_code: number | null
   /** 제출 시각(시간대 포함). 화면은 잡 번호 대신 이걸로 실행을 가리킨다. */
   created_at: string

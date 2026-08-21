@@ -4,13 +4,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { JobPanel } from './JobPanel'
 import type { JobDetail } from '../../api/types'
 
-const { get, cancel, logUrl, plot } = vi.hoisted(() => ({
+const { get, cancel, getConsole, logUrl, plot } = vi.hoisted(() => ({
   get: vi.fn(),
   cancel: vi.fn(),
+  getConsole: vi.fn(),
   logUrl: (jobId: number) => `/api/jobs/${jobId}/log`,
   plot: { summary: vi.fn(), profile: vi.fn(), surface: vi.fn() },
 }))
-vi.mock('../../api/endpoints', () => ({ jobs: { get, cancel, logUrl }, plot }))
+vi.mock('../../api/endpoints', () => ({
+  jobs: { get, cancel, console: getConsole, logUrl },
+  plot,
+}))
+
+/** 실행 출력을 세운다. 상태 조회와 나눠 받으므로 따로 준비한다. */
+function output(log: string | null, truncated = false) {
+  getConsole.mockResolvedValue({ log, truncated })
+}
 
 function detail(overrides: Partial<JobDetail> = {}): JobDetail {
   return {
@@ -20,8 +29,6 @@ function detail(overrides: Partial<JobDetail> = {}): JobDetail {
     source_revision_id: 1,
     source_path: 'a.in',
     created_at: '2026-08-12T12:00:00+00:00',
-    log: null,
-    log_truncated: false,
     exit_code: 0,
     elapsed_seconds: null,
     progress: null,
@@ -32,6 +39,8 @@ function detail(overrides: Partial<JobDetail> = {}): JobDetail {
 
 beforeEach(() => {
   get.mockReset()
+  getConsole.mockReset()
+  getConsole.mockResolvedValue({ log: null, truncated: false })
   cancel.mockReset()
   cancel.mockResolvedValue({ id: 42, status: 'cancelled' })
   get.mockResolvedValue(detail())
@@ -85,7 +94,8 @@ describe('상태 표시', () => {
 
 describe('결과', () => {
   it('로그를 보여준다', async () => {
-    get.mockResolvedValue(detail({ log: 'Mesh statistics' }))
+    output('Mesh statistics')
+    get.mockResolvedValue(detail())
 
     render(<JobPanel jobId={42} />)
 
@@ -144,8 +154,10 @@ describe('결과', () => {
 })
 
 describe('로그 공간', () => {
-  const withArtifacts = () =>
-    detail({ log: '실행 로그', artifacts: [{ sequence: 1, filename: 'a.str', size_bytes: 10 }] })
+  const withArtifacts = () => {
+    output('실행 로그')
+    return detail({ artifacts: [{ sequence: 1, filename: 'a.str', size_bytes: 10 }] })
+  }
 
   it('결과가 있으면 로그만 보기 버튼이 있다', async () => {
     get.mockResolvedValue(withArtifacts())
@@ -177,7 +189,8 @@ describe('로그 공간', () => {
   })
 
   it('결과가 없으면 버튼도 없다', async () => {
-    get.mockResolvedValue(detail({ log: '실패 로그', artifacts: [] }))
+    output('실패 로그')
+    get.mockResolvedValue(detail({ artifacts: [] }))
 
     render(<JobPanel jobId={42} />)
     await screen.findByText('실패 로그')
@@ -298,7 +311,8 @@ describe('로그가 잘렸을 때', () => {
   it('전문 내려받기를 안내한다', async () => {
     // 잘렸다는 말 없이 보여 주면 사용자는 로그가 그게 전부인 줄 알고
     // 없는 원인을 찾는다.
-    get.mockResolvedValue(detail({ log: '앞부분…', log_truncated: true }))
+    output('앞부분…', true)
+    get.mockResolvedValue(detail())
 
     render(<JobPanel jobId={42} />)
 
@@ -307,7 +321,8 @@ describe('로그가 잘렸을 때', () => {
   })
 
   it('잘리지 않았으면 안내하지 않는다', async () => {
-    get.mockResolvedValue(detail({ log: '짧은 로그', log_truncated: false }))
+    output('짧은 로그', false)
+    get.mockResolvedValue(detail())
 
     render(<JobPanel jobId={42} />)
 
