@@ -127,6 +127,31 @@ export function CompareView() {
     }
   }
 
+  /**
+   * 저장한 해석을 지운다.
+   *
+   * 되돌릴 수 없으므로 먼저 묻는다. 곡선은 잡 산출물에도 남아 있지만 그쪽은
+   * 청소에 지워지므로, 여기서 지운 것은 사실상 사라진다.
+   */
+  async function forget(run: DevSimRunSummary) {
+    const ok = window.confirm(
+      `"${run.label}" 을(를) 비교 목록에서 지웁니다.\n되돌릴 수 없습니다.`,
+    )
+    if (!ok) return
+    try {
+      await devsim.forget(run.job_id)
+    } catch {
+      // 이미 지워졌을 수 있다. 화면에서도 치우는 것이 맞다.
+    }
+    setRuns((list) => list.filter((one) => one.job_id !== run.job_id))
+    setChosen((current) => current.filter((one) => one !== run.job_id))
+    setLoaded((map) => {
+      const next = new Map(map)
+      next.delete(run.job_id)
+      return next
+    })
+  }
+
   function toggle(id: number) {
     setChosen((current) =>
       current.includes(id)
@@ -152,11 +177,21 @@ export function CompareView() {
                     onChange={() => toggle(run.job_id)}
                   />
                   <strong>{run.label}</strong>
-                  <span className="origin">{run.structure}</span>
+                  <span className="origin">
+                    {run.source_path || run.structure}
+                  </span>
                   {run.completed < run.total ? (
                     <em> ({run.completed}/{run.total}점)</em>
                   ) : null}
                 </label>
+                <button
+                  type="button"
+                  className="ghost"
+                  aria-label={`${run.label} 지우기`}
+                  onClick={() => void forget(run)}
+                >
+                  ×
+                </button>
               </li>
             ))}
           </ul>

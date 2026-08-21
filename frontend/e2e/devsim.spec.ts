@@ -414,6 +414,15 @@ test('저장을 눌러야 비교 목록에 올라간다', async ({ page, context
   await expect(page.locator('.compare-picker li').first()).toContainText(
     '얇은 산화막',
   )
+
+  // 지울 수도 있다. 되돌릴 수 없으므로 먼저 묻는다.
+  page.once('dialog', (dialog) => dialog.dismiss())
+  await page.getByRole('button', { name: /얇은 산화막 지우기/ }).click()
+  await expect(page.locator('.compare-picker li')).toHaveCount(1)
+
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: /얇은 산화막 지우기/ }).click()
+  await expect(page.getByText('저장된 해석이 아직 없습니다')).toBeVisible()
 })
 
 test('전류 단위가 µA/µm 로 나온다', async ({ page, context }) => {
