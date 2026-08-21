@@ -284,6 +284,11 @@ export interface DeviceSpec {
   biases: Bias[]
   gate_model?: GateModel
   temperature_k?: number
+  /**
+   * 계면에 사용자가 붙인 이름. 열쇠는 그대로 두고 표시만 바꾼다 — 열쇠는
+   * 구조에서 나온 신원이라 바꾸면 다음 실행에서 못 찾는다.
+   */
+  interface_names?: Record<string, string>
 }
 
 /** 바이어스 점 하나의 결과. */
@@ -294,11 +299,20 @@ export interface IvRow {
   currents: Record<string, number>
 }
 
+/** 수렴에 실패해 건너뛴 점. 조용히 빼면 값이 없다는 것도 모른 채 곡선을 읽는다. */
+export interface IvFailure {
+  sweep: number | null
+  steps: Record<string, number>
+  reason: string
+}
+
 export interface IvDataset {
   sweep: string | null
   biases: string[]
   current_unit: string
   rows: IvRow[]
+  /** 안 풀려 건너뛴 점들. 비어 있으면 전부 풀린 것이다. */
+  failures?: IvFailure[]
   total: number
   completed: number
   /** 도중에 멈췄으면 그 사유. 부분 곡선은 rows 에 남아 있다. */
@@ -319,11 +333,22 @@ export interface DevSimRunDetail extends DevSimRunSummary {
   data: IvDataset
 }
 
+/** 보관해 둔 구조 하나. */
+export interface SavedStructure {
+  id: number
+  filename: string
+  /** 공정 단계 순서. 결과 화면에서 넘어올 때 짝을 찾는 데 쓴다. */
+  sequence: number
+  /** 만들어 낸 잡. 잡이 지워졌으면 비어 있다. */
+  job_id: number | null
+  size_bytes: number
+}
+
+/** `.in` 하나에서 나온 구조들. */
 export interface StructureSource {
-  job_id: number
-  source_path: string | null
+  source_path: string
   created_at: string
-  artifacts: { sequence: number; filename: string }[]
+  structures: SavedStructure[]
 }
 
 export interface DevSimSubmitResponse {

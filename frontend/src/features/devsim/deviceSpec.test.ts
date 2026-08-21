@@ -4,11 +4,13 @@ import {
   addElectrode,
   assignInterface,
   defaultSpec,
+  nameOfInterface,
   ownerOf,
   pointCount,
   problemsOf,
   removeElectrode,
   renameElectrode,
+  renameInterface,
   unassignInterface,
 } from './deviceSpec'
 
@@ -272,5 +274,50 @@ describe('problemsOf', () => {
       ),
     }
     expect(problemsOf(spec).length).toBeGreaterThan(0)
+  })
+})
+
+describe('계면 이름', () => {
+  const base = defaultSpec(MOSFET)
+
+  it('붙인 이름이 없으면 열쇠를 그대로 쓴다', () => {
+    expect(nameOfInterface(base, 'gate')).toBe('gate')
+  })
+
+  it('이름을 붙이면 그것을 쓴다', () => {
+    const spec = renameInterface(base, 'gate', '게이트 접촉')
+    expect(nameOfInterface(spec, 'gate')).toBe('게이트 접촉')
+  })
+
+  it('열쇠는 그대로 둔다', () => {
+    // 열쇠는 구조에서 나온 신원이다. 바꾸면 다음 실행에서 못 찾는다.
+    const spec = renameInterface(base, 'gate', '게이트 접촉')
+    expect(spec.electrodes.find((e) => e.label === 'gate')?.interfaces).toEqual([
+      'gate',
+    ])
+  })
+
+  it('치는 도중의 공백을 잘라내지 않는다', () => {
+    // 즉시 다듬으면 "기판 " 이 "기판" 이 되어 공백을 칠 수 없다. 두 단어짜리
+    // 이름을 아예 못 쓰게 된다.
+    const spec = renameInterface(base, 'body', '기판 ')
+    expect(nameOfInterface(spec, 'body')).toBe('기판 ')
+  })
+
+  it('빈 이름은 저장하지 않는다', () => {
+    const named = renameInterface(base, 'gate', '게이트')
+    const cleared = renameInterface(named, 'gate', '  ')
+    expect(cleared.interface_names).toEqual({})
+    expect(nameOfInterface(cleared, 'gate')).toBe('gate')
+  })
+
+  it('열쇠와 같은 이름도 저장하지 않는다', () => {
+    expect(renameInterface(base, 'gate', 'gate').interface_names).toEqual({})
+  })
+
+  it('원본을 바꾸지 않는다', () => {
+    const before = JSON.stringify(base)
+    renameInterface(base, 'gate', '게이트')
+    expect(JSON.stringify(base)).toBe(before)
   })
 })

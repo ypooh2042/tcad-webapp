@@ -212,6 +212,33 @@ export function renameElectrode(
   }
 }
 
+/**
+ * 계면에 보여줄 이름. 사용자가 붙인 것이 있으면 그것, 없으면 구조에서 나온 열쇠.
+ *
+ * 열쇠 자체는 절대 바꾸지 않는다. 그것이 구조에서 나온 신원이라, 바꾸면 다음
+ * 실행에서 같은 계면을 못 찾는다.
+ */
+export function nameOfInterface(spec: DeviceSpec, key: string): string {
+  return spec.interface_names?.[key] ?? key
+}
+
+export function renameInterface(
+  spec: DeviceSpec,
+  key: string,
+  name: string,
+): DeviceSpec {
+  const names = { ...(spec.interface_names ?? {}) }
+  // 빈 이름이나 열쇠와 같은 이름은 저장하지 않는다. 그대로 두면 스펙에
+  // 아무 뜻도 없는 항목이 쌓이고 비교 화면에 "다름" 으로 뜬다.
+  //
+  // **여기서 다듬지 않는다.** 치는 도중의 `"기판 "` 을 즉시 `"기판"` 으로
+  // 만들면 공백을 칠 수 없어 두 단어 이름을 못 쓴다. 다듬는 것은 다 치고 난
+  // 뒤(입력칸에서 벗어날 때) 한 번이다.
+  if (!name.trim() || name === key) delete names[key]
+  else names[key] = name.slice(0, 32)
+  return { ...spec, interface_names: names }
+}
+
 /** 제출을 막을 이유들. 비어 있으면 보낼 수 있다. */
 export function problemsOf(spec: DeviceSpec): string[] {
   const problems: string[] = []

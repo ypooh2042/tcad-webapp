@@ -20,7 +20,15 @@ from app.api import routes_auth, routes_devsim
 from app.auth.policy import SessionPolicy
 from app.auth.store import InMemorySessionStore
 from app.core.config import Settings
-from app.db.models import Artifact, Base, DevSimResult, Job, JobKind, JobStatus, User
+from app.db.models import (
+    Base,
+    DevSimResult,
+    Job,
+    JobKind,
+    JobStatus,
+    SavedStructure,
+    User,
+)
 from app.jobs.queue import JobQueue
 from tests.helpers import register
 
@@ -105,42 +113,53 @@ async def owner_id(app) -> int:
 
 
 @pytest.fixture
-async def structure_job(app, tmp_path):
-    """알루미늄 전극이 있는 구조를 산출물로 가진 잡."""
-    workdir = tmp_path / "source-job"
-    workdir.mkdir()
-    target = workdir / "contacts.str"
-    target.write_text((FIXTURES / "2d_contacts.str").read_text())
+async def saved(app, tmp_path):
+    """알루미늄 전극이 있는 보관 구조 하나.
+
+    잡 산출물이 아니라 보관소를 쓴다. 산출물은 스윕에 지워지므로, 공정을 돌린
+    다음 날 해석하려면 보관본이 있어야 한다(`app/devsim/catalog.py`).
+    """
+    return await store_structure(app, tmp_path, "contacts.in", "contacts.str")
+
+
+async def store_structure(
+    app, tmp_path, source_path: str, filename: str, fixture: str = "2d_contacts.str"
+) -> int:
+    folder = tmp_path / "store" / source_path
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / filename
+    target.write_text((FIXTURES / fixture).read_text())
 
     async with app.state.sessionmaker() as session:
         job = Job(
             owner_id=await owner_id(app),
-            source_path="contacts.in",
+            source_path=source_path,
             source="init boron conc=1e15\n",
             status=JobStatus.SUCCEEDED,
-            workdir=str(workdir),
+            workdir=str(folder),
         )
         session.add(job)
         await session.flush()
-        session.add(
-            Artifact(
-                job_id=job.id,
-                filename=target.name,
-                path=str(target),
-                size_bytes=target.stat().st_size,
-                sequence=1,
-            )
+        row = SavedStructure(
+            owner_id=job.owner_id,
+            source_path=source_path,
+            job_id=job.id,
+            sequence=1,
+            filename=filename,
+            path=str(target),
+            size_bytes=target.stat().st_size,
         )
+        session.add(row)
         await session.commit()
-        return job.id
+        return row.id
 
 
 class TestInterfaces:
     async def test_finds_source_gate_drain_and_backside(
-        self, client, structure_job
+        self, client, saved
     ) -> None:
         response = await client.get(
-            f"/api/devsim/jobs/{structure_job}/artifacts/1/interfaces"
+            f"/api/devsim/structures/{saved}/interfaces"
         )
         assert response.status_code == 200
         body = response.json()
@@ -155,11 +174,11 @@ class TestInterfaces:
         return {e["key"]: e for e in body["interfaces"]}
 
     async def test_reports_where_each_electrode_sits(
-        self, client, structure_job
+        self, client, saved
     ) -> None:
         body = (
             await client.get(
-                f"/api/devsim/jobs/{structure_job}/artifacts/1/interfaces"
+                f"/api/devsim/structures/{saved}/interfaces"
             )
         ).json()
         found = self._by_key(body)
@@ -167,10 +186,10 @@ class TestInterfaces:
         assert found["source"]["extent"]["x_max"] <= found["gate"]["extent"]["x_min"]
         assert found["body"]["origin"] == "backside"
 
-    async def test_gives_segments_to_draw(self, client, structure_job) -> None:
+    async def test_gives_segments_to_draw(self, client, saved) -> None:
         body = (
             await client.get(
-                f"/api/devsim/jobs/{structure_job}/artifacts/1/interfaces"
+                f"/api/devsim/structures/{saved}/interfaces"
             )
         ).json()
         for electrode in body["interfaces"]:
@@ -179,11 +198,11 @@ class TestInterfaces:
             assert electrode["edge_count"] == len(electrode["segments"])
 
     async def test_conductor_mode_changes_the_gate(
-        self, client, structure_job
+        self, client, saved
     ) -> None:
         body = (
             await client.get(
-                f"/api/devsim/jobs/{structure_job}/artifacts/1/interfaces",
+                f"/api/devsim/structures/{saved}/interfaces",
                 params={"gate_model": "conductor"},
             )
         ).json()
@@ -207,17 +226,17 @@ class TestInterfaces:
             stolen = job.id
 
         response = await client.get(
-            f"/api/devsim/jobs/{stolen}/artifacts/1/interfaces"
+            f"/api/devsim/structures/{stolen}/interfaces"
         )
         # 403 이면 남의 잡이 존재한다는 사실이 새어 나간다.
         assert response.status_code == 404
 
 
 class TestSubmit:
-    async def test_queues_a_devsim_job(self, app, client, structure_job) -> None:
+    async def test_queues_a_devsim_job(self, app, client, saved) -> None:
         response = await client.post(
             "/api/devsim/jobs",
-            json={"job_id": structure_job, "sequence": 1, "spec": spec_body()},
+            json={"structure_id": saved, "spec": spec_body()},
         )
         assert response.status_code == 201
         body = response.json()
@@ -229,13 +248,13 @@ class TestSubmit:
             assert job.kind == JobKind.DEVSIM
 
     async def test_copies_the_structure_into_the_job_directory(
-        self, app, client, structure_job
+        self, app, client, saved
     ) -> None:
         """원본 잡의 산출물은 청소에 지워질 수 있다. 입력 스냅샷이 필요하다."""
         body = (
             await client.post(
                 "/api/devsim/jobs",
-                json={"job_id": structure_job, "sequence": 1, "spec": spec_body()},
+                json={"structure_id": saved, "spec": spec_body()},
             )
         ).json()
         async with app.state.sessionmaker() as session:
@@ -245,12 +264,12 @@ class TestSubmit:
         assert copied.read_text() == (FIXTURES / "2d_contacts.str").read_text()
 
     async def test_records_which_structure_it_came_from(
-        self, app, client, structure_job
+        self, app, client, saved
     ) -> None:
         body = (
             await client.post(
                 "/api/devsim/jobs",
-                json={"job_id": structure_job, "sequence": 1, "spec": spec_body()},
+                json={"structure_id": saved, "spec": spec_body()},
             )
         ).json()
         async with app.state.sessionmaker() as session:
@@ -258,14 +277,13 @@ class TestSubmit:
         assert json.loads(job.source)["structure"] == "contacts.str"
 
     async def test_the_client_cannot_forge_the_structure_name(
-        self, app, client, structure_job
+        self, app, client, saved
     ) -> None:
         body = (
             await client.post(
                 "/api/devsim/jobs",
                 json={
-                    "job_id": structure_job,
-                    "sequence": 1,
+                    "structure_id": saved,
                     "spec": spec_body(structure="어딘가 다른 곳.str"),
                 },
             )
@@ -275,45 +293,45 @@ class TestSubmit:
         assert json.loads(job.source)["structure"] == "contacts.str"
 
     async def test_rejects_an_electrode_that_is_not_there(
-        self, client, structure_job
+        self, client, saved
     ) -> None:
         spec = spec_body()
         spec["electrodes"][0]["interfaces"] = ["collector"]
         response = await client.post(
             "/api/devsim/jobs",
-            json={"job_id": structure_job, "sequence": 1, "spec": spec},
+            json={"structure_id": saved, "spec": spec},
         )
         assert response.status_code == 422
         assert "collector" in response.json()["detail"]
 
     async def test_rejects_a_spec_with_two_sweeps(
-        self, client, structure_job
+        self, client, saved
     ) -> None:
         spec = spec_body()
         spec["biases"][2]["role"] = "sweep"
         spec["biases"][2]["sweep"] = {"start": 0.0, "stop": 1.0, "step": 0.5}
         response = await client.post(
             "/api/devsim/jobs",
-            json={"job_id": structure_job, "sequence": 1, "spec": spec},
+            json={"structure_id": saved, "spec": spec},
         )
         assert response.status_code == 422
 
     async def test_rejects_too_many_bias_points(
-        self, client, structure_job
+        self, client, saved
     ) -> None:
         spec = spec_body()
         spec["biases"][3]["sweep"] = {"start": 0.0, "stop": 90.0, "step": 0.5}
         spec["biases"][2]["values"] = [float(v) for v in range(8)]
         response = await client.post(
             "/api/devsim/jobs",
-            json={"job_id": structure_job, "sequence": 1, "spec": spec},
+            json={"structure_id": saved, "spec": spec},
         )
         assert response.status_code == 422
 
-    async def test_missing_artifact_is_not_found(self, client, structure_job) -> None:
+    async def test_an_unknown_structure_is_not_found(self, client, saved) -> None:
         response = await client.post(
             "/api/devsim/jobs",
-            json={"job_id": structure_job, "sequence": 99, "spec": spec_body()},
+            json={"structure_id": 99999, "spec": spec_body()},
         )
         assert response.status_code == 404
 
@@ -359,124 +377,147 @@ class TestRuns:
         assert body["spec"]["label"] == "기본 조건"
 
     async def test_a_job_without_a_result_is_not_found(
-        self, app, client, structure_job
+        self, app, client
     ) -> None:
-        response = await client.get(f"/api/devsim/runs/{structure_job}")
-        assert response.status_code == 404
+        async with app.state.sessionmaker() as session:
+            job = Job(
+                owner_id=await owner_id(app),
+                status=JobStatus.SUCCEEDED,
+                workdir="/tmp/none",
+            )
+            session.add(job)
+            await session.commit()
+            plain = job.id
+        assert (await client.get(f"/api/devsim/runs/{plain}")).status_code == 404
 
 
 class TestStructures:
-    """DevSim 탭을 바로 열었을 때 고를 구조 목록.
+    """보관해 둔 구조 목록.
 
-    공정 결과에서 "소자 해석" 버튼으로 넘어오는 것이 주 경로지만, 탭을 직접
-    열 수도 있어야 한다. `.str` 은 작업공간 파일 목록에 안 나오므로
-    (`app/workspace/service.py`) 잡 산출물에서 뽑아 준다.
+    전극이 있는지 가려내는 일은 여기서 하지 않는다. 워커가 공정을 끝낼 때
+    한 번만 하고 결과를 남긴다(`app/devsim/catalog.py`) — 목록을 열 때마다
+    산출물을 전부 파싱하면 25단계 흐름 하나에 몇 초가 든다.
     """
 
-    async def test_only_offers_structures_with_metal_contacts(
-        self, app, client, structure_job, tmp_path
+    async def test_groups_structures_by_the_source_file(
+        self, app, client, tmp_path, saved
     ) -> None:
-        """전극이 없는 단계는 아예 목록에 올리지 않는다.
-
-        올려 두면 사용자는 고른 뒤에야 "전극이 없습니다"를 보고, 25단계짜리
-        흐름에서 어느 단계부터 되는지 하나씩 눌러 보게 된다.
-        """
-        bare = tmp_path / "source-job" / "bare.str"
-        bare.write_text((FIXTURES / "2d_cmos_source.str").read_text())
-        async with app.state.sessionmaker() as session:
-            session.add(
-                Artifact(
-                    job_id=structure_job,
-                    filename=bare.name,
-                    path=str(bare),
-                    size_bytes=bare.stat().st_size,
-                    sequence=2,
-                )
-            )
-            await session.commit()
-
+        await store_structure(app, tmp_path, "other.in", "other.str")
         body = (await client.get("/api/devsim/structures")).json()
-        assert [a["filename"] for a in body[0]["artifacts"]] == ["contacts.str"]
-
-    async def test_a_run_with_no_usable_structure_disappears(
-        self, app, client, tmp_path
-    ) -> None:
-        workdir = tmp_path / "bare-job"
-        workdir.mkdir()
-        bare = workdir / "bare.str"
-        bare.write_text((FIXTURES / "2d_cmos_source.str").read_text())
-        async with app.state.sessionmaker() as session:
-            job = Job(
-                owner_id=await owner_id(app),
-                source_path="bare.in",
-                status=JobStatus.SUCCEEDED,
-                workdir=str(workdir),
-            )
-            session.add(job)
-            await session.flush()
-            session.add(
-                Artifact(
-                    job_id=job.id,
-                    filename=bare.name,
-                    path=str(bare),
-                    size_bytes=bare.stat().st_size,
-                    sequence=1,
-                )
-            )
-            await session.commit()
-
-        body = (await client.get("/api/devsim/structures")).json()
-        assert body == []
-
-    async def test_lists_structures_from_my_runs(
-        self, client, structure_job
-    ) -> None:
-        body = (await client.get("/api/devsim/structures")).json()
-        assert len(body) == 1
-        entry = body[0]
-        assert entry["job_id"] == structure_job
-        assert entry["source_path"] == "contacts.in"
-        assert entry["artifacts"] == [
-            {"sequence": 1, "filename": "contacts.str"}
+        assert sorted(one["source_path"] for one in body) == [
+            "contacts.in",
+            "other.in",
+        ]
+        assert [one["filename"] for one in body[0]["structures"]] == [
+            body[0]["structures"][0]["filename"]
         ]
 
-    async def test_devsim_jobs_are_not_offered_as_input(
-        self, app, client, structure_job
+    async def test_reports_what_the_picker_needs(self, client, saved) -> None:
+        body = (await client.get("/api/devsim/structures")).json()
+        entry = body[0]["structures"][0]
+        assert entry["id"] == saved
+        assert entry["filename"] == "contacts.str"
+        assert entry["sequence"] == 1
+        assert entry["size_bytes"] > 0
+
+    async def test_several_structures_from_one_run_stay_together(
+        self, app, client, tmp_path, saved
     ) -> None:
-        """해석 결과(`iv.json`)를 다시 해석할 수는 없다."""
+        await store_structure(app, tmp_path, "contacts.in", "later.str")
+        body = (await client.get("/api/devsim/structures")).json()
+        assert len(body) == 1
+        assert sorted(one["filename"] for one in body[0]["structures"]) == [
+            "contacts.str",
+            "later.str",
+        ]
+
+    async def test_empty_when_nothing_is_kept(self, client) -> None:
+        assert (await client.get("/api/devsim/structures")).json() == []
+
+    async def test_someone_elses_structures_are_not_listed(
+        self, app, client, tmp_path, saved
+    ) -> None:
         async with app.state.sessionmaker() as session:
-            job = Job(
-                owner_id=await owner_id(app),
-                kind=JobKind.DEVSIM,
-                status=JobStatus.SUCCEEDED,
-                workdir="/tmp/none",
-            )
-            session.add(job)
+            other = User(email="bob@example.com", password_hash="x", role="user")
+            session.add(other)
             await session.flush()
             session.add(
-                Artifact(
-                    job_id=job.id,
-                    filename="iv.json",
-                    path="/tmp/none/iv.json",
-                    size_bytes=10,
+                SavedStructure(
+                    owner_id=other.id,
+                    source_path="theirs.in",
+                    job_id=None,
                     sequence=1,
+                    filename="theirs.str",
+                    path=str(tmp_path / "theirs.str"),
+                    size_bytes=10,
                 )
             )
             await session.commit()
 
         body = (await client.get("/api/devsim/structures")).json()
-        assert [entry["job_id"] for entry in body] == [structure_job]
+        assert [one["source_path"] for one in body] == ["contacts.in"]
 
-    async def test_failed_runs_are_not_offered(
-        self, app, client, structure_job
+    async def test_a_structure_outlives_its_job(
+        self, app, client, tmp_path, saved
+    ) -> None:
+        """잡이 지워져도 구조는 남는다. 그것이 이 표의 존재 이유다."""
+        async with app.state.sessionmaker() as session:
+            row = await session.get(SavedStructure, saved)
+            job = await session.get(Job, row.job_id)
+            await session.delete(job)
+            await session.commit()
+
+        body = (await client.get("/api/devsim/structures")).json()
+        assert body[0]["structures"][0]["job_id"] is None
+        # 여전히 해석에 쓸 수 있어야 한다.
+        assert (
+            await client.get(f"/api/devsim/structures/{saved}/interfaces")
+        ).status_code == 200
+
+
+class TestSurface:
+    """단면 그림도 보관본에서 그린다.
+
+    플롯 쪽에도 같은 그림이 있지만 그쪽은 잡 산출물을 본다. 산출물은 스윕에
+    지워지므로, 공정을 돌린 다음 날 전극을 짚으려면 여기서 나와야 한다.
+    """
+
+    async def test_draws_the_materials(self, client, saved) -> None:
+        response = await client.get(f"/api/devsim/structures/{saved}/surface")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["x"] and body["y"] and body["triangles"]
+        assert len(body["materials"]) == len(body["triangles"])
+        assert "aluminum" in body["materials"]
+
+    async def test_keeps_every_element(self, client, saved) -> None:
+        # 물리량을 칠하면 그 해가 없는 요소가 빠진다. 재질 그림에서 층이 통째로
+        # 사라지면 어디에 무엇이 붙었는지 볼 수 없다.
+        body = (
+            await client.get(f"/api/devsim/structures/{saved}/surface")
+        ).json()
+        assert body["values"] == []
+        assert len(body["triangles"]) > 800
+
+    async def test_someone_elses_structure_is_not_found(
+        self, app, client, tmp_path
     ) -> None:
         async with app.state.sessionmaker() as session:
-            job = Job(
-                owner_id=await owner_id(app),
-                status=JobStatus.FAILED,
-                workdir="/tmp/none",
+            other = User(email="carol@example.com", password_hash="x", role="user")
+            session.add(other)
+            await session.flush()
+            row = SavedStructure(
+                owner_id=other.id,
+                source_path="theirs.in",
+                job_id=None,
+                sequence=1,
+                filename="theirs.str",
+                path=str(tmp_path / "theirs.str"),
+                size_bytes=10,
             )
-            session.add(job)
+            session.add(row)
             await session.commit()
-        body = (await client.get("/api/devsim/structures")).json()
-        assert [entry["job_id"] for entry in body] == [structure_job]
+            stolen = row.id
+
+        response = await client.get(f"/api/devsim/structures/{stolen}/surface")
+        assert response.status_code == 404

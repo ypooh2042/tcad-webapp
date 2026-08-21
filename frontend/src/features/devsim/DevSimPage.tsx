@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ApiError } from '../../api/client'
-import { devsim, plot } from '../../api/endpoints'
+import { devsim } from '../../api/endpoints'
 import type {
   DeviceSpec,
   DevSimInterface,
@@ -25,8 +25,10 @@ import {
   defaultSpec,
   pointCount,
   problemsOf,
+  nameOfInterface,
   removeElectrode,
   renameElectrode,
+  renameInterface,
   unassignInterface,
 } from './deviceSpec'
 import { ElectrodeMap } from './ElectrodeMap'
@@ -44,10 +46,8 @@ interface Props {
   onHandoffUsed: () => void
 }
 
-interface Selection {
-  jobId: number
-  sequence: number
-}
+/** 지금 보고 있는 보관 구조의 id. */
+type Selection = number
 
 function messageOf(error: unknown): string {
   // ApiError.message 는 detail 이 문자열이면 그걸 그대로 쓴다. 객체 detail 까지
@@ -80,11 +80,11 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
         if (cancelled) return
         setSources(found)
         setSelection((current) => {
-          if (current) return current
+          if (current !== null) return current
           const first = found[0]
-          if (!first || first.artifacts.length === 0) return null
-          const last = first.artifacts[first.artifacts.length - 1]
-          return { jobId: first.job_id, sequence: last.sequence }
+          if (!first || first.structures.length === 0) return null
+          // 마지막 단계부터 보여준다. 보통 그것이 완성된 소자다.
+          return first.structures[first.structures.length - 1].id
         })
       })
       .catch((error) => {
@@ -95,38 +95,50 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
     }
   }, [])
 
-  // 공정 결과에서 넘어온 구조를 받는다. 목록 로딩과 경쟁하지 않도록 따로 둔다.
+  // 공정 결과에서 넘어온 구조를 받는다.
+  //
+  // 결과 화면은 잡과 단계로 가리키므로 보관 구조에서 짝을 찾아야 한다. 목록이
+  // 아직 안 왔을 수 있어 목록이 바뀔 때마다 다시 본다.
   useEffect(() => {
     if (!handoff) return
-    setSelection({ jobId: handoff.jobId, sequence: handoff.sequence })
-    setTab('run')
-    onHandoffUsed()
-  }, [handoff, onHandoffUsed])
+    for (const source of sources) {
+      const match = source.structures.find(
+        (one) =>
+          one.job_id === handoff.jobId && one.sequence === handoff.sequence,
+      )
+      if (match) {
+        setSelection(match.id)
+        setTab('run')
+        onHandoffUsed()
+        return
+      }
+    }
+    if (sources.length > 0) {
+      // 목록은 왔는데 짝이 없다. 보관되지 않은 단계다.
+      setMessage(
+        '넘겨받은 단계에는 전극이 없어 해석할 수 없습니다. 금속 배선까지 끝난 단계를 골라 주세요.',
+      )
+      onHandoffUsed()
+    }
+  }, [handoff, sources, onHandoffUsed])
 
   // 구조가 바뀌면 계면과 조건을 처음부터 다시 만든다. 예전 조건을 그대로 두면
   // 이름은 남아 있는데 가리키는 계면이 없는 상태가 된다.
   useEffect(() => {
-    if (!selection) return
+    if (selection === null) return
     let cancelled = false
     setMessage(null)
     setInterfaces([])
     setSpec(null)
     Promise.all([
-      devsim.interfaces(selection.jobId, selection.sequence, gateModel),
-      plot.surface(selection.jobId, selection.sequence, null),
+      devsim.interfaces(selection, gateModel),
+      devsim.surface(selection),
     ])
       .then(([found, drawn]) => {
         if (cancelled) return
         setInterfaces(found.interfaces)
         setSurface(drawn)
         setSpec(defaultSpec(found.interfaces))
-        // 뒷면 후보는 반도체만 있어도 늘 딸려 온다. 그것까지 세면 금속이
-        // 하나도 없는 단계에서도 "계면을 찾았다"가 되어 버린다.
-        if (found.interfaces.every((one) => one.origin === 'backside')) {
-          setMessage(
-            '이 구조에는 금속 전극이 없습니다. 금속 배선까지 끝난 단계를 골라 주세요.',
-          )
-        }
       })
       .catch((error) => {
         if (!cancelled) setMessage(messageOf(error))
@@ -135,20 +147,6 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
       cancelled = true
     }
   }, [selection, gateModel])
-
-  // 고른 구조가 목록에 없으면(전극이 없는 단계를 결과 창에서 넘겨받은 경우)
-  // 고르개가 빈칸이 된다. 그 자리를 채울 임시 항목.
-  const handedOffOnly = useMemo(() => {
-    if (!selection) return null
-    const listed = sources.some((source) =>
-      source.artifacts.some(
-        (artifact) =>
-          source.job_id === selection.jobId &&
-          artifact.sequence === selection.sequence,
-      ),
-    )
-    return listed ? null : selection
-  }, [selection, sources])
 
   const problems = useMemo(() => (spec ? problemsOf(spec) : []), [spec])
   const points = useMemo(() => (spec ? pointCount(spec) : 0), [spec])
@@ -175,9 +173,14 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
       const found = interfaces.find((one) => one.key === key)
       if (!found) return key
       const where = found.origin === 'backside' ? '뒷면 경계' : '금속 접촉'
-      return `${where} · ${found.materials.join(', ')} · 변 ${found.edge_count}개`
+      return `${key} · ${where} · ${found.materials.join(', ')} · 변 ${found.edge_count}개`
     },
     [interfaces],
+  )
+
+  const nameOf = useCallback(
+    (key: string) => (spec ? nameOfInterface(spec, key) : key),
+    [spec],
   )
 
   const edit = useCallback(
@@ -197,14 +200,10 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
   )
 
   async function run() {
-    if (!selection || !spec) return
+    if (selection === null || !spec) return
     setMessage(null)
     try {
-      const started = await devsim.submit(
-        selection.jobId,
-        selection.sequence,
-        spec,
-      )
+      const started = await devsim.submit(selection, spec)
       setJobId(started.id)
     } catch (error) {
       setMessage(messageOf(error))
@@ -219,32 +218,21 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
         <label className="field">
           구조
           <select
-            value={selection ? `${selection.jobId}:${selection.sequence}` : ''}
-            onChange={(event) => {
-              const [job, sequence] = event.target.value.split(':')
-              setSelection({ jobId: Number(job), sequence: Number(sequence) })
-            }}
+            value={selection ?? ''}
+            onChange={(event) => setSelection(Number(event.target.value))}
           >
             {sources.length === 0 ? (
               <option value="">전극이 있는 실행 결과가 없습니다</option>
             ) : null}
-            {/* 결과 창에서 넘어온 구조가 목록에 없을 수 있다(전극이 없는 단계).
-                빈칸으로 두면 지금 무엇을 보고 있는지 알 수 없다. */}
-            {handedOffOnly ? (
-              <option value={`${handedOffOnly.jobId}:${handedOffOnly.sequence}`}>
-                넘겨받은 구조 (전극 없음)
-              </option>
-            ) : null}
-            {sources.map((source) =>
-              source.artifacts.map((artifact) => (
-                <option
-                  key={`${source.job_id}:${artifact.sequence}`}
-                  value={`${source.job_id}:${artifact.sequence}`}
-                >
-                  {source.source_path ?? `잡 ${source.job_id}`} · {artifact.filename}
-                </option>
-              )),
-            )}
+            {sources.map((source) => (
+              <optgroup key={source.source_path} label={source.source_path}>
+                {source.structures.map((one) => (
+                  <option key={one.id} value={one.id}>
+                    {one.filename}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
           </select>
         </label>
 
@@ -309,6 +297,10 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
                     edit((current) => unassignInterface(current, key))
                   }
                   onCreate={createFor}
+                  nameOf={nameOf}
+                  onRename={(key, name) =>
+                    edit((current) => renameInterface(current, key, name))
+                  }
                 />
                 <SourceEditor
                   spec={spec}
@@ -321,6 +313,7 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
                     edit((current) => renameElectrode(current, from, to))
                   }
                   describeInterface={describeInterface}
+                  nameOf={nameOf}
                 />
               </>
             ) : (

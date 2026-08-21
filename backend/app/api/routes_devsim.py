@@ -30,20 +30,21 @@ from app.api.deps import (
     get_app_settings,
     get_db,
     get_queue,
-    owned_artifact,
     owned_job,
 )
 from app.api.throttle import throttle_submit
 from app.auth.models import Session
 from app.core.config import Settings
-from app.db.models import Artifact, DevSimResult, Job, JobKind, JobStatus
+from app.db.models import DevSimResult, Job, JobKind, SavedStructure
 from app.devsim.electrodes import Electrode, GateModel, detect_interfaces
 from app.devsim.resolve import ElectrodeNotFound, resolve_electrodes
 from app.devsim.screening import analysable
 from app.devsim.service import place_structure
 from app.devsim.spec import DeviceSpec, total_points
 from app.jobs.queue import JobQueue
+from app.api.routes_plot import _COORDINATE_DIGITS, SurfaceResponse
 from app.plotting.loader import load_structure
+from app.plotting.surface import build_surface
 from app.str_parser.errors import StructureFormatError
 from app.str_parser.models import Structure
 
@@ -83,8 +84,7 @@ class InterfacesResponse(BaseModel):
 
 
 class SubmitRequest(BaseModel):
-    job_id: int
-    sequence: int
+    structure_id: int
     spec: DeviceSpec
 
 
@@ -94,18 +94,24 @@ class SubmitResponse(BaseModel):
     total_points: int
 
 
-class StructureArtifact(BaseModel):
-    sequence: int
+class SavedStructureResponse(BaseModel):
+    """보관해 둔 구조 하나."""
+
+    id: int
     filename: str
+    #: 공정 단계 순서. 결과 화면에서 넘어올 때 짝을 찾는 데 쓴다.
+    sequence: int
+    #: 만들어 낸 잡. 잡이 지워졌으면 비어 있다.
+    job_id: int | None
+    size_bytes: int
 
 
 class StructureSource(BaseModel):
-    """해석 입력으로 고를 수 있는 공정 실행 하나."""
+    """`.in` 하나에서 나온 구조들."""
 
-    job_id: int
-    source_path: str | None
+    source_path: str
     created_at: str
-    artifacts: list[StructureArtifact]
+    structures: list[SavedStructureResponse]
 
 
 class RunSummary(BaseModel):
@@ -122,9 +128,9 @@ class RunDetail(RunSummary):
     data: dict
 
 
-def _structure(artifact: Artifact) -> Structure:
+def _structure(saved: SavedStructure) -> Structure:
     try:
-        return load_structure(Path(artifact.path))
+        return load_structure(Path(saved.path))
     except FileNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
@@ -134,6 +140,20 @@ def _structure(artifact: Artifact) -> Structure:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)
         ) from error
+
+
+async def _owned_structure(
+    structure_id: int,
+    session: Session = Depends(current_session),
+    db: AsyncSession = Depends(get_db),
+) -> SavedStructure:
+    """소유 확인을 마친 보관 구조. 남의 것은 403 이 아니라 404 다."""
+    found = await db.get(SavedStructure, structure_id)
+    if found is None or found.owner_id != int(session.user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="구조를 찾을 수 없습니다"
+        )
+    return found
 
 
 def _segments(structure: Structure, electrode: Electrode) -> list[list[float]]:
@@ -163,10 +183,10 @@ def _describe(structure: Structure, electrode: Electrode) -> InterfaceResponse:
     )
 
 
-@router.get("/jobs/{job_id}/artifacts/{sequence}/interfaces")
+@router.get("/structures/{structure_id}/interfaces")
 async def interfaces(
     gate_model: GateModel = Query(default=GateModel.SEMICONDUCTOR),
-    artifact: Artifact = Depends(owned_artifact),
+    saved: SavedStructure = Depends(_owned_structure),
 ) -> InterfacesResponse:
     """구조에서 자동으로 찾은 계면 — 금속 접촉과 뒷면 경계.
 
@@ -174,14 +194,37 @@ async def interfaces(
     것이다. 같은 금속 덩어리에 닿은 변은 하나의 계면이 되고, 그래서 그 안의
     등전위는 **구성상** 보장된다. 여러 계면을 한 전위로 묶는 것은 전극이 한다.
     """
-    structure = _structure(artifact)
+    structure = _structure(saved)
     return InterfacesResponse(
-        filename=artifact.filename,
+        filename=saved.filename,
         gate_model=gate_model.value,
         interfaces=[
             _describe(structure, found)
             for found in detect_interfaces(structure, gate_model=gate_model)
         ],
+    )
+
+
+@router.get("/structures/{structure_id}/surface")
+async def surface(
+    saved: SavedStructure = Depends(_owned_structure),
+) -> SurfaceResponse:
+    """단면 그림. 재질만 칠한다.
+
+    플롯 쪽에도 같은 것이 있지만 그쪽은 **잡 산출물**을 본다. 산출물은 스윕에
+    지워지므로, 공정을 돌린 다음 날에도 전극을 짚으려면 보관본에서 그려야 한다.
+    """
+    built = build_surface(_structure(saved), None)
+    low, high = built.value_range
+    return SurfaceResponse(
+        quantity=built.quantity,
+        x=[round(value, _COORDINATE_DIGITS) for value in built.x],
+        y=[round(value, _COORDINATE_DIGITS) for value in built.y],
+        triangles=list(built.triangles),
+        values=list(built.values),
+        materials=list(built.materials),
+        value_min=low,
+        value_max=high,
     )
 
 
@@ -195,12 +238,16 @@ async def submit(
     _: None = Depends(throttle_submit),
 ) -> SubmitResponse:
     """해석을 큐에 넣는다."""
-    artifact = await _owned(db, session, payload.job_id, payload.sequence)
-    structure = _structure(artifact)
+    saved = await db.get(SavedStructure, payload.structure_id)
+    if saved is None or saved.owner_id != int(session.user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="구조를 찾을 수 없습니다"
+        )
+    structure = _structure(saved)
 
     # 전극이 실제로 잡히는지 **여기서** 확인한다. 워커까지 가서 실패하면
     # 사용자는 몇 분 뒤에야 오타를 알게 된다.
-    spec = payload.spec.model_copy(update={"structure": artifact.filename})
+    spec = payload.spec.model_copy(update={"structure": saved.filename})
     try:
         resolve_electrodes(structure, spec)
     except ElectrodeNotFound as error:
@@ -211,7 +258,7 @@ async def submit(
     # 경로는 서버가 정한다. 사용자 입력이 파일 경로에 섞이지 않는다.
     workdir = Path(settings.jobs_root).resolve() / f"job-{uuid4().hex}"
     try:
-        place_structure(workdir, Path(artifact.path).read_text())
+        place_structure(workdir, Path(saved.path).read_text())
     except OSError as error:
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
@@ -222,33 +269,13 @@ async def submit(
         owner_id=int(session.user_id),
         source_revision_id=None,
         workdir=str(workdir),
-        source_path=artifact.filename,
+        source_path=saved.filename,
         source=spec.model_dump_json(),
         kind=JobKind.DEVSIM,
     )
     return SubmitResponse(
         id=job.id, status=job.status.value, total_points=total_points(spec)
     )
-
-
-async def _owned(
-    db: AsyncSession, session: Session, job_id: int, sequence: int
-) -> Artifact:
-    job = await db.get(Job, job_id)
-    if job is None or job.owner_id != int(session.user_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="잡을 찾을 수 없습니다"
-        )
-    artifact = await db.scalar(
-        select(Artifact).where(
-            Artifact.job_id == job.id, Artifact.sequence == sequence
-        )
-    )
-    if artifact is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="산출물을 찾을 수 없습니다"
-        )
-    return artifact
 
 
 def _summary_of(row: DevSimResult, data: dict) -> RunSummary:
@@ -264,62 +291,49 @@ def _summary_of(row: DevSimResult, data: dict) -> RunSummary:
 
 @router.get("/structures")
 async def structures(
-    limit: int = Query(default=20, ge=1, le=_MAX_RUNS),
     session: Session = Depends(current_session),
     db: AsyncSession = Depends(get_db),
 ) -> list[StructureSource]:
     """해석 입력으로 쓸 수 있는 구조들.
 
-    `.str` 은 작업공간 파일 목록에 안 나온다(`app/workspace/service.py` — 실행
-    결과라서 사용자가 직접 만들거나 지우는 것이 아니다). 그래서 잡 산출물에서
-    뽑아 준다. 성공한 **공정 실행**만 고른다 — 해석 결과(`iv.json`)를 다시
-    해석할 수는 없다.
+    **보관소에서 읽는다.** 잡 산출물은 유휴·쿼터 스윕에 지워지므로 그대로 쓰면
+    공정을 돌린 다음 날 해석할 수 없다. 워커가 공정을 끝낼 때 전극이 있는 것만
+    골라 여기에 옮겨 둔다(`app/devsim/catalog.py`).
 
-    그리고 **전극이 있는 단계만** 올린다. 알루미늄이 실리콘이나 폴리실리콘에
-    닿아야 전극이 된다(`app/devsim/screening.py`). 그렇지 않은 단계까지 올려
-    두면 사용자는 고른 뒤에야 "전극이 없습니다"를 보고, 25단계짜리 흐름에서
-    어느 단계부터 되는지 하나씩 눌러 보게 된다.
+    같은 `.in` 을 다시 돌리면 그 `.in` 의 옛 구조는 사라지고 새것으로 바뀐다.
     """
-    jobs = (
+    rows = (
         await db.scalars(
-            select(Job)
-            .where(
-                Job.owner_id == int(session.user_id),
-                Job.kind == JobKind.SUPREM,
-                Job.status == JobStatus.SUCCEEDED,
+            select(SavedStructure)
+            .where(SavedStructure.owner_id == int(session.user_id))
+            .order_by(
+                SavedStructure.source_path,
+                SavedStructure.sequence,
+                SavedStructure.id,
             )
-            .order_by(Job.created_at.desc(), Job.id.desc())
-            .limit(limit)
         )
     ).all()
-    if not jobs:
-        return []
 
-    rows = await db.scalars(
-        select(Artifact)
-        .where(Artifact.job_id.in_([job.id for job in jobs]))
-        .order_by(Artifact.job_id, Artifact.sequence)
-    )
-    grouped: dict[int, list[StructureArtifact]] = {}
-    for artifact in rows:
-        if not analysable(Path(artifact.path)):
-            continue
-        grouped.setdefault(artifact.job_id, []).append(
-            StructureArtifact(
-                sequence=artifact.sequence, filename=artifact.filename
+    grouped: dict[str, StructureSource] = {}
+    for row in rows:
+        source = grouped.get(row.source_path)
+        if source is None:
+            source = StructureSource(
+                source_path=row.source_path,
+                created_at=row.created_at.isoformat(),
+                structures=[],
+            )
+            grouped[row.source_path] = source
+        source.structures.append(
+            SavedStructureResponse(
+                id=row.id,
+                filename=row.filename,
+                sequence=row.sequence,
+                job_id=row.job_id,
+                size_bytes=row.size_bytes,
             )
         )
-
-    return [
-        StructureSource(
-            job_id=job.id,
-            source_path=job.source_path,
-            created_at=job.created_at.isoformat(),
-            artifacts=grouped[job.id],
-        )
-        for job in jobs
-        if job.id in grouped
-    ]
+    return sorted(grouped.values(), key=lambda one: one.created_at, reverse=True)
 
 
 @router.get("/runs")

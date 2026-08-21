@@ -23,6 +23,8 @@ interface Props {
   onRenameElectrode: (from: string, to: string) => void
   /** 계면 열쇠 → 사람이 읽을 설명. 전극 옆에 붙여 보여준다. */
   describeInterface: (key: string) => string
+  /** 계면에 붙은 이름. 단면에서 바꾼 것이 여기에도 보여야 한다. */
+  nameOf: (key: string) => string
 }
 
 function replaceBias(spec: DeviceSpec, index: number, bias: Bias): DeviceSpec {
@@ -55,6 +57,7 @@ export function SourceEditor({
   onRemoveElectrode,
   onRenameElectrode,
   describeInterface,
+  nameOf,
 }: Props) {
   const colorOf = new Map(
     spec.electrodes.map((electrode, index) => [
@@ -92,7 +95,7 @@ export function SourceEditor({
                 ) : (
                   electrode.interfaces.map((key) => (
                     <span className="chip" key={key} title={describeInterface(key)}>
-                      {key}
+                      {nameOf(key)}
                     </span>
                   ))
                 )}

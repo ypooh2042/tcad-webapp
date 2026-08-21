@@ -49,6 +49,9 @@ class Settings(BaseSettings):
 
     #: 사용자 작업공간(소스 파일) 루트.
     workspaces_root: Path = Path("var/workspaces")
+    #: 소자 해석에 쓸 `.str` 보관소. **잡 작업디렉토리 밖**이라 유휴·쿼터 스윕이
+    #: 건드리지 않는다 — 공정을 돌린 다음 날에도 해석할 수 있어야 한다.
+    structures_root: Path = Path("var/structures")
 
     #: 사용자당 **소스 파일** 저장 상한. `.in` 은 보통 몇 KB 라 50MB 면 사실상
     #: 안전장치다 — 실제로 용량을 먹는 것은 산출물이고 그쪽은 따로 관리한다.

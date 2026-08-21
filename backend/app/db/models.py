@@ -258,6 +258,50 @@ class Artifact(Base):
     )
 
 
+class SavedStructure(Base):
+    """소자 해석에 쓸 수 있는 `.str` 을 오래 보관한다.
+
+    **왜 잡 산출물을 그대로 쓰지 않는가.** 산출물은 유휴 스윕과 쿼터 스윕에
+    지워진다(`app/jobs/sweeper.py`). 공정을 돌린 다음 날 소자 해석을 하려면
+    그때마다 공정을 다시 돌려야 한다는 뜻이다.
+
+    **왜 전부 보관하지 않는가.** 25단계 흐름이면 산출물이 25개 17MB 인데, 그중
+    전극이 있는 것은 보통 마지막 한두 개뿐이다(`app/devsim/screening.py`).
+
+    같은 `.in` 을 다시 돌리면 그 `.in` 에서 나온 것은 전부 지우고 새로 채운다.
+    공정 코드를 고쳐 다시 돌렸는데 옛 구조가 목록에 남아 있으면, 어느 것이
+    지금 코드의 결과인지 구분할 수 없다.
+    """
+
+    __tablename__ = "saved_structures"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    #: 이 구조를 만든 `.in` 의 작업공간 기준 경로. 다시 돌릴 때의 열쇠다.
+    source_path: Mapped[str] = mapped_column(String(1024))
+    #: 만들어 낸 잡. 잡이 지워져도 구조는 남아야 하므로 끊어질 수 있다.
+    job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    #: 공정 단계 순서. 결과 화면에서 넘어올 때 짝을 찾는 데 쓴다.
+    sequence: Mapped[int] = mapped_column(Integer)
+    filename: Mapped[str] = mapped_column(String(255))
+    #: 보관 위치. 잡 작업디렉토리 밖이라 스윕이 건드리지 않는다.
+    path: Mapped[str] = mapped_column(String(512))
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_id", "source_path", "filename", name="uq_saved_structures_name"
+        ),
+    )
+
+
 class DevSimResult(Base):
     """소자 해석 한 건의 결과 데이터.
 

@@ -10,6 +10,7 @@ import asyncio
 import shutil
 import subprocess
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import event, select
@@ -89,6 +90,7 @@ def make_worker(sessionmaker, tmp_path, limits=None) -> tuple[JobQueue, Worker]:
         jobs_root=tmp_path,
         image=DEFAULT_IMAGE,
         limits=limits or SandboxLimits(timeout_seconds=120),
+        structures_root=tmp_path / "structures",
     )
     return queue, worker
 
@@ -261,3 +263,79 @@ class TestEndToEnd:
             stored = await session.get(Job, job.id)
         assert "Permission denied" in stored.log
         assert "root:" not in stored.log
+
+
+class TestStructureCatalog:
+    """전극이 있는 구조를 보관한다.
+
+    산출물은 스윕에 지워지므로, 공정을 돌린 다음 날 소자 해석을 하려면 따로
+    둔 것이 있어야 한다. 같은 `.in` 을 다시 돌리면 그 `.in` 의 옛 것은 지운다.
+    """
+
+    SOURCE = (
+        "line x loc=0 spacing=0.5 tag=left\n"
+        "line x loc=1 spacing=0.5 tag=right\n"
+        "line y loc=0 spacing=0.2 tag=top\n"
+        "line y loc=1 spacing=0.5 tag=bottom\n"
+        "region silicon xlo=left xhi=right ylo=top yhi=bottom\n"
+        "bound exposed xlo=left xhi=right ylo=top yhi=top\n"
+        "bound backside xlo=left xhi=right ylo=bottom yhi=bottom\n"
+        "initialize boron conc=1.0e15 ori=100\n"
+        "structure out=bare.str\n"
+    )
+
+    async def _run(self, sessionmaker, tmp_path, owner: int, source: str) -> None:
+        queue, worker = make_worker(sessionmaker, tmp_path)
+        await queue.enqueue(
+            owner_id=owner,
+            source_revision_id=None,
+            workdir=str(tmp_path / f"job-{uuid4().hex}"),
+            source_path="flow.in",
+            source=source,
+        )
+        await worker.run_once()
+
+    async def _saved(self, sessionmaker) -> list[str]:
+        from app.db.models import SavedStructure
+
+        async with sessionmaker() as session:
+            rows = await session.scalars(select(SavedStructure))
+            return sorted(row.filename for row in rows)
+
+    async def test_a_run_without_metal_keeps_nothing(
+        self, sessionmaker_fixture, tmp_path, seed
+    ) -> None:
+        owner, _ = await seed("x")
+        await self._run(sessionmaker_fixture, tmp_path, owner, self.SOURCE)
+        assert await self._saved(sessionmaker_fixture) == []
+
+    async def test_rerunning_the_same_file_replaces_what_was_kept(
+        self, sessionmaker_fixture, tmp_path, seed
+    ) -> None:
+        from app.db.models import SavedStructure
+
+        owner, _ = await seed("y")
+        # 첫 실행: 보관본이 있는 것처럼 손으로 넣어 둔다.
+        folder = tmp_path / "structures" / f"user-{owner}"
+        folder.mkdir(parents=True)
+        stale = folder / "stale.str"
+        stale.write_text("옛 구조")
+        async with sessionmaker_fixture() as session:
+            session.add(
+                SavedStructure(
+                    owner_id=owner,
+                    source_path="flow.in",
+                    job_id=None,
+                    sequence=1,
+                    filename="stale.str",
+                    path=str(stale),
+                    size_bytes=stale.stat().st_size,
+                )
+            )
+            await session.commit()
+
+        await self._run(sessionmaker_fixture, tmp_path, owner, self.SOURCE)
+
+        # 같은 `.in` 을 다시 돌렸으니 옛 것은 남아 있으면 안 된다. 어느 것이
+        # 지금 코드의 결과인지 구분할 수 없게 된다.
+        assert await self._saved(sessionmaker_fixture) == []

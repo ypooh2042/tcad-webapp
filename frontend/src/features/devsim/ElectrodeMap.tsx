@@ -38,6 +38,9 @@ interface Props {
   onUnassign: (key: string) => void
   /** 이 계면을 담을 전극을 새로 만든다. */
   onCreate: (key: string) => void
+  /** 계면에 붙일 이름. 열쇠는 그대로 두고 표시만 바꾼다. */
+  nameOf: (key: string) => string
+  onRename: (key: string, name: string) => void
   height?: number
 }
 
@@ -64,12 +67,17 @@ export function ElectrodeMap({
   onAssign,
   onUnassign,
   onCreate,
+  nameOf,
+  onRename,
   height = 360,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const [hovered, setHovered] = useState<string | null>(null)
   const [picked, setPicked] = useState<Picked | null>(null)
   const [width, setWidth] = useState(0)
+  //: 이름을 치는 동안의 글자. 스펙에서 되읽으면 빈칸이 열쇠로 되돌아가 지우고
+  //: 다시 칠 수가 없다(숫자 칸이 겪은 것과 같은 문제다).
+  const [draft, setDraft] = useState('')
 
   const colorOf = useMemo(() => {
     const byLabel = new Map(electrodes.map((one) => [one.label, one.color]))
@@ -151,7 +159,8 @@ export function ElectrodeMap({
       strokeInterface(focus, true)
 
       const owner = owners[focus.key]
-      const text = owner ? `${focus.key} → ${owner}` : `${focus.key} · 전극 없음`
+      const title = nameOf(focus.key)
+      const text = owner ? `${title} → ${owner}` : `${title} · 전극 없음`
       context.font =
         '12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
       const padding = 6
@@ -168,7 +177,7 @@ export function ElectrodeMap({
       context.textBaseline = 'middle'
       context.fillText(text, left + padding, top + 10)
     }
-  }, [surface, interfaces, owners, hovered, height, width, colorOf])
+  }, [surface, interfaces, owners, hovered, height, width, colorOf, nameOf])
 
   function at(event: React.PointerEvent<HTMLCanvasElement>) {
     const rect = event.currentTarget.getBoundingClientRect()
@@ -192,6 +201,7 @@ export function ElectrodeMap({
           const y = event.clientY - rect.top
           const key = nearestInterface(x, y, candidates, HOVER_RADIUS)
           setPicked(key ? { key, x, y } : null)
+          setDraft(key ? nameOf(key) : '')
         }}
         role="img"
         aria-label="단면 — 계면을 눌러 전극에 붙입니다"
@@ -205,7 +215,6 @@ export function ElectrodeMap({
           aria-label={`${picked.key} 계면`}
         >
           <div className="popover-head">
-            <strong>{picked.key}</strong>
             <span className="origin">
               {interfaces.find((one) => one.key === picked.key)?.origin ===
               'backside'
@@ -221,6 +230,23 @@ export function ElectrodeMap({
               ×
             </button>
           </div>
+          <label className="field">
+            계면 이름
+            <input
+              value={draft}
+              aria-label="계면 이름"
+              onChange={(event) => {
+                setDraft(event.target.value)
+                onRename(picked.key, event.target.value)
+              }}
+              onBlur={() => {
+                // 다듬는 것은 다 치고 난 뒤 한 번이다.
+                const trimmed = draft.trim()
+                setDraft(trimmed || picked.key)
+                onRename(picked.key, trimmed)
+              }}
+            />
+          </label>
           <p className="hint">어느 전극에 붙일까요?</p>
           <ul className="popover-choices">
             {electrodes.map((electrode) => {

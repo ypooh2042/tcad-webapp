@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import { devsim } from '../../api/endpoints'
-import type { IvDataset, JobDetail } from '../../api/types'
+import type { IvDataset, IvFailure, JobDetail } from '../../api/types'
 import { formatDuration } from '../jobs/duration'
 import { useElapsed } from '../jobs/useElapsed'
 import { dominantBias, figuresOf, seriesOf } from './figures'
@@ -16,6 +16,17 @@ import { IvChart } from './IvChart'
 
 // 상태 표시는 공정 쪽(`JobPanel`)과 같은 말과 같은 클래스를 쓴다. 같은 뜻인데
 // 화면마다 다른 낱말이면 읽는 사람이 다른 것인 줄 안다.
+/** 안 풀린 점이 어느 바이어스였는지. 예: `Vg=1V, Vd=1.5V` */
+function describeBias(failure: IvFailure): string {
+  const parts = Object.entries(failure.steps).map(
+    ([name, value]) => `${name}=${Number(value.toPrecision(4))}V`,
+  )
+  if (failure.sweep !== null) {
+    parts.push(`${Number(failure.sweep.toPrecision(4))}V`)
+  }
+  return parts.join(', ')
+}
+
 const STATUS_LABEL: Record<string, string> = {
   queued: '대기 중',
   running: '실행 중',
@@ -62,6 +73,8 @@ export function RunResult({ job }: { job: JobDetail | null }) {
     [dataset, bias],
   )
 
+  const failures = dataset?.failures ?? []
+
   if (!job) {
     return <p className="hint">해석을 실행하면 여기에 곡선이 나옵니다.</p>
   }
@@ -94,6 +107,26 @@ export function RunResult({ job }: { job: JobDetail | null }) {
         <p className="warning">
           {dataset.error} ({dataset.completed}/{dataset.total}점)
         </p>
+      ) : null}
+
+      {/*
+        안 풀린 점은 반드시 드러내야 한다. 조용히 빼면 사용자는 그 자리에 값이
+        없다는 것도 모른 채 곡선을 읽는다.
+      */}
+      {failures.length > 0 ? (
+        <details className="skipped" open={failures.length <= 4}>
+          <summary>
+            수렴하지 못해 건너뛴 점 {failures.length}개
+            {dataset ? ` (전체 ${dataset.total}점 중)` : ''}
+          </summary>
+          <ul>
+            {failures.map((failure, index) => (
+              <li key={index}>
+                <code>{describeBias(failure)}</code> — {failure.reason}
+              </li>
+            ))}
+          </ul>
+        </details>
       ) : null}
 
       {series.length > 0 && bias ? (

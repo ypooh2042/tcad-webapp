@@ -71,6 +71,12 @@ class DeviceResult:
 
     @property
     def succeeded(self) -> bool:
+        """한 점이라도 풀렸으면 성공이다.
+
+        수렴에 실패한 점은 건너뛰고 이어 간다. 스윕 끝쪽 몇 점이 발산하는 것은
+        흔한 일이고 그 앞의 곡선은 멀쩡하므로, 그것까지 실패로 적으면 쓸 수 있는
+        결과를 버리게 된다. 어느 점이 빠졌는지는 `dataset["failures"]` 에 남는다.
+        """
         return (
             not self.timed_out
             and not self.errors
@@ -117,19 +123,28 @@ def _read_dataset(workdir: Path, total: int) -> dict[str, Any] | None:
     if not stream.exists():
         return None
     rows: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
     try:
         for line in stream.read_text().splitlines():
-            if line.strip():
-                rows.append(json.loads(line))
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            # 흘려보낸 줄에는 푼 점과 건너뛴 점이 섞여 있다. 섞인 채로 곡선에
+            # 넣으면 전류가 없는 점에서 그래프가 0 으로 뚝 떨어진다.
+            if entry.get("ok") is False or "currents" not in entry:
+                failures.append(entry)
+            else:
+                rows.append(entry)
     except (OSError, ValueError):
         logger.warning("중간 결과를 읽지 못했습니다", exc_info=True)
-    if not rows:
+    if not rows and not failures:
         return None
     return {
         "sweep": None,
-        "biases": sorted(rows[0].get("currents", {})),
+        "biases": sorted(rows[0].get("currents", {})) if rows else [],
         "current_unit": "A/um",
         "rows": rows,
+        "failures": failures,
         "total": total,
         "completed": len(rows),
         "error": "해석이 끝나기 전에 멈췄습니다. 여기까지의 결과만 남았습니다.",

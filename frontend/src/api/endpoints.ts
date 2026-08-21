@@ -229,20 +229,35 @@ export const plot = {
 
 /** 소자 해석. 구조를 고르고 전극에 전압원을 붙여 I-V 를 뽑는다. */
 export const devsim = {
-  /** 해석 입력으로 쓸 수 있는 공정 실행들. `.str` 은 파일 목록에 안 나온다. */
+  /**
+   * 해석 입력으로 쓸 수 있는 구조들.
+   *
+   * `.str` 은 작업공간 파일 목록에 안 나온다(실행 결과다). 그리고 잡 산출물은
+   * 스윕에 지워지므로, 공정이 끝날 때 전극이 있는 것만 골라 보관해 둔 것을
+   * 읽는다. 같은 `.in` 을 다시 돌리면 그 `.in` 의 옛 구조는 사라진다.
+   */
   structures: () => request<StructureSource[]>('/api/devsim/structures'),
 
   /** 구조에서 자동으로 찾은 계면 — 금속 접촉과 뒷면 경계. */
-  interfaces: (jobId: number, sequence: number, gateModel?: GateModel) =>
+  interfaces: (structureId: number, gateModel?: GateModel) =>
     request<DevSimInterfaces>(
-      `/api/devsim/jobs/${jobId}/artifacts/${sequence}/interfaces` +
+      `/api/devsim/structures/${structureId}/interfaces` +
         (gateModel ? `?gate_model=${gateModel}` : ''),
     ),
 
-  submit: (jobId: number, sequence: number, spec: DeviceSpec) =>
+  /**
+   * 단면 그림(재질만).
+   *
+   * `plot.surface` 와 같은 그림이지만 그쪽은 잡 산출물을 본다. 산출물은 스윕에
+   * 지워지므로 여기서는 보관본에서 그린다.
+   */
+  surface: (structureId: number) =>
+    request<SurfaceResponse>(`/api/devsim/structures/${structureId}/surface`),
+
+  submit: (structureId: number, spec: DeviceSpec) =>
     request<DevSimSubmitResponse>('/api/devsim/jobs', {
       method: 'POST',
-      body: { job_id: jobId, sequence, spec },
+      body: { structure_id: structureId, spec },
     }),
 
   /** 끝난 해석 목록. 비교 화면이 여기서 고른다. */

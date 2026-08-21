@@ -257,6 +257,74 @@ test('금속이 없는 단계는 소자 해석으로 넘길 수 없다', async (
   await expect(picker.locator('option')).toHaveCount(1)
 })
 
+test('같은 .in 을 다시 돌리면 그 구조가 갈아 끼워진다', async ({
+  page,
+  context,
+}) => {
+  // 공정 코드를 고쳐 다시 돌렸는데 옛 구조가 목록에 남아 있으면, 어느 것이
+  // 지금 코드의 결과인지 구분할 수 없다.
+  test.setTimeout(240_000)
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signUp(page, uniqueEmail('rerun'))
+
+  await runProcess(page)
+  await page.getByRole('tab', { name: '소자 해석' }).click()
+  const picker = page.locator('.devsim-bar select').first()
+  await expect(picker.locator('option')).toHaveCount(1, { timeout: 30_000 })
+  await expect(picker).toContainText('contacts.str')
+
+  // 같은 파일에서 금속을 빼고 다시 돌린다.
+  await page.getByRole('tab', { name: '공정' }).click()
+  await setSource(
+    page,
+    [
+      'line x loc=0 spacing=0.5 tag=left',
+      'line x loc=1 spacing=0.5 tag=right',
+      'line y loc=0 spacing=0.2 tag=top',
+      'line y loc=1 spacing=0.5 tag=bottom',
+      'region silicon xlo=left xhi=right ylo=top yhi=bottom',
+      'bound exposed xlo=left xhi=right ylo=top yhi=top',
+      'bound backside xlo=left xhi=right ylo=bottom yhi=bottom',
+      'initialize boron conc=1.0e15 ori=100',
+      'structure out=nometal.str',
+      '',
+    ].join('\n'),
+  )
+  await page.getByRole('button', { name: /실행/ }).click()
+  await expect(page.locator('.stage-name')).toHaveText('nometal.str', {
+    timeout: 120_000,
+  })
+
+  // 옛 구조가 사라져 있어야 한다.
+  await page.getByRole('tab', { name: '소자 해석' }).click()
+  await expect(picker).toContainText('전극이 있는 실행 결과가 없습니다', {
+    timeout: 30_000,
+  })
+  await expect(picker.locator('option')).toHaveCount(1)
+})
+
+test('계면 이름을 바꾸면 전극 옆 표시도 따라간다', async ({ page, context }) => {
+  test.setTimeout(180_000)
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signUp(page, uniqueEmail('rename'))
+
+  await runProcess(page)
+  await page.getByRole('button', { name: '소자 해석' }).click()
+
+  const list = page.locator('.electrode-list li')
+  await expect(list).toHaveCount(4, { timeout: 30_000 })
+
+  const popover = await clickInterface(page, /body/)
+  await expect(popover).toBeVisible()
+  const name = popover.getByLabel('계면 이름')
+  await name.fill('')
+  await name.pressSequentially('기판 뒷면')
+
+  await expect(name).toHaveValue('기판 뒷면')
+  // 전극 목록의 칩에도 그대로 나와야 한다.
+  await expect(list.nth(3).locator('.chip')).toHaveText(['기판 뒷면'])
+})
+
 test('무엇을 전극으로 보는지 탭에 적혀 있다', async ({ page, context }) => {
   // 목록에 왜 일부 단계만 나오는지 알려주지 않으면, 사용자는 앱이 결과를
   // 잃어버린 줄 안다.

@@ -60,6 +60,7 @@ def build_worker(
         jobs_root=settings.jobs_root,
         image=settings.sandbox_image,
         devsim_image=settings.devsim_image,
+        structures_root=settings.structures_root,
         limits=SandboxLimits(timeout_seconds=settings.job_timeout_seconds),
     )
 

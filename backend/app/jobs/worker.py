@@ -16,9 +16,19 @@ from collections.abc import Sequence
 from datetime import timedelta
 from pathlib import Path
 
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import Artifact, DevSimResult, Job, JobKind, JobStatus, SourceRevision
+from app.db.models import (
+    Artifact,
+    DevSimResult,
+    Job,
+    JobKind,
+    JobStatus,
+    SavedStructure,
+    SourceRevision,
+)
+from app.devsim.catalog import place_files
 from app.devsim.service import DEFAULT_IMAGE as DEVSIM_IMAGE
 from app.devsim.service import DEFAULT_LIMITS as DEVSIM_LIMITS
 from app.devsim.service import DeviceResult, run_device_simulation
@@ -48,10 +58,14 @@ class Worker:
         limits: SandboxLimits | None = None,
         devsim_image: str = DEVSIM_IMAGE,
         devsim_limits: SandboxLimits | None = None,
+        structures_root: Path | None = None,
     ) -> None:
         self.queue = queue
         self.sessionmaker = sessionmaker
         self.jobs_root = jobs_root
+        #: 전극이 있는 `.str` 을 오래 두는 곳. 잡 작업디렉토리 밖이라 스윕이
+        #: 건드리지 않는다.
+        self.structures_root = structures_root or Path("var/structures")
         self.image = image
         self.limits = limits or SandboxLimits()
         # 소자 해석은 상한이 다르다. 직접 솔버가 메모리를 더 쓰고 오래 돈다.
@@ -150,6 +164,8 @@ class Worker:
             await self._save_dataset(job_id, result)
         else:
             await self._save_artifacts(job_id, result.structure_files)
+            if result.succeeded:
+                await self._save_structures(job_id, result.structure_files)
         await self.queue.mark_finished(
             job_id,
             status=_status_for(result),
@@ -174,6 +190,58 @@ class Worker:
                     )
                 )
             await session.commit()
+
+    async def _save_structures(
+        self, job_id: int, files: Sequence[Path]
+    ) -> None:
+        """전극이 있는 구조를 보관소로 옮긴다.
+
+        같은 `.in` 을 다시 돌렸으면 그 `.in` 의 옛 보관본은 파일과 행 모두
+        지우고 새로 채운다. 공정 코드를 고쳐 다시 돌렸는데 옛 구조가 목록에
+        남아 있으면 어느 것이 지금 코드의 결과인지 구분할 수 없다.
+
+        여기서 나는 오류로 잡을 실패시키지 않는다. 공정 결과 자체는 멀쩡하다.
+        """
+        async with self.sessionmaker() as session:
+            job = await session.get(Job, job_id)
+            if job is None or not job.source_path:
+                return
+            try:
+                placed = await asyncio.to_thread(
+                    place_files,
+                    self.structures_root,
+                    job.owner_id,
+                    job.source_path,
+                    list(enumerate(files, start=1)),
+                )
+            except OSError:
+                logger.warning("구조 보관에 실패했습니다", exc_info=True)
+                return
+
+            await session.execute(
+                delete(SavedStructure).where(
+                    SavedStructure.owner_id == job.owner_id,
+                    SavedStructure.source_path == job.source_path,
+                )
+            )
+            for entry in placed:
+                session.add(
+                    SavedStructure(
+                        owner_id=job.owner_id,
+                        source_path=job.source_path,
+                        job_id=job_id,
+                        sequence=entry.sequence,
+                        filename=entry.filename,
+                        path=entry.path,
+                        size_bytes=entry.size_bytes,
+                    )
+                )
+            await session.commit()
+            logger.info(
+                "%s 에서 전극이 있는 구조 %d개를 보관했습니다",
+                job.source_path,
+                len(placed),
+            )
 
     async def _save_dataset(self, job_id: int, result: DeviceResult) -> None:
         """곡선을 DB 에도 남긴다.

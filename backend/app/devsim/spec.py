@@ -124,6 +124,20 @@ class DeviceSpec(BaseModel):
     label: str = Field(default="해석", min_length=1, max_length=120)
     #: 어느 구조에서 왔는지. **서버가 채운다** — 브라우저가 보낸 값은 덮어쓴다.
     structure: str = Field(default="", max_length=255)
+    #: 계면에 사용자가 붙인 이름. 열쇠는 그대로 두고 표시만 바꾼다 — 열쇠는
+    #: 구조에서 나온 신원이라, 바꾸면 다음 실행에서 그 계면을 못 찾는다.
+    interface_names: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _sane_interface_names(self) -> DeviceSpec:
+        if len(self.interface_names) > 32:
+            raise ValueError("계면 이름이 너무 많습니다")
+        for key, name in self.interface_names.items():
+            if not key or len(key) > 32:
+                raise ValueError(f"계면 열쇠가 이상합니다: {key!r}")
+            if not name.strip() or len(name) > 32:
+                raise ValueError(f"{key}: 계면 이름은 1~32 자여야 합니다")
+        return self
 
     def sweep_bias(self) -> Bias:
         return next(b for b in self.biases if b.role is BiasRole.SWEEP)

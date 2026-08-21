@@ -182,6 +182,41 @@ def add_drift_diffusion(payload: dict) -> None:
             )
 
 
+def solution_names(region: dict) -> list[str]:
+    """그 영역이 들고 있는 미지수들."""
+    if region["is_semiconductor"]:
+        return ["Potential", "Electrons", "Holes"]
+    return ["Potential"]
+
+
+def snapshot(payload: dict) -> dict[str, dict[str, list[float]]]:
+    """지금 해를 통째로 떠 둔다.
+
+    수렴에 실패하면 뉴턴이 헤매다 만 값이 그대로 남는다. 그 상태에서 다음 점을
+    풀면 거기서도 실패하고, 한 점이 안 풀린 것이 곡선 전체를 잃는 것으로 번진다.
+    그래서 마지막으로 성공한 자리로 되돌린 뒤 다음 점으로 넘어간다.
+    """
+    return {
+        region["name"]: {
+            name: list(
+                ds.get_node_model_values(
+                    device=DEVICE, region=region["name"], name=name
+                )
+            )
+            for name in solution_names(region)
+        }
+        for region in payload["regions"]
+    }
+
+
+def restore(state: dict[str, dict[str, list[float]]]) -> None:
+    for region, models in state.items():
+        for name, values in models.items():
+            ds.set_node_values(
+                device=DEVICE, region=region, name=name, values=values
+            )
+
+
 def contact_bias_names(payload: dict) -> dict[str, list[str]]:
     """전압원 이름 → 그 전압원이 물고 있는 DevSim 접촉들."""
     grouped: dict[str, list[str]] = {}
@@ -206,15 +241,30 @@ class Solver:
         ds.solve(**_TRANSPORT, **_DC)
 
     def ramp_to(self, bias: str, target: float) -> None:
-        """전압을 조금씩 옮긴다. 한 번에 뛰면 뉴턴이 못 따라간다."""
+        """전압을 조금씩 옮긴다. 한 번에 뛰면 뉴턴이 못 따라간다.
+
+        실패하면 **걸어 둔 전압을 원래대로 되돌리고** 예외를 그대로 올린다.
+        중간까지 올라간 채로 두면 다음 점이 어디서 출발하는지 알 수 없다.
+        """
         current = self.applied[bias]
         span = target - current
         steps = max(1, int(abs(span) / MAX_BIAS_STEP + 0.999))
         for index in range(1, steps + 1):
             value = current + span * index / steps
             self._set(bias, value)
-            self.solve()
+            try:
+                self.solve()
+            except Exception:
+                self._set(bias, current)
+                self.applied[bias] = current
+                raise
             self.applied[bias] = value
+
+    def reset_to(self, applied: dict[str, float]) -> None:
+        """걸어 둔 전압을 통째로 되돌린다. 해를 되돌릴 때 같이 부른다."""
+        for bias, value in applied.items():
+            self._set(bias, value)
+        self.applied = dict(applied)
 
     def currents(self) -> dict[str, float]:
         """전압원별 전류(A/µm). 산화막에만 붙은 전압원은 전류가 없다."""
@@ -260,30 +310,74 @@ def run(payload: dict) -> dict:
     for name, value in plan["constants"].items():
         solver.ramp_to(name, value)
 
+    # 여기까지가 모든 곡선의 출발점이다. 한 곡선이 통째로 안 풀렸을 때 돌아온다.
+    baseline = snapshot(payload)
+    baseline_bias = dict(solver.applied)
+
     stream = (WORK / "iv.jsonl").open("w")
     rows: list[dict] = []
-    failure: str | None = None
+    failures: list[dict] = []
+
+    def record(row: dict) -> None:
+        stream.write(json.dumps(row) + "\n")
+        stream.flush()
+
+    def give_up(combination: dict, value: float | None, error: Exception) -> None:
+        """안 풀린 점을 적어 두고 넘어간다.
+
+        점 하나가 안 풀렸다고 해석을 통째로 버리지 않는다. 스윕 끝쪽 몇 점이
+        발산하는 것은 흔한 일이고, 그 앞의 곡선은 멀쩡하다.
+        """
+        # devsim 의 오류 문구는 줄바꿈이 붙어 온다. 화면에 그대로 내보내면
+        # 목록이 한 줄씩 벌어진다.
+        reason = str(error).strip() or error.__class__.__name__
+        entry = {"sweep": value, "steps": dict(combination), "reason": reason}
+        failures.append(entry)
+        record({**entry, "ok": False})
+        print(
+            f"수렴 실패, 이 점은 건너뜁니다: {combination} {sweep_name}={value} — {reason}",
+            file=sys.stderr,
+        )
 
     try:
         for combination in plan["steps"]:
-            for name, value in combination.items():
-                solver.ramp_to(name, value)
-            # 스윕은 늘 처음부터 다시 훑는다. 앞 곡선의 끝에서 이어가면 첫 점이
-            # 이력에 오염된다.
-            solver.ramp_to(sweep_name, sweep_values[0])
+            try:
+                for name, value in combination.items():
+                    solver.ramp_to(name, value)
+                # 스윕은 늘 처음부터 다시 훑는다. 앞 곡선의 끝에서 이어가면 첫
+                # 점이 이력에 오염된다.
+                solver.ramp_to(sweep_name, sweep_values[0])
+            except Exception as error:
+                # 곡선의 출발점부터 안 풀렸다. 이 조합은 통째로 못 얻는다.
+                restore(baseline)
+                solver.reset_to(baseline_bias)
+                for value in sweep_values:
+                    give_up(combination, value, error)
+                continue
+
+            # 이 곡선 안에서 마지막으로 성공한 자리.
+            good = snapshot(payload)
+            good_bias = dict(solver.applied)
+
             for value in sweep_values:
-                solver.ramp_to(sweep_name, value)
+                try:
+                    solver.ramp_to(sweep_name, value)
+                except Exception as error:
+                    restore(good)
+                    solver.reset_to(good_bias)
+                    give_up(combination, value, error)
+                    continue
+
+                good = snapshot(payload)
+                good_bias = dict(solver.applied)
                 row = {
                     "sweep": value,
                     "steps": dict(combination),
                     "currents": solver.currents(),
+                    "ok": True,
                 }
                 rows.append(row)
-                stream.write(json.dumps(row) + "\n")
-                stream.flush()
-    except Exception as error:  # devsim 은 수렴 실패를 예외로 던진다
-        failure = str(error) or error.__class__.__name__
-        print(f"해석이 중간에 멈췄습니다: {failure}", file=sys.stderr)
+                record(row)
     finally:
         stream.close()
 
@@ -293,9 +387,10 @@ def run(payload: dict) -> dict:
         "biases": sorted(solver.groups),
         "current_unit": "A/um",
         "rows": rows,
+        "failures": failures,
         "total": plan["total"],
         "completed": len(rows),
-        "error": failure,
+        "error": None,
     }
 
 
@@ -305,9 +400,9 @@ def main() -> int:
     setup_physics(payload)
     result = run(payload)
     (WORK / "iv.json").write_text(json.dumps(result))
-    if result["error"] and not result["rows"]:
-        return 1
-    return 0
+    # 한 점도 못 얻었으면 실패다. 몇 점을 건너뛴 것은 실패가 아니다 — 사용자가
+    # 볼 곡선이 남아 있고, 어느 점이 빠졌는지도 함께 알려준다.
+    return 0 if result["rows"] else 1
 
 
 if __name__ == "__main__":
