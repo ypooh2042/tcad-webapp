@@ -117,8 +117,7 @@ export function SourceEditor({
         <h3>전압원</h3>
         <p className="hint">
           전극마다 전압원이 하나씩 있습니다. 스윕은 하나만 둘 수 있고 그것이
-          곡선의 가로축이 됩니다. 여러 계면을 한 전위로 묶으려면 전압원이 아니라
-          전극 쪽에서 계면을 여러 개 붙이세요.
+          곡선의 가로축이 됩니다.
         </p>
         {spec.biases.map((bias, index) => (
           // data-role 을 둔다. 역할 <select> 안에는 세 선택지의 글자가 모두

@@ -207,11 +207,13 @@ test('해석 패널 폭을 끌어서 바꾼다', async ({ page, context }) => {
   expect(after).toBeGreaterThan(before + 80)
 })
 
-test('금속이 없는 단계에는 전극이 없다고 알려 준다', async ({
+test('금속이 없는 단계는 소자 해석으로 넘길 수 없다', async ({
   page,
   context,
 }) => {
-  // 조용히 빈 화면을 보여 주면 사용자는 앱이 고장 난 줄 안다.
+  // 전극은 알루미늄이 실리콘이나 폴리실리콘에 닿아야 생긴다. 넘길 수 있게
+  // 두면 사용자는 넘어간 뒤에야 "전극이 없습니다"를 보고, 25단계짜리 흐름에서
+  // 어느 단계부터 되는지 하나씩 눌러 보게 된다.
   test.setTimeout(180_000)
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await signUp(page, uniqueEmail('nometal'))
@@ -236,9 +238,34 @@ test('금속이 없는 단계에는 전극이 없다고 알려 준다', async ({
   await expect(page.locator('.status-succeeded')).toBeVisible({
     timeout: 90_000,
   })
+  // 결과가 그려질 때까지 기다린다. 편집기 본문에도 같은 글자가 있으므로
+  // 결과 창 안으로 좁힌다.
+  await expect(page.locator('.stage-name')).toHaveText('bare.str')
 
-  await page.getByRole('button', { name: '소자 해석' }).click()
-  await expect(page.getByText(/금속 전극이 없습니다/)).toBeVisible({
+  // 결과 창에 넘기기 버튼이 아예 없어야 한다. 머리말의 화면 전환 탭은 같은
+  // 글자를 쓰므로 버튼 쪽만 센다.
+  await expect(page.locator('button.analyse')).toHaveCount(0)
+
+  // 소자 해석 탭의 구조 목록에도 올라오지 않는다.
+  //
+  // <option> 자체는 Playwright 가 숨은 것으로 보므로 <select> 쪽에서 본다.
+  await page.getByRole('tab', { name: '소자 해석' }).click()
+  const picker = page.locator('.devsim-bar select').first()
+  await expect(picker).toContainText('전극이 있는 실행 결과가 없습니다', {
     timeout: 30_000,
   })
+  await expect(picker.locator('option')).toHaveCount(1)
+})
+
+test('무엇을 전극으로 보는지 탭에 적혀 있다', async ({ page, context }) => {
+  // 목록에 왜 일부 단계만 나오는지 알려주지 않으면, 사용자는 앱이 결과를
+  // 잃어버린 줄 안다.
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signUp(page, uniqueEmail('notice'))
+
+  await page.getByRole('tab', { name: '소자 해석' }).click()
+  const notice = page.locator('.devsim-bar .notice')
+  await expect(notice).toBeVisible()
+  await expect(notice).toContainText('알루미늄')
+  await expect(notice).toContainText('폴리실리콘')
 })

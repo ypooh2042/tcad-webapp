@@ -373,6 +373,61 @@ class TestStructures:
     (`app/workspace/service.py`) 잡 산출물에서 뽑아 준다.
     """
 
+    async def test_only_offers_structures_with_metal_contacts(
+        self, app, client, structure_job, tmp_path
+    ) -> None:
+        """전극이 없는 단계는 아예 목록에 올리지 않는다.
+
+        올려 두면 사용자는 고른 뒤에야 "전극이 없습니다"를 보고, 25단계짜리
+        흐름에서 어느 단계부터 되는지 하나씩 눌러 보게 된다.
+        """
+        bare = tmp_path / "source-job" / "bare.str"
+        bare.write_text((FIXTURES / "2d_cmos_source.str").read_text())
+        async with app.state.sessionmaker() as session:
+            session.add(
+                Artifact(
+                    job_id=structure_job,
+                    filename=bare.name,
+                    path=str(bare),
+                    size_bytes=bare.stat().st_size,
+                    sequence=2,
+                )
+            )
+            await session.commit()
+
+        body = (await client.get("/api/devsim/structures")).json()
+        assert [a["filename"] for a in body[0]["artifacts"]] == ["contacts.str"]
+
+    async def test_a_run_with_no_usable_structure_disappears(
+        self, app, client, tmp_path
+    ) -> None:
+        workdir = tmp_path / "bare-job"
+        workdir.mkdir()
+        bare = workdir / "bare.str"
+        bare.write_text((FIXTURES / "2d_cmos_source.str").read_text())
+        async with app.state.sessionmaker() as session:
+            job = Job(
+                owner_id=await owner_id(app),
+                source_path="bare.in",
+                status=JobStatus.SUCCEEDED,
+                workdir=str(workdir),
+            )
+            session.add(job)
+            await session.flush()
+            session.add(
+                Artifact(
+                    job_id=job.id,
+                    filename=bare.name,
+                    path=str(bare),
+                    size_bytes=bare.stat().st_size,
+                    sequence=1,
+                )
+            )
+            await session.commit()
+
+        body = (await client.get("/api/devsim/structures")).json()
+        assert body == []
+
     async def test_lists_structures_from_my_runs(
         self, client, structure_job
     ) -> None:

@@ -47,3 +47,22 @@ def resolve_material(material_id: int) -> str:
 
 def is_known_material(material_id: int) -> bool:
     return material_id in _MATERIAL_NAMES
+
+
+_MATERIAL_IDS: dict[str, int] = {
+    name: material_id for material_id, name in _MATERIAL_NAMES.items()
+}
+
+
+def material_id_of(name: str) -> int:
+    """이름으로 material_id 를 찾는다. `resolve_material` 의 역방향이다.
+
+    번호를 코드 여기저기에 박아 두지 않으려고 둔다 — 표가 한 군데 있는데도
+    "알루미늄은 6" 을 다른 파일에 또 적으면, 표를 고칠 때 한쪽만 고쳐진다.
+    """
+    try:
+        return _MATERIAL_IDS[name]
+    except KeyError:
+        raise KeyError(
+            f"{name!r} 는 아는 재질이 아닙니다. 사용 가능: {sorted(_MATERIAL_IDS)}"
+        ) from None

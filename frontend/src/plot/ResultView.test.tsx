@@ -606,3 +606,38 @@ describe('처음 보여줄 단계', () => {
     expect(screen.getByText(/1\/2/)).toBeInTheDocument()
   })
 })
+
+describe('소자 해석으로 넘기기', () => {
+  it('금속이 있는 단계에만 버튼이 보인다', async () => {
+    // 전극은 알루미늄이 실리콘이나 폴리실리콘에 닿아야 생긴다. 금속이 아예
+    // 없는 단계에서 넘겨 봐야 "전극이 없습니다"만 보게 된다.
+    plot.summary.mockResolvedValue(summary({ materials: ['silicon', 'aluminum'] }))
+    render(
+      <ResultView jobId={1} artifacts={ARTIFACTS} onAnalyse={vi.fn()} />,
+    )
+    expect(
+      await screen.findByRole('button', { name: '소자 해석' }),
+    ).toBeInTheDocument()
+  })
+
+  it('금속이 없으면 버튼을 두지 않는다', async () => {
+    plot.summary.mockResolvedValue(summary({ materials: ['silicon', 'oxide'] }))
+    render(
+      <ResultView jobId={1} artifacts={ARTIFACTS} onAnalyse={vi.fn()} />,
+    )
+    // 요약이 도착한 뒤에 봐야 한다. 도착 전에는 어차피 아무것도 없다.
+    expect(await screen.findByText(/after_diffuse\.str/)).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '소자 해석' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('넘길 곳이 없으면 금속이 있어도 버튼을 두지 않는다', async () => {
+    plot.summary.mockResolvedValue(summary({ materials: ['aluminum'] }))
+    render(<ResultView jobId={1} artifacts={ARTIFACTS} />)
+    expect(await screen.findByText(/after_diffuse\.str/)).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '소자 해석' }),
+    ).not.toBeInTheDocument()
+  })
+})

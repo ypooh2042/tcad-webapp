@@ -8,7 +8,7 @@
  * 워커도 함께 띄운다. 잡이 실제로 도는 것까지 봐야 E2E 다.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, openSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -129,15 +129,32 @@ export default async function globalSetup() {
 
   run(PYTHON, ['-m', 'alembic', 'upgrade', 'head'], env)
 
+  // **파이프로 띄우면 안 된다.** 예전에는 `stdio: 'pipe'` 였는데 아무도 읽지
+  // 않았다. 파이프 버퍼(64KB)가 차는 순간 uvicorn 과 워커가 write 에서 멈추고,
+  // 그때부터 요청이 처리되지 않는다.
+  //
+  // 짧은 실행에서는 안 드러난다 — 로그가 64KB 를 못 채우기 때문이다. 시험이
+  // 쉰 개쯤 되면 스위트 끝에서 무너지는데, 멈추는 자리가 매번 달라서(그때
+  // 마침 오간 요청이 무엇이냐에 달렸다) 느려서 그런 줄 알고 제한 시간을
+  // 180초까지 올려 봐도 낫지 않았다. 막힌 프로세스는 기다린다고 풀리지 않는다.
+  //
+  // 파일로 흘려보내면 막히지 않고, 덤으로 깨졌을 때 서버가 한 말을 볼 수 있다.
+  const apiLog = openSync(join(tmpdir(), 'tcad-e2e-api.log'), 'w')
+  const workerLog = openSync(join(tmpdir(), 'tcad-e2e-worker.log'), 'w')
+
   state.api = spawn(
     PYTHON,
     ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(API_PORT)],
-    { cwd: BACKEND_ROOT, env: { ...process.env, ...env }, stdio: 'pipe' },
+    {
+      cwd: BACKEND_ROOT,
+      env: { ...process.env, ...env },
+      stdio: ['ignore', apiLog, apiLog],
+    },
   )
   state.worker = spawn(PYTHON, ['-m', 'app.jobs.main'], {
     cwd: BACKEND_ROOT,
     env: { ...process.env, ...env },
-    stdio: 'pipe',
+    stdio: ['ignore', workerLog, workerLog],
   })
 
   // 테스트는 별도 워커 프로세스에서 돈다. globalSetup 의 env 를 그대로

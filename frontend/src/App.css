@@ -992,3 +992,25 @@ button.analyse {
   font-size: 12px;
   white-space: nowrap;
 }
+
+/*
+ * 소자 해석이 무엇을 전극으로 보는지 알리는 문구. 목록에 왜 일부 단계만
+ * 나오는지 여기서 설명하지 않으면, 사용자는 앱이 결과를 잃어버린 줄 안다.
+ */
+.devsim-bar .notice {
+  flex-basis: 100%;
+  order: 10;
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.devsim-bar .notice strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.devsim-bar {
+  flex-wrap: wrap;
+}

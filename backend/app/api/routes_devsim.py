@@ -39,6 +39,7 @@ from app.core.config import Settings
 from app.db.models import Artifact, DevSimResult, Job, JobKind, JobStatus
 from app.devsim.electrodes import Electrode, GateModel, detect_interfaces
 from app.devsim.resolve import ElectrodeNotFound, resolve_electrodes
+from app.devsim.screening import analysable
 from app.devsim.service import place_structure
 from app.devsim.spec import DeviceSpec, total_points
 from app.jobs.queue import JobQueue
@@ -273,6 +274,11 @@ async def structures(
     결과라서 사용자가 직접 만들거나 지우는 것이 아니다). 그래서 잡 산출물에서
     뽑아 준다. 성공한 **공정 실행**만 고른다 — 해석 결과(`iv.json`)를 다시
     해석할 수는 없다.
+
+    그리고 **전극이 있는 단계만** 올린다. 알루미늄이 실리콘이나 폴리실리콘에
+    닿아야 전극이 된다(`app/devsim/screening.py`). 그렇지 않은 단계까지 올려
+    두면 사용자는 고른 뒤에야 "전극이 없습니다"를 보고, 25단계짜리 흐름에서
+    어느 단계부터 되는지 하나씩 눌러 보게 된다.
     """
     jobs = (
         await db.scalars(
@@ -296,6 +302,8 @@ async def structures(
     )
     grouped: dict[int, list[StructureArtifact]] = {}
     for artifact in rows:
+        if not analysable(Path(artifact.path)):
+            continue
         grouped.setdefault(artifact.job_id, []).append(
             StructureArtifact(
                 sequence=artifact.sequence, filename=artifact.filename

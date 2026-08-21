@@ -250,7 +250,11 @@ export function ResultView({ jobId, artifacts, onAnalyse }: Props) {
             {step + 1}/{artifacts.length}
           </span>
         )}
-        {onAnalyse && current && (
+        {/* 금속이 없는 단계에는 두지 않는다. 전극은 알루미늄이 실리콘이나
+            폴리실리콘에 닿아야 생기므로, 금속이 아예 없으면 넘겨 봐야 "전극이
+            없습니다"만 보게 된다. 요약에 이미 재질 목록이 있어 따로 물을 것이
+            없다(닿았는지까지는 서버가 목록을 만들 때 정확히 가른다). */}
+        {onAnalyse && current && summary?.materials.includes('aluminum') && (
           <button
             type="button"
             className="analyse"

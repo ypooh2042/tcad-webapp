@@ -136,6 +136,20 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
     }
   }, [selection, gateModel])
 
+  // 고른 구조가 목록에 없으면(전극이 없는 단계를 결과 창에서 넘겨받은 경우)
+  // 고르개가 빈칸이 된다. 그 자리를 채울 임시 항목.
+  const handedOffOnly = useMemo(() => {
+    if (!selection) return null
+    const listed = sources.some((source) =>
+      source.artifacts.some(
+        (artifact) =>
+          source.job_id === selection.jobId &&
+          artifact.sequence === selection.sequence,
+      ),
+    )
+    return listed ? null : selection
+  }, [selection, sources])
+
   const problems = useMemo(() => (spec ? problemsOf(spec) : []), [spec])
   const points = useMemo(() => (spec ? pointCount(spec) : 0), [spec])
 
@@ -211,7 +225,16 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
               setSelection({ jobId: Number(job), sequence: Number(sequence) })
             }}
           >
-            {sources.length === 0 ? <option value="">실행 결과가 없습니다</option> : null}
+            {sources.length === 0 ? (
+              <option value="">전극이 있는 실행 결과가 없습니다</option>
+            ) : null}
+            {/* 결과 창에서 넘어온 구조가 목록에 없을 수 있다(전극이 없는 단계).
+                빈칸으로 두면 지금 무엇을 보고 있는지 알 수 없다. */}
+            {handedOffOnly ? (
+              <option value={`${handedOffOnly.jobId}:${handedOffOnly.sequence}`}>
+                넘겨받은 구조 (전극 없음)
+              </option>
+            ) : null}
             {sources.map((source) =>
               source.artifacts.map((artifact) => (
                 <option
@@ -235,6 +258,12 @@ export function DevSimPage({ handoff, onHandoffUsed }: Props) {
             <option value="conductor">이상 도체로</option>
           </select>
         </label>
+
+        <p className="notice">
+          <strong>알루미늄이 실리콘 또는 폴리실리콘에 닿은 계면</strong>만 전극으로
+          인식합니다. 금속 배선까지 끝나 그런 계면이 생긴 단계만 위 목록에
+          나옵니다.
+        </p>
 
         <div className="devsim-tabs" role="tablist">
           <button

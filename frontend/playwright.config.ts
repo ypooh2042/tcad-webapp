@@ -15,7 +15,10 @@ const PORT = 5273
 export default defineConfig({
   testDir: './e2e',
   // 브라우저를 띄우는 테스트라 단위 테스트보다 넉넉히 준다.
-  timeout: 60_000,
+  // 한 시험에 컨테이너가 여러 번 돌 수 있다 — 공정(suprem), 재메시(gmsh),
+  // 소자 해석(devsim). 개별 시험이 안쪽에서 120초를 기다리는 곳이 있어 그보다
+  // 넉넉해야 한다.
+  timeout: 150_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
   // 동시 접속 정원과 잡 큐를 공유하므로 병렬로 돌리면 서로를 방해한다.
