@@ -33,8 +33,12 @@ function statusOf(invite: InviteSummary): string {
 export function AdminPanel({ onClose }: { onClose: () => void }) {
   const [invites, setInvites] = useState<InviteSummary[]>([])
   const [issued, setIssued] = useState<IssuedInvite | null>(null)
-  const [maxUses, setMaxUses] = useState(1)
-  const [validDays, setValidDays] = useState(7)
+  // 숫자가 아니라 **칸에 적힌 글자**를 들고 있는다. 숫자로 들고 있으면 칸을
+  // 비우는 순간 `Number('')` 이 0 이 되어, 값을 고치려고 지웠을 뿐인데 서버의
+  // `ge=1` 에 걸려 422 가 돌아온다. 소자 해석의 전압 칸에서 겪은 것과 같다
+  // (`features/devsim/NumberField.tsx`).
+  const [maxUses, setMaxUses] = useState('1')
+  const [validDays, setValidDays] = useState('7')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -49,12 +53,30 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
 
   useEffect(refresh, [refresh])
 
+  /**
+   * 칸에 적힌 것을 서버가 받아 주는 값으로 바꾼다.
+   *
+   * 비었거나 숫자가 아니면 기본값, 범위를 벗어나면 가장 가까운 허용값.
+   * 서버도 같은 범위를 강제하므로(벗어나면 422) 보내기 전에 맞춘다.
+   */
+  function clamp(text: string, fallback: number, max: number): number {
+    const parsed = Number.parseInt(text, 10)
+    if (!Number.isFinite(parsed)) return fallback
+    return Math.min(Math.max(parsed, 1), max)
+  }
+
   async function issue() {
     setBusy(true)
     setError(null)
     setCopied(false)
     try {
-      setIssued(await admin.issueInvite(maxUses, validDays))
+      const uses = clamp(maxUses, 1, MAX_USES_LIMIT)
+      const days = clamp(validDays, 7, MAX_VALID_DAYS)
+      // 고쳐서 보냈으면 칸도 그 값으로 되돌린다. 안 그러면 화면은 비어 있는데
+      // 발급된 코드는 다른 값을 갖게 되어 무엇이 나갔는지 알 수 없다.
+      setMaxUses(String(uses))
+      setValidDays(String(days))
+      setIssued(await admin.issueInvite(uses, days))
       refresh()
     } catch (caught) {
       report(caught)
@@ -105,7 +127,7 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
           min={1}
           max={MAX_USES_LIMIT}
           value={maxUses}
-          onChange={(event) => setMaxUses(Number(event.target.value))}
+          onChange={(event) => setMaxUses(event.target.value)}
         />
         <label htmlFor="valid-days">유효 기간(일)</label>
         <input
@@ -114,7 +136,7 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
           min={1}
           max={MAX_VALID_DAYS}
           value={validDays}
-          onChange={(event) => setValidDays(Number(event.target.value))}
+          onChange={(event) => setValidDays(event.target.value)}
         />
         <button className="primary" onClick={() => void issue()} disabled={busy}>
           발급

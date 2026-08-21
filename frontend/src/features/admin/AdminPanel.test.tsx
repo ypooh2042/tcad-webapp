@@ -197,3 +197,53 @@ describe('닫기', () => {
     expect(onClose).toHaveBeenCalled()
   })
 })
+
+describe('숫자 칸을 비웠을 때', () => {
+  // `Number('')` 은 0 이다. 칸을 지우는 순간 상태가 0 이 되고, 그대로 발급을
+  // 누르면 서버의 `ge=1` 에 걸려 422 가 온다. 사용자는 값을 바꾸려고 지웠을
+  // 뿐인데 "요청이 실패했습니다" 를 본다.
+  it('사용 횟수를 지웠다가 다시 칠 수 있다', async () => {
+    render(<AdminPanel onClose={vi.fn()} />)
+
+    const input = await screen.findByLabelText('사용 횟수')
+    await userEvent.clear(input)
+    await userEvent.type(input, '5')
+
+    expect(input).toHaveValue(5)
+  })
+
+  it('비운 채로 발급하면 서버로 0 을 보내지 않는다', async () => {
+    render(<AdminPanel onClose={vi.fn()} />)
+
+    await userEvent.clear(await screen.findByLabelText('사용 횟수'))
+    await userEvent.click(screen.getByRole('button', { name: '발급' }))
+
+    // 보내더라도 서버가 받아 주는 값이어야 한다. 0 이나 NaN 은 422 다.
+    if (admin.issueInvite.mock.calls.length > 0) {
+      const [maxUses] = admin.issueInvite.mock.calls.at(-1)!
+      expect(maxUses).toBeGreaterThanOrEqual(1)
+    }
+  })
+
+  it('유효 기간도 지웠다가 다시 칠 수 있다', async () => {
+    render(<AdminPanel onClose={vi.fn()} />)
+
+    const input = await screen.findByLabelText('유효 기간(일)')
+    await userEvent.clear(input)
+    await userEvent.type(input, '30')
+
+    expect(input).toHaveValue(30)
+  })
+
+  it('비운 채로 발급하면 유효 기간도 1 이상이다', async () => {
+    render(<AdminPanel onClose={vi.fn()} />)
+
+    await userEvent.clear(await screen.findByLabelText('유효 기간(일)'))
+    await userEvent.click(screen.getByRole('button', { name: '발급' }))
+
+    if (admin.issueInvite.mock.calls.length > 0) {
+      const [, validDays] = admin.issueInvite.mock.calls.at(-1)!
+      expect(validDays).toBeGreaterThanOrEqual(1)
+    }
+  })
+})
