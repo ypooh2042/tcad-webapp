@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ApiError } from '../../api/client'
-import { devsim } from '../../api/endpoints'
+import { devsim, jobs } from '../../api/endpoints'
 import type {
   DeviceSpec,
   DevSimInterface,
@@ -91,7 +91,7 @@ export function DevSimPage({
   const [tab, setTab] = useState<'run' | 'compare'>('run')
   const [runWidth, setRunWidth] = usePanelWidth('tcad.width.devsim', 420)
 
-  const { job } = useJob(jobId)
+  const { job, applyStatus } = useJob(jobId)
 
   useEffect(() => {
     if (!active) return
@@ -261,6 +261,23 @@ export function DevSimPage({
     [edit],
   )
 
+  /**
+   * 도는 해석을 멈춘다.
+   *
+   * 잡 상태를 먼저 바꾸고 컨테이너를 죽이는 것은 서버가 한다. 여기서는 응답을
+   * 기다리지 않고 화면부터 바꾼다 — 다음 조회가 1.5초 뒤라 그때까지 버튼이
+   * 살아 있으면 사용자가 다시 누른다.
+   */
+  async function stop() {
+    if (jobId === null) return
+    try {
+      const result = await jobs.cancel(jobId)
+      applyStatus(result.status)
+    } catch (error) {
+      setMessage(`중단하지 못했습니다: ${messageOf(error)}`)
+    }
+  }
+
   async function run() {
     if (selection === null || !spec) return
     setMessage(null)
@@ -416,7 +433,7 @@ export function DevSimPage({
               </ul>
             ) : null}
             {message ? <p className="error">{message}</p> : null}
-            <RunResult job={job} />
+            <RunResult job={job} onCancel={stop} />
           </aside>
         </div>
       )}

@@ -560,6 +560,32 @@ test('짜 둔 조건이 새로고침을 견딘다', async ({ page, context }) =>
   )
 })
 
+test('도는 해석을 중단할 수 있다', async ({ page, context }) => {
+  // 중단은 작업디렉토리 이름에서 컨테이너 이름을 만들어 죽인다. 재메시가
+  // 임시 디렉토리에서 돌던 시절에는 이름이 어긋나, 재메시가 끝날 때까지
+  // (실측 12초, 큰 구조는 더) 중단이 먹지 않았다. 여기서 누르는 시점이
+  // 대개 그 구간이다.
+  test.setTimeout(180_000)
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signUp(page, uniqueEmail('stop'))
+
+  await page.getByRole('tab', { name: /소자 해석/ }).click()
+  await expect(page.locator('.bias[data-role="sweep"]')).toBeVisible({
+    timeout: 30_000,
+  })
+
+  await page.getByRole('button', { name: '해석 실행' }).click()
+  const stop = page.locator('.run-result').getByRole('button', { name: '중단' })
+  await expect(stop).toBeVisible({ timeout: 30_000 })
+  await stop.click()
+
+  await expect(page.locator('.run-result .status-cancelled')).toBeVisible({
+    timeout: 60_000,
+  })
+  // 멈춘 뒤에는 버튼이 없어야 한다. 남아 있으면 또 누르게 된다.
+  await expect(stop).toHaveCount(0)
+})
+
 test('무엇을 전극으로 보는지 탭에 적혀 있다', async ({ page, context }) => {
   // 목록에 왜 일부 단계만 나오는지 알려주지 않으면, 사용자는 앱이 결과를
   // 잃어버린 줄 안다.

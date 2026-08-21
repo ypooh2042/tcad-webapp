@@ -14,6 +14,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from contextlib import contextmanager
 from tempfile import TemporaryDirectory
 
 from app.remesh.assemble import assemble
@@ -29,6 +30,16 @@ DEFAULT_IMAGE = "tcad/remesh:latest"
 #: 컨테이너 안에서 쓸 파일 이름. 고정이라 사용자 입력이 인자에 섞이지 않는다.
 _GEO = "mesh.geo"
 _MSH = "mesh.msh"
+
+
+@contextmanager
+def _scratch(given: Path | None):
+    """작업할 자리. 건네받은 것이 있으면 그것을 쓰고, 없으면 임시로 만든다."""
+    if given is not None:
+        yield given
+        return
+    with TemporaryDirectory(prefix="remesh-") as tmp:
+        yield Path(tmp)
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,7 +66,8 @@ SIMPLIFY_TOLERANCE = 1.0e-3
 
 def remesh(source: str, image: str = DEFAULT_IMAGE,
            limits: SandboxLimits | None = None,
-           simplify_tolerance: float = SIMPLIFY_TOLERANCE) -> RemeshResult:
+           simplify_tolerance: float = SIMPLIFY_TOLERANCE,
+           workdir: Path | None = None) -> RemeshResult:
     """`.str` 텍스트를 받아 메시만 새로 짠 `.str` 텍스트를 돌려준다.
 
     형상은 그대로다 — 바깥 경계와 물질 계면을 제약으로 고정하고 안쪽만 다시
@@ -68,7 +80,13 @@ def remesh(source: str, image: str = DEFAULT_IMAGE,
     old = parse_structure(source)
     model = build_geo(old, simplify_tolerance)
 
-    with TemporaryDirectory(prefix="remesh-") as tmp:
+    # 잡이 자기 작업디렉토리를 건네면 거기서 돈다.
+    #
+    # 컨테이너 이름은 작업디렉토리 이름에서 나온다(`sandbox.container_name`).
+    # 임시 디렉토리에서 돌리면 이름이 `tcad-remesh-…` 가 되어, 중단 버튼이
+    # 죽이려는 `tcad-job-<uuid>` 와 어긋난다 — 재메시가 도는 동안(실측 12초,
+    # 큰 구조는 더) 중단이 먹지 않았다.
+    with _scratch(workdir) as tmp:
         workdir = Path(tmp).resolve()
         (workdir / _GEO).write_text(model.to_text())
         (workdir / BACKGROUND_FILE).write_text(model.background)

@@ -70,6 +70,14 @@ def scan_devsim_progress(workdir: Path, total: int) -> Progress | None:
             # 넘는다.
             latest = f"{_describe(row)} 로 옮기는 중"
             continue
+        # 건너뛴 점도 센다. 다시 오지 않으므로, 안 세면 진행률이 끝까지 못 차서
+        # 사용자는 멈춘 줄 안다.
         done += 1
-        latest = f"{_describe(row)} 풀림"
+        # 다만 **풀렸다고 하지는 않는다.** 그렇게 말하면 그 자리에 값이 있는 줄
+        # 알고, 곡선이 왜 끊겼는지는 숫자를 다 읽은 뒤에야 알게 된다.
+        latest = (
+            f"{_describe(row)} 수렴 실패 — 건너뜀"
+            if row.get("ok") is False
+            else f"{_describe(row)} 풀림"
+        )
     return Progress(done=done, total=total, latest=latest)

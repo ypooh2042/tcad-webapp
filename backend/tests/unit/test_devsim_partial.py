@@ -118,3 +118,42 @@ class TestMovingMarkers:
             json.dumps({"phase": "moving", "steps": {}}) + "\n"
         )
         assert _read_dataset(tmp_path, total=2) is None
+
+
+class TestRemeshRunsInTheJobDirectory:
+    """재메시도 잡의 컨테이너 이름으로 돌아야 한다.
+
+    중단 버튼은 작업디렉토리 이름에서 컨테이너 이름을 만들어 죽인다
+    (`sandbox.container_name`). 재메시가 임시 디렉토리에서 돌면 이름이 어긋나,
+    재메시가 도는 동안(실측 12초, 큰 구조는 더) 중단이 먹지 않는다.
+    """
+
+    def test_uses_the_workdir_it_is_given(self, tmp_path, monkeypatch) -> None:
+        from pathlib import Path
+
+        import app.devsim.service as service
+
+        seen: dict[str, Path | None] = {}
+
+        def fake_remesh(source, image=None, workdir=None, **rest):
+            seen["workdir"] = workdir
+            raise OSError("여기까지만 본다")
+
+        monkeypatch.setattr(service, "remesh", fake_remesh)
+        (tmp_path / service.STRUCTURE_FILENAME).write_text("v x\n")
+
+        spec = json.dumps(
+            {
+                "electrodes": [{"label": "a", "interfaces": ["source"]}],
+                "biases": [
+                    {
+                        "name": "V",
+                        "electrode": "a",
+                        "role": "sweep",
+                        "sweep": {"start": 0.0, "stop": 1.0, "points": 2},
+                    }
+                ],
+            }
+        )
+        service.run_device_simulation(spec, tmp_path)
+        assert seen["workdir"] == tmp_path

@@ -131,3 +131,53 @@ class TestMovingBetweenCurves:
         # 않지만, 옛 잡의 기록을 읽을 수도 있으니 세지는 않는다.
         self.write(tmp_path, [json.dumps({"phase": "moving", "steps": {}})])
         assert scan_devsim_progress(tmp_path, total=5).done == 0
+
+
+class TestSkippedPoints:
+    """수렴에 실패해 건너뛴 점은 그렇게 말해야 한다.
+
+    "풀림" 이라고 뜨면 사용자는 그 자리에 값이 있는 줄 안다. 곡선이 왜 끊겼는지
+    나중에야 알게 되고, 그때는 이미 그 숫자를 읽은 뒤다.
+    """
+
+    def failed(self, sweep: float, reason: str = "Convergence failure!") -> str:
+        return json.dumps(
+            {"sweep": sweep, "steps": {"Vg": 1.0}, "ok": False, "reason": reason}
+        )
+
+    def solved(self, sweep: float) -> str:
+        return json.dumps(
+            {
+                "sweep": sweep,
+                "steps": {"Vg": 1.0},
+                "currents": {"Vd": 1e-6},
+                "ok": True,
+            }
+        )
+
+    def write(self, workdir: Path, lines: list[str]) -> None:
+        (workdir / "iv.jsonl").write_text("\n".join(lines) + "\n")
+
+    def test_says_it_failed(self, tmp_path) -> None:
+        self.write(tmp_path, [self.solved(0.0), self.failed(0.5)])
+        latest = scan_devsim_progress(tmp_path, total=10).latest
+        assert "수렴" in latest
+        assert "풀림" not in latest
+
+    def test_names_the_point_that_failed(self, tmp_path) -> None:
+        self.write(tmp_path, [self.failed(1.5)])
+        latest = scan_devsim_progress(tmp_path, total=10).latest
+        assert "Vg=1V" in latest
+        assert "1.5V" in latest
+
+    def test_a_skipped_point_still_counts_as_attempted(self, tmp_path) -> None:
+        # 건너뛴 점은 다시 오지 않는다. 안 세면 진행률이 끝까지 못 차서
+        # 사용자는 멈춘 줄 안다.
+        self.write(tmp_path, [self.solved(0.0), self.failed(0.5), self.solved(1.0)])
+        assert scan_devsim_progress(tmp_path, total=3).done == 3
+
+    def test_a_later_success_takes_the_message_back(self, tmp_path) -> None:
+        self.write(tmp_path, [self.failed(0.5), self.solved(1.0)])
+        latest = scan_devsim_progress(tmp_path, total=10).latest
+        assert "수렴" not in latest
+        assert "풀림" in latest

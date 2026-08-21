@@ -37,7 +37,13 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: '중단됨',
 }
 
-export function RunResult({ job }: { job: JobDetail | null }) {
+interface Props {
+  job: JobDetail | null
+  /** 도는 해석을 멈춘다. 큐에 있거나 도는 중일 때만 버튼이 뜬다. */
+  onCancel?: () => void
+}
+
+export function RunResult({ job, onCancel }: Props) {
   const [dataset, setDataset] = useState<IvDataset | null>(null)
   const [bias, setBias] = useState<string | null>(null)
   const [logScale, setLogScale] = useState(false)
@@ -108,6 +114,11 @@ export function RunResult({ job }: { job: JobDetail | null }) {
         <span className={`status status-${job.status}`}>
           {STATUS_LABEL[job.status] ?? job.status}
         </span>
+        {onCancel && (job.status === 'queued' || job.status === 'running') ? (
+          <button type="button" onClick={onCancel}>
+            중단
+          </button>
+        ) : null}
         {elapsed !== null ? (
           <span className="elapsed">
             {job.status === 'running'

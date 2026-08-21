@@ -89,7 +89,9 @@ class DeviceResult:
 def _prepare_device(workdir: Path, spec: DeviceSpec) -> int:
     """`.str` 을 다시 메시하고 장치 설명을 쓴다. 바이어스 점 총수를 돌려준다."""
     source = (workdir / STRUCTURE_FILENAME).read_text()
-    rebuilt = remesh(source, image=REMESH_IMAGE)
+    # **잡 작업디렉토리에서 돌린다.** 컨테이너 이름이 거기서 나오므로, 이렇게
+    # 해야 재메시가 도는 동안에도 중단 버튼이 그 컨테이너를 죽일 수 있다.
+    rebuilt = remesh(source, image=REMESH_IMAGE, workdir=workdir)
     (workdir / REMESHED_FILENAME).write_text(rebuilt.text)
     logger.info(
         "재메시: 점 %d → %d, 요소 %d → %d",
