@@ -1,6 +1,6 @@
 # 코드맵
 
-**마지막 갱신:** 2026-08-19
+**마지막 갱신:** 2026-08-22
 
 이 저장소가 어떻게 나뉘어 있고 데이터가 어디로 흐르는지 설명하는 문서다.
 파일 목록이 아니라 **책임의 경계**를 적는다 — 어떤 모듈이 무엇을 보증하고,
@@ -15,8 +15,10 @@
 ## 이 프로젝트가 하는 일
 
 브라우저에서 SUPREM-IV.GS 공정 시뮬레이션 입력(`.in`)을 쓰고, 서버에서 돌리고,
-결과 구조(`.str`)를 그림으로 본다. 사용자는 소수(동시 접속 5명)이고 초대 없이는
-가입할 수 없다.
+결과 구조(`.str`)를 그림으로 본다. 그렇게 나온 구조에 전극을 붙여 DevSim 으로
+I-V 곡선까지 뽑는다. 사용자는 소수(동시 접속 5명)이고 초대 없이는 가입할 수 없다.
+
+설치와 로컬 실행 방법은 저장소 루트의 [README.md](../../README.md) 에 있다.
 
 ## 저장소 최상위 구성
 
@@ -24,7 +26,7 @@
 backend/       FastAPI API + 잡 워커 (Python)
 frontend/      React SPA (TypeScript, Vite)
 SUPREM4GS/     시뮬레이터 배포본 + 상류 소스 + 포맷 분석 문서
-docker/suprem/ 시뮬레이터를 소스에서 빌드하는 Containerfile 과 패치
+docker/        샌드박스 이미지 셋 — suprem(공정), remesh(gmsh), devsim(소자 해석)
 tools/         개발 시점에 한 번 돌리는 추출 스크립트 (매뉴얼·카탈로그)
 deploy/        nginx / systemd / 배포 스크립트
 compose.dev.yml 개발용 Redis + PostgreSQL
@@ -76,6 +78,17 @@ CPU 를 오래 물고 있어도 상태 조회가 막히지 않고, 워커만 따
    포맷 분석 근거는 `SUPREM4GS/STR_FILE_FORMAT.md` 에 있다(실행 결과와 공식
    후처리 툴 `postmini` 출력을 1:1 대조해 확정).
 
+5. **상태 조회에 실행 로그가 없다.**
+   `GET /api/jobs/{id}` 는 도는 동안 1.5초마다 불린다. 로그를 실었더니 폴링마다
+   출력 전체(실측 97KB)가 따라와 nginx 프록시 버퍼를 넘겼고, 그 탓에 응답이
+   깨져 브라우저가 완료를 영영 감지하지 못했다. 로그는 `GET /api/jobs/{id}/console`
+   로 **끝난 뒤 한 번만** 받는다. → [backend.md](backend.md) 의 1-3 절
+
+6. **루트리스 podman 의 pause 프로세스가 전제다.**
+   워커는 `NoNewPrivileges` 아래에서 돌아 그것을 스스로 만들지 못한다. 만드는
+   일은 별도 systemd 사용자 유닛이 맡는다(`deploy/systemd/tcad-podman.service`).
+   pause 가 없으면 모든 실행이 `newuidmap` 오류로 죽는다.
+
 ## 읽는 순서
 
 - 처음이면 [simulator.md](simulator.md) → [backend.md](backend.md) → [frontend.md](frontend.md).
@@ -84,6 +97,7 @@ CPU 를 오래 물고 있어도 상태 조회가 막히지 않고, 워커만 따
 
 ## 이 문서가 다루지 않는 것
 
+- 설치·로컬 실행 절차. 루트 [README.md](../../README.md) 에 있다.
 - 배포 절차와 운영 값. `deploy/` 아래 파일의 주석을 볼 것.
 - 시뮬레이션 물리 모델. 그건 `SUPREM4GS/Suprem-IV GS Manual.pdf` 의 몫이다.
 - 커맨드 문법 레퍼런스. `SUPREM4GS/COMMAND_REFERENCE.md` 와 앱의 매뉴얼 패널이 있다.

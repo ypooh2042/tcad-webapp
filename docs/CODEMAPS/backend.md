@@ -1,6 +1,6 @@
 # 백엔드 코드맵
 
-**마지막 갱신:** 2026-08-21
+**마지막 갱신:** 2026-08-22
 **진입점:** `backend/app/main.py` (API), `backend/app/jobs/main.py` (워커)
 
 FastAPI 앱과 잡 워커. 두 프로세스가 같은 코드베이스를 공유하고 PostgreSQL,
@@ -47,7 +47,9 @@ Redis, 호스트 파일시스템을 통해서만 서로를 만난다.
    ├─ Artifact 행 삽입 (sequence = 공정 단계 순서)
    └─ JobQueue.mark_finished          RUNNING 에서만 전이 (중단된 잡 보호)
 
-브라우저: GET /api/jobs/{id} 를 1.5초마다  → 상태·로그·산출물 목록
+브라우저: GET /api/jobs/{id} 를 1.5초마다  → 상태·실행시간·진행·산출물 목록
+                                             ★ 로그는 여기 없다 (아래 1-3)
+브라우저: GET /api/jobs/{id}/console        끝난 뒤 한 번 → {log, truncated}
 브라우저: GET /api/jobs/{id}/artifacts/{seq}/structure|profile|surface
    │
    └─ routes_plot → plotting.loader (mtime+size 키 LRU 캐시)
@@ -89,8 +91,12 @@ Redis, 호스트 파일시스템을 통해서만 서로를 만난다.
    └─ enqueue(kind='devsim', source=<스펙 JSON>)
 
 워커 _execute → kind 로 분기 → app/devsim/service.run_device_simulation
-   ├─ remesh()                  ★ 필수. 원본 SUPREM 메시는 실리콘 변의 23%가
+   ├─ remesh(workdir=workdir)   ★ 필수. 원본 SUPREM 메시는 실리콘 변의 23%가
    │                              EdgeCouple 0(둔각)이라 뉴턴이 선다.
+   │                            ★ **잡 작업디렉토리에서 돌린다.** 컨테이너 이름은
+   │                              작업디렉토리 이름에서 나오므로(`tcad-job-<uuid>`),
+   │                              임시 디렉토리에서 돌리면 이름이 어긋나 중단이
+   │                              재메시 구간에서 먹지 않는다 (아래 중단 절).
    ├─ build_payload()           좌표·요소·계면·접촉·도핑·바이어스 계획
    ├─ podman run tcad/devsim    /opt/devsim/run.py (이미지에 구워 넣은 스크립트)
    │     ├─ 점마다 해를 떠 두고, 안 풀리면 **마지막 성공 자리로 되돌린 뒤**
@@ -104,6 +110,11 @@ Redis, 호스트 파일시스템을 통해서만 서로를 만난다.
    │        곡선 사이를 옮기는 동안에도 `{"phase":"moving"}` 을 흘려보낸다 —
    │        아무 말이 없으면 진행률이 멈춰 서서 죽은 줄 안다. 다만 푼 점으로
    │        세지는 않는다(세면 분자가 분모를 넘는다).
+   │        건너뛴 점은 진행에 **센다** — 다시 오지 않으므로 안 세면 막대가
+   │        끝까지 차지 않아 사용자는 멈춘 줄 안다. 다만 **풀렸다고는 하지
+   │        않는다**: `progress.py` 가 `ok=false` 인 줄을 "수렴 실패 — 건너뜀"
+   │        으로 적는다. 풀렸다고 하면 그 자리에 값이 있는 줄 알고, 곡선이 왜
+   │        끊겼는지는 숫자를 다 읽은 뒤에야 알게 된다.
    ├─ prune_workdir(keep_names={iv.json, iv.jsonl})
    └─ Artifact 행. **표(DevSimResult)에는 안 넣는다** — 남길 것은 사용자가
       "저장" 을 눌러 이름을 붙일 때뿐이다. 돌린 것을 전부 쌓으면 비교 목록에서
@@ -112,7 +123,21 @@ Redis, 호스트 파일시스템을 통해서만 서로를 만난다.
 브라우저: GET  /api/devsim/jobs/{id}/result   방금 돌린 곡선(산출물에서)
           POST /api/devsim/runs {job_id,label} 이름을 붙여 표에 남긴다
           PATCH/DELETE /api/devsim/runs/{id}   이름 바꾸기 / 지우기
+          GET/PUT /api/devsim/structures/{id}/state   짜 둔 해석 조건
 ```
+
+해석 조건(`DevSimState`)은 **`.in` 경로를 열쇠로** 맡아 둔다. 전극에 이름을
+붙이고 계면을 붙이고 전압을 정하는 데 손이 꽤 가는데 새로고침 한 번에 전부
+초기값으로 돌아갔다 — 편집기 탭을 맡아 두는 것(`EditorState`)과 같은 이유다.
+구조 id 에 매달지 않은 이유는 같은 코드를 다시 돌리면 구조가 새로 생기고 옛것은
+지워지기 때문이다(`app/devsim/catalog.py`). 사용자가 기억하는 단위는 "내 nmos
+설정" 이지 특정 실행이 아니라, 재실행해도 이름과 전압이 그대로 남는다.
+
+두 갈래 모두 `resolve_electrodes` 로 지금 구조에 걸어 본다. **쓰기는 안 맞으면
+거절하고**(맡아 뒀다가 다음에 조용히 버려지면, 저장된 줄 알았던 사용자에게는
+그것이 데이터를 잃은 일이다), **읽기는 안 맞으면 404** 로 "기본값으로 시작하라"
+고 말한다(맞지 않는 조건을 억지로 되살리면 사용자가 짠 적 없는 설정을 자기
+것으로 알고 읽게 된다).
 
 새 사용자는 예제 구조(`nmos.str`)를 하나 갖고 시작한다. 작업공간에는 `.in` 만
 들어가는데 소자 해석은 **실행 결과**를 입력으로 받으므로, 예제를 한 번 돌리기
@@ -131,6 +156,36 @@ Redis, 호스트 파일시스템을 통해서만 서로를 만난다.
 컨테이너의 죽음을 먼저 읽고 "실패"로 기록해 버린다. 컨테이너 이름이
 결정론적이라 API 와 워커 사이에 신호 채널을 둘 필요가 없다.
 
+그 결정론에는 **잡이 띄우는 모든 컨테이너가 잡 작업디렉토리에서 돌아야 한다**는
+전제가 붙는다. 소자 해석의 재메시가 한동안 임시 디렉토리에서 돌아 이름이
+`tcad-remesh-…` 였고, 그동안 중단을 눌러도 잡만 CANCELLED 로 바뀌고 재메시는
+끝까지 돌았다(실측 12초, 큰 구조는 더). 그래서 `remesh()` 가 `workdir` 인자를
+받는다 — 건네받으면 거기서 돌고, 안 건네면 예전처럼 임시 디렉토리를 판다(CLI
+용도).
+
+---
+
+## 1-3. 실행 로그는 상태 조회에 싣지 않는다
+
+`GET /api/jobs/{id}` 는 잡이 도는 동안 1.5초마다 다시 불린다. 거기에 로그를
+실으면 폴링마다 실행 출력 전체가 따라온다 — 실측 한 번에 97KB.
+
+그 크기가 실제로 앱을 멈춰 세웠다. 앞에 선 nginx 의 프록시 버퍼(기본 약 36KB)를
+넘기면 응답을 디스크로 흘려보내는데, 그 쓰기가 막히자 응답이 깨져 브라우저가
+완료를 감지하지 못했다. `useJob` 은 끝난 잡이면 폴링을 멈추므로 **멈추지 않는
+다는 것은 응답을 못 받았다는 뜻**이다. 이미 성공으로 끝난 잡을 6분 넘게 다시
+물으며 "연결이 불안정합니다" 를 띄웠다.
+
+```
+GET /api/jobs/{id}          로그 없음. 실측 140KB 로그 기준 194 바이트
+GET /api/jobs/{id}/console  {log, truncated}. 끝난 뒤 한 번만
+GET /api/jobs/{id}/log      전문(text/plain). 잘렸을 때 내려받기용
+```
+
+나눠도 잃는 것이 없다. **로그는 잡이 끝날 때 한 번 기록된다**(`queue.finish`) —
+stdout 을 파이프로 모아 끝난 뒤 통째로 넣으므로, 도는 동안 DB 의 로그는 어차피
+비어 있었다. 도는 동안 무엇을 하고 있는지는 로그가 아니라 `progress` 가 말한다.
+
 ---
 
 ## 2. 계층
@@ -142,7 +197,7 @@ app/api/          HTTP 경계. 예외를 상태 코드로 옮기고 Pydantic 으
                   비즈니스 판단을 하지 않는다.
       │
 app/auth  app/workspace  app/jobs  app/runner  app/projects
-app/str_parser  app/plotting  app/catalog  app/docs
+app/devsim  app/remesh  app/str_parser  app/plotting  app/catalog  app/docs
                   도메인. FastAPI 를 임포트하지 않는다(그래서 CLI·워커에서도 쓴다).
       │
 app/db/models.py  app/core/config.py
@@ -161,7 +216,7 @@ app/db/models.py  app/core/config.py
 
 ### `app/api/` — HTTP 경계
 
-라우터 9개가 `/api` 접두사로 붙는다.
+라우터 10개가 `/api` 접두사로 붙는다.
 
 | 라우터 | 접두사 | 인증 | 책임 |
 |---|---|---|---|
@@ -169,9 +224,9 @@ app/db/models.py  app/core/config.py
 | `routes_admin` | `/admin` | 관리자 | 초대 코드 발급·목록·회수 |
 | `routes_files` | `/files` | 필요 | 작업공간 트리·읽기·쓰기·폴더·이름변경·삭제·**실행 제출** |
 | `routes_editor` | `/editor` | 필요 | 열어 둔 탭·커서·저장하지 않은 초안 보관 |
-| `routes_jobs` | (없음) | 필요 | 잡 상세(실행 시간·공정 진행 포함)·중단·산출물 원문, 예전 프로젝트 기반 제출 |
+| `routes_jobs` | (없음) | 필요 | 잡 상세(실행 시간·공정 진행 포함)·**실행 출력(`/console`)**·중단·산출물 원문, 예전 프로젝트 기반 제출 |
 | `routes_plot` | (없음) | 필요 | `.str` → 요약/프로파일/단면 |
-| `routes_devsim` | `/devsim` | 필요 | 보관 구조·계면 추출·해석 제출·결과 조회·비교 목록 |
+| `routes_devsim` | `/devsim` | 필요 | 보관 구조·계면 추출·해석 조건 보관·해석 제출·결과 조회·비교 목록 |
 | `routes_projects` | `/projects` | 필요 | 프로젝트·소스 리비전 (예전 모델) |
 | `routes_catalog` | `/catalog` | **불필요** | 커맨드 문법 조회·자동완성 |
 | `routes_docs` | `/docs` | **불필요** | 매뉴얼 검색·섹션·커맨드 레퍼런스 |
@@ -303,6 +358,7 @@ DB 엔 없는" 어긋난 상태를 따로 다뤄야 한다.
 | `workdir.py` | 디렉토리 크기 계산, 산출물 외 파일 정리 |
 | `watchdog.py` | 실행 중 크기 감시 스레드 |
 | `control.py` | 바깥에서 `podman kill` |
+| `podman_health.py` | podman 기반 자체가 못 뜬 상태를 알아보고 되살린다 |
 
 주의할 점 몇 가지:
 - **출력 크기는 두 겹으로 막는다.** `/work` 는 호스트 bind mount 라 컨테이너
@@ -319,6 +375,33 @@ DB 엔 없는" 어긋난 상태를 따로 다뤄야 한다.
   같은 값이 되어 공정 순서가 뒤집힌다.
 - 세그폴트가 나면 로그가 통째로 빈다. `describe_abnormal_exit` 이 그때 무슨 일이
   일어났는지 대신 적어 주고, 격자가 컸다면 영역당 점 수 한계를 근거로 짚는다.
+- **podman 기반이 무너진 것과 시뮬레이터가 실패한 것을 가른다.** 앞엣것은 다시
+  돌리면 될 수도 있지만 뒤엣것은 몇 번을 돌려도 같은 결과다. `looks_like_infra_failure`
+  (`podman_health.py`)가 로그의 문구로 판정하고, 기반 실패일 때만
+  `_retry_after_repair` 가 **한 번** 되살려 다시 돌린다.
+
+되살리기는 두 걸음이다.
+
+1. `repair()` — 낡은 `pause.pid` 를 치운다. 루트리스 podman 은 pause
+   프로세스(`catatonit -P`) 하나로 user namespace 를 붙들고 뒤따르는 명령이
+   거기 합류하는데, 그 짜임이 어긋나면 `newuidmap: write to uid_map failed`
+   로 시작조차 못 한다. 살아 있는 프로세스는 죽이지 않는다 — 밖에서는 그것이
+   정말 고장인지 알 수 없다. 매핑이 비어 있는 네임스페이스를 붙든 경우만
+   확실한 고장이라 그것만 죽인다. **podman 이 권하는 `podman system migrate`
+   는 쓰지 않는다**: 도는 컨테이너를 전부 멈추는데 이 서버의 postgres·redis 는
+   스스로 돌아오지 않는다.
+2. `ensure_pause_process()` — pause 프로세스를 **새로 만들어 달라고 systemd 에
+   부탁한다**(`systemctl --user start tcad-podman.service`). 이것이 따로 필요한
+   이유는 워커 유닛이 `NoNewPrivileges=true` 로 돌기 때문이다. 그 아래에서는
+   setuid 인 `newuidmap` 이 무효라 **워커 안에서는 새 네임스페이스를 만들 수
+   없다**(실측: 같은 podman 명령이 NNP 를 켜면 EPERM, 끄면 성공). 지금까지
+   돌아간 것은 살아 있는 pause 에 합류만 했기 때문이고, 그것이 죽는 순간
+   복구 경로가 없었다. 그래서 특권이 필요한 한 걸음만 NNP 밖의 별도 유닛으로
+   꺼냈다 → `deploy/systemd/tcad-podman.service`. 워커 쪽 하드닝은 그대로다.
+
+`ensure_pause_process` 는 **실패해도 예외를 내지 않는다.** 되살리기는 최선의
+시도이지 보장이 아니고, 여기서 터지면 원래의 실패 원문까지 묻힌다. systemd
+사용자 관리자가 없는 개발 상자에서도 조용히 넘어간다.
 
 ### `app/str_parser/` — `.str` 파싱
 
@@ -398,15 +481,19 @@ docs     = 산문.  무엇을 하는 커맨드인가.  출처: 매뉴얼 PDF (32
 | `users` | 계정 | argon2id 해시, `role` 은 CHECK 제약, 가입에 쓴 초대를 참조 |
 | `invite_codes` | 초대 | SHA-256 해시, 회수는 행 삭제가 아니라 `revoked_at` |
 | `projects` / `source_revisions` | 예전 모델 | 리비전은 만들어진 뒤 수정하지 않는다 |
-| `jobs` | 실행 한 건 | 소스 **스냅샷**, workdir, 로그, 상태 |
+| `jobs` | 실행 한 건 | 소스 **스냅샷**, workdir, 로그, 상태. 공정과 소자 해석을 `kind` 로 가른다 |
 | `artifacts` | `.str` 하나 | 내용은 파일시스템, DB 엔 경로·크기·`sequence` |
+| `saved_structures` | 해석용 보관 구조 | 잡 디렉토리 밖. 같은 `.in` 을 다시 돌리면 옛것을 지우고 새로 채운다 |
+| `devsim_results` | 이름 붙여 남긴 해석 | 비교 목록의 원천. 돌린 것을 전부 쌓지 않는다 |
+| `devsim_states` | 짜 둔 해석 조건 | **열쇠가 `(owner_id, source_path)`** — 구조 id 가 아니다 |
+| `editor_states` | 열어 둔 탭·커서·초안 | 조건과 같은 이유로 JSON 통째 |
 
 `jobs.source_revision_id` 와 `jobs.source_path`/`source` 가 둘 다 nullable 인 것은
 프로젝트 기반 모델에서 파일 기반 모델로 옮겨 온 흔적이다. 파일로 돌린 잡은
 리비전이 비어 있다.
 
 `users` 와 `invite_codes` 는 서로를 참조하므로 FK 하나에 `use_alter=True` 를 걸어
-테이블 생성 뒤에 제약을 건다. 마이그레이션은 `backend/alembic/` (현재 3개).
+테이블 생성 뒤에 제약을 건다. 마이그레이션은 `backend/alembic/` (현재 8개).
 접속 URL 은 `alembic.ini` 가 아니라 앱 설정에서 가져온다 — ini 는 커밋되는
 파일이라 여기에 URL 을 적으면 비밀번호가 레포에 남는다.
 

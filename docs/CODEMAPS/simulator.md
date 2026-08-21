@@ -1,6 +1,6 @@
 # 시뮬레이터 코드맵
 
-**마지막 갱신:** 2026-08-19
+**마지막 갱신:** 2026-08-22
 **진입점:** `docker/suprem/Containerfile` (이미지), `backend/app/runner/sandbox.py` (실행 계약)
 
 SUPREM-IV.GS 는 스탠퍼드/플로리다대에서 만든 1993년 실리콘·GaAs 2D 공정
@@ -50,15 +50,27 @@ SUPREM4GS/
 ├── postmini                공식 후처리 툴 (포맷 검증에 사용한 대조군)
 └── suprem4gs               상류 실행 래퍼 스크립트 (컨테이너에서는 쓰지 않는다)
 
-docker/suprem/
-├── Containerfile           2단계 빌드: 소스 컴파일 → 최소 실행 이미지
-└── patches/
-    └── 0001-min_fill-stable-pointers.patch
+docker/
+├── suprem/
+│   ├── Containerfile       2단계 빌드: 소스 컴파일 → 최소 실행 이미지
+│   └── patches/            0001~0011. 상류 코드 수정은 전부 여기 diff 로만 있다
+├── remesh/Containerfile    gmsh. 소자 해석 전에 메시를 다시 짠다
+└── devsim/                 DevSim + 해석 스크립트(run.py, 이미지에 구워 넣는다)
 ```
+
+이미지가 셋인 이유는 **최소 구성 원칙**이다. suprem 이미지의 동적 의존성은
+`libc`/`libm` 뿐인데 거기에 gmsh 나 파이썬 런타임을 얹으면 그 원칙이 깨진다.
+gmsh 는 GPL 이라 우리 코드에 링크하지 않고 별도 프로세스로만 부르는 이유도
+있다. 셋 다 **같은 샌드박스 플래그**로 돌고(`app/runner/sandbox.py` 의 argv 를
+그대로 재사용) 실행 유저 uid 도 10001 로 맞춰 둔다 — `--userns keep-id` 아래에서
+작업디렉토리 소유권이 세 컨테이너에 같게 보여야 하기 때문이다.
 
 **`upstream/` 과 `patches/` 를 섞지 않는 것이 요점이다.** 상류 트리는 원본
 그대로 두고 우리 수정은 전부 diff 로 남긴다. 그래야 "무엇이 상류이고 무엇이 우리
 것인지"가 분명해지고, 상류를 갱신할 때 무엇을 다시 맞춰야 하는지 보인다.
+
+패치는 이 문서가 하나(0001)만 자세히 다룬다. 나머지는 각 `.patch` 파일 머리의
+주석과 그것을 넣은 커밋 메시지에 근거가 있다.
 
 출처: `rafael1193/suprem4gs` 커밋 `33e9043`. 원저작권 Stanford University (1994)
 및 University of Florida. 라이선스는 상업적 재판매를 제외한 사용·복사·수정·배포를
@@ -171,12 +183,25 @@ debian:bookworm-slim. `suprem` 의 동적 링크 의존성은 `libc.so.6` / `lib
   타임아웃시키면 컨테이너가 살아남아 CPU 를 계속 문다. 클라이언트 쪽 타임아웃은
   30초 여유를 더 둬서 **항상 컨테이너가 먼저 끝나게** 한다.
 - `--name` 은 밖에서 확실히 죽이기 위해 필요하다. 이름이 `workdir` 이름에서
-  결정론적으로 나오므로(`tcad-job-<uuid>`) 워커가 아닌 API 프로세스도 DB 의
-  workdir 만 있으면 `podman kill` 할 수 있다 — 중단 버튼이 이렇게 동작한다.
+  결정론적으로 나오므로(`container_name` = `tcad-<workdir 이름>`) 워커가 아닌
+  API 프로세스도 DB 의 workdir 만 있으면 `podman kill` 할 수 있다 — 중단 버튼이
+  이렇게 동작한다. 뒤집어 말하면 **잡이 띄우는 컨테이너는 모두 그 잡의
+  작업디렉토리에서 돌아야 한다.** 소자 해석의 재메시가 한동안 임시 디렉토리에서
+  돌아 이름이 `tcad-remesh-…` 였고, 그 구간에서는 중단이 먹지 않았다. 지금은
+  `remesh()` 가 잡 작업디렉토리를 건네받는다.
 - `/work` 크기는 컨테이너 옵션으로 못 묶는다(bind mount). tmpfs 로 만들면 산출물이
   컨테이너와 함께 사라진다. 그래서 밖에서 감시한다. 실측된 문제다 — 잡 하나가
   몇 초 만에 호스트 디스크에 200MB 를 썼고, 400MB `dd` 는 폴링 주기보다 빨리
   끝나 워치독을 통째로 빠져나갔다(그래서 실행 직후 재검사가 따로 있다).
+
+이 계약에는 적혀 있지 않은 **바깥 전제가 하나** 있다: 루트리스 podman 의 pause
+프로세스(`catatonit -P`)가 살아 있어야 한다. 그것이 user namespace 를 붙들고
+있고 위 `podman run` 은 거기 합류할 뿐이다. 합류에는 아무 특권도 필요 없지만
+**새로 만들 때는** setuid 인 `newuidmap` 이 필요하고, 워커 유닛은
+`NoNewPrivileges=true` 로 돌아 그것을 쓸 수 없다. 그래서 만드는 일만 NNP 밖의
+별도 유닛(`deploy/systemd/tcad-podman.service`)이 맡는다. pause 가 죽은 채로
+있으면 모든 실행이 `newuidmap: write to uid_map failed` 로 죽는다 — 실제로 그렇게
+멈춘 적이 있다. 되살리는 쪽은 → [backend.md](backend.md) 의 `app/runner`.
 
 ---
 
@@ -245,7 +270,10 @@ Enter 를 치지 않는 것은 아주 흔해서 `runner.normalise_source` 가 �
 |---|---|
 | `tools/docs/extract_docs.py` | 매뉴얼 PDF → 섹션 단위 JSON |
 | `tools/docs/build_reference.py` | 매뉴얼 + `suprem.key` → `app/docs/data/reference.json` |
+| `tools/docs/lookup_demo.py` | 추출 결과 점검 — 커서 아래 토큰 → 섹션, 검색어 → 순위 |
 | `tools/catalog/parse_key.py` | 초기 탐색용 `suprem.key` 파서 (앱은 쓰지 않는다) |
+| `tools/catalog/gen_monaco.py` | 초기 탐색용 Monaco 자산 생성기 (앱은 쓰지 않는다) |
+| `tools/catalog/smoke.mjs` | 위 자산으로 접두사 해석·자동완성을 훑어보는 스크립트 |
 | `tools/catalog/coverage.py` | `examples/` 데크가 카탈로그로 얼마나 커버되는지 점검 |
 
 추출에 `pdftotext` 가 필요하므로 배포 시점이 아니라 개발 시점에 돌린다.
