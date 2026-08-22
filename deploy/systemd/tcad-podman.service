@@ -28,6 +28,23 @@ Before=tcad-worker.service
 
 [Service]
 Type=oneshot
+
+# **이것이 없으면 유닛이 자기가 만든 pause 프로세스를 스스로 죽인다.**
+#
+# 기본값 KillMode=control-group 은 ExecStart 가 끝나는 순간 그 cgroup 에 남은
+# 프로세스를 전부 정리한다. podman 이 방금 띄운 pause 도 거기 들어 있어서,
+# 유닛은 "성공" 을 찍고 내려가면서 목적물을 없앴다. 실측으로 유닛 실행 직후
+# pause.pid 가 이미 죽은 PID 를 가리켰다.
+#
+# process 로 두면 주 프로세스(이미 끝난 podman info)만 상대하고 나머지는
+# 건드리지 않는다. 백그라운드 프로세스를 남기는 oneshot 의 표준 처방이다.
+KillMode=process
+
+# RemainAfterExit 은 켜지 않는다. 켜면 유닛이 계속 active 로 남아
+# `systemctl start` 가 아무 일도 하지 않는데, 되살리기가 바로 그 명령으로
+# pause 를 다시 만들어 달라고 부탁한다(`podman_health.ensure_pause_process`).
+RemainAfterExit=no
+
 Environment=XDG_RUNTIME_DIR=%t
 ExecStart=/usr/bin/podman info
 # podman info 는 출력이 길다. 저널에 매번 쌓을 이유가 없다.

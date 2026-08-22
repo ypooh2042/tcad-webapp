@@ -25,7 +25,13 @@ from app.devsim.spec import DeviceSpec
 from app.remesh.service import DEFAULT_IMAGE as REMESH_IMAGE
 from app.remesh.service import remesh
 from app.runner.logfile import write_full_log
-from app.runner.podman_health import ADVICE, looks_like_infra_failure
+from app.runner.podman_health import (
+    ADVICE,
+    ensure_pause_process,
+    looks_like_infra_failure,
+    mentions_infra_failure,
+)
+from app.runner.podman_health import repair as repair_podman
 from app.runner.sandbox import SandboxLimits, build_sandbox_argv, container_name
 from app.runner.watchdog import OutputWatchdog
 from app.runner.workdir import DEVSIM_ARTIFACTS, prune_workdir
@@ -231,8 +237,39 @@ def run_device_simulation(
             spec_json=source,
         )
 
+    def fail(message: str) -> DeviceResult:
+        return DeviceResult(
+            exit_code=1,
+            log="",
+            timed_out=False,
+            errors=(message,),
+            dataset=None,
+            artifacts=(),
+            spec_json=source,
+        )
+
     try:
         total = _prepare_device(workdir, spec)
+    except RuntimeError as error:
+        # 재메시가 종료코드 없이 podman 원문만 담아 올린다. 기반이 무너진
+        # 것이면 되살리고 **한 번만** 다시 해 본다 — 공정 실행 쪽과 같은 대응이다
+        # (`app/runner/runner.py`). 이것이 없어서 pause 프로세스가 죽은 사이
+        # 해석을 돌리면 워커의 catch-all 로 새어 나가, 사용자에게는 "워커에서
+        # 예기치 못한 오류가 발생했습니다" 만 보였다.
+        if not mentions_infra_failure(str(error)):
+            logger.warning("장치 준비 실패", exc_info=True)
+            return fail(f"구조를 소자 모형으로 옮기지 못했습니다: {error}")
+
+        note = " · ".join(
+            part for part in (repair_podman(), ensure_pause_process()) if part
+        )
+        logger.warning("podman 기반을 되살리고 다시 준비합니다: %s", note or "할 것 없음")
+        try:
+            total = _prepare_device(workdir, spec)
+        except Exception as again:  # noqa: BLE001 - 되살리기가 듣지 않았다
+            logger.warning("되살린 뒤에도 준비 실패", exc_info=True)
+            detail = str(again).strip().splitlines()[0] if str(again).strip() else ""
+            return fail(f"{ADVICE} ({detail})" if detail else ADVICE)
     except (ElectrodeNotFound, StructureFormatError, ValueError) as error:
         return DeviceResult(
             exit_code=1,
@@ -256,6 +293,17 @@ def run_device_simulation(
         )
 
     exit_code, log, tripped = _execute(workdir, image, limits)
+
+    # 기반이 못 떠서 실패했으면 되살리고 **한 번만** 다시 돌린다. 컨테이너가
+    # 시작조차 못 한 경우이므로 해석이 두 번 도는 일은 없다. 예전에는 알아보고도
+    # 안내 문구만 붙이고 끝이라, 되살리면 될 일을 사용자가 다시 눌러야 했다.
+    if looks_like_infra_failure(exit_code, log):
+        note = " · ".join(
+            part for part in (repair_podman(), ensure_pause_process()) if part
+        )
+        logger.warning("podman 기반을 되살리고 다시 돌립니다: %s", note or "할 것 없음")
+        exit_code, log, tripped = _execute(workdir, image, limits)
+
     timed_out = exit_code == -1
 
     if looks_like_infra_failure(exit_code, log):

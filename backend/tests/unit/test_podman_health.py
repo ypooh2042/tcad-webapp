@@ -292,3 +292,36 @@ class TestEnsurePauseProcess:
         monkeypatch.setattr(podman_health.subprocess, "run", fake_run)
         podman_health.ensure_pause_process()
         assert seen.get("timeout")
+
+
+class TestTextOnlyDetection:
+    """종료코드 없이 **로그 문구만으로** 기반 실패를 알아본다.
+
+    재메시는 종료코드를 돌려주지 않는다. gmsh 산출물이 없으면 podman 원문을
+    담은 `RuntimeError` 를 낼 뿐이라(`app/remesh/service.py`), 종료코드를
+    요구하는 판정으로는 이 경로를 못 잡는다. 실제로 그래서 소자 해석이
+    "워커에서 예기치 못한 오류가 발생했습니다" 로 죽었다.
+    """
+
+    def test_spots_the_newuidmap_failure(self) -> None:
+        assert podman_health.mentions_infra_failure(
+            "gmsh 가 메시를 만들지 못했습니다\n"
+            "newuidmap: write to uid_map failed: Operation not permitted"
+        )
+
+    def test_spots_a_stale_pause_process(self) -> None:
+        assert podman_health.mentions_infra_failure(
+            'invalid internal status, try resetting the pause process with '
+            '"podman system migrate"'
+        )
+
+    def test_a_real_mesh_failure_is_not_infra(self) -> None:
+        # gmsh 가 형상 때문에 실패한 것은 되살려도 같은 결과다.
+        assert not podman_health.mentions_infra_failure(
+            "gmsh 가 메시를 만들지 못했습니다\n"
+            "Error   : Invalid boundary mesh (segment 12 crosses 34)"
+        )
+
+    def test_empty_is_not_infra(self) -> None:
+        assert not podman_health.mentions_infra_failure("")
+        assert not podman_health.mentions_infra_failure(None)

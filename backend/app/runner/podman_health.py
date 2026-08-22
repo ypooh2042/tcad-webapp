@@ -83,6 +83,20 @@ ADVICE = (
 )
 
 
+def mentions_infra_failure(log: str | None) -> bool:
+    """로그 문구만으로 판정한다. 종료코드가 없는 자리에서 쓴다.
+
+    재메시가 그런 자리다 — gmsh 산출물이 없으면 podman 원문을 담은
+    `RuntimeError` 를 낼 뿐 종료코드를 돌려주지 않는다. 문구가 꽤 구체적이라
+    (`newuidmap`, `pause process`, …) 이것만으로도 시뮬레이터 자신의 실패와
+    헷갈리지 않는다.
+    """
+    if not log:
+        return False
+    lowered = log.lower()
+    return any(marker in lowered for marker in _INFRA_MARKERS)
+
+
 def looks_like_infra_failure(exit_code: int, log: str | None) -> bool:
     """podman 기반이 못 떠서 실패한 것인가.
 
@@ -90,10 +104,9 @@ def looks_like_infra_failure(exit_code: int, log: str | None) -> bool:
     때만, 그리고 알려진 문구가 있을 때만 참이다. 문구를 요구하는 이유는 125 가
     "이미지가 없다" 같은 되살릴 수 없는 실패에도 쓰이기 때문이다.
     """
-    if exit_code != _PODMAN_ERROR_EXIT or not log:
+    if exit_code != _PODMAN_ERROR_EXIT:
         return False
-    lowered = log.lower()
-    return any(marker in lowered for marker in _INFRA_MARKERS)
+    return mentions_infra_failure(log)
 
 
 def pause_pid_path() -> Path:

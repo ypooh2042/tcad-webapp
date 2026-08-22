@@ -190,3 +190,184 @@ class TestDeviceTimeout:
         from app.devsim.service import DEFAULT_LIMITS
 
         assert DEFAULT_LIMITS.timeout_seconds > Settings().job_timeout_seconds
+
+
+class TestPodmanRecoveryDuringPreparation:
+    """준비 단계(재메시)에서 podman 기반이 무너지면 되살리고 한 번 더 해 본다.
+
+    공정 실행(`app/runner/runner.py`)에는 이 복구가 있었는데 소자 해석에는
+    없었다. 그래서 pause 프로세스가 죽은 사이 해석을 돌리면 재메시가
+    `RuntimeError` 로 죽고, 그것이 아무 데서도 안 잡혀 사용자에게는
+    **"워커에서 예기치 못한 오류가 발생했습니다"** 만 보였다 — 무엇이
+    잘못됐는지도, 다시 하면 되는지도 알 수 없는 문구다.
+    """
+
+    INFRA = (
+        "gmsh 가 메시를 만들지 못했습니다\n"
+        "newuidmap: write to uid_map failed: Operation not permitted"
+    )
+
+    def _spec(self) -> str:
+        return json.dumps(
+            {
+                "electrodes": [{"label": "a", "interfaces": ["source"]}],
+                "biases": [
+                    {
+                        "name": "V",
+                        "electrode": "a",
+                        "role": "sweep",
+                        "sweep": {"start": 0.0, "stop": 1.0, "points": 2},
+                    }
+                ],
+            }
+        )
+
+    def test_repairs_and_tries_again(self, tmp_path, monkeypatch) -> None:
+        import app.devsim.service as service
+
+        (tmp_path / service.STRUCTURE_FILENAME).write_text("v x\n")
+        calls = []
+
+        def flaky(workdir, spec):
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError(self.INFRA)
+            raise OSError("여기까지만 본다")
+
+        monkeypatch.setattr(service, "_prepare_device", flaky)
+        monkeypatch.setattr(service, "repair_podman", lambda: "치웠습니다")
+        monkeypatch.setattr(service, "ensure_pause_process", lambda: None)
+
+        service.run_device_simulation(self._spec(), tmp_path)
+
+        assert len(calls) == 2, "되살린 뒤 한 번 더 해 봐야 합니다"
+
+    def test_only_once(self, tmp_path, monkeypatch) -> None:
+        """되살려도 안 되면 두 번째 재시도는 없다. 잡 슬롯만 묶인다."""
+        import app.devsim.service as service
+
+        (tmp_path / service.STRUCTURE_FILENAME).write_text("v x\n")
+        calls = []
+
+        def always(workdir, spec):
+            calls.append(1)
+            raise RuntimeError(self.INFRA)
+
+        monkeypatch.setattr(service, "_prepare_device", always)
+        monkeypatch.setattr(service, "repair_podman", lambda: "치웠습니다")
+        monkeypatch.setattr(service, "ensure_pause_process", lambda: None)
+
+        result = service.run_device_simulation(self._spec(), tmp_path)
+
+        assert len(calls) == 2
+        assert not result.succeeded
+        assert any(service.ADVICE in e for e in result.errors), result.errors
+
+    def test_a_real_mesh_failure_is_not_retried(self, tmp_path, monkeypatch) -> None:
+        """형상 때문에 실패한 것은 다시 해도 같다. 시간만 쓴다."""
+        import app.devsim.service as service
+
+        (tmp_path / service.STRUCTURE_FILENAME).write_text("v x\n")
+        calls = []
+
+        def broken(workdir, spec):
+            calls.append(1)
+            raise RuntimeError("gmsh 가 메시를 만들지 못했습니다\nInvalid boundary mesh")
+
+        monkeypatch.setattr(service, "_prepare_device", broken)
+
+        result = service.run_device_simulation(self._spec(), tmp_path)
+
+        assert len(calls) == 1
+        assert not result.succeeded
+
+    def test_the_message_says_what_happened(self, tmp_path, monkeypatch) -> None:
+        """catch-all 로 새어 나가면 안 된다. 사용자가 읽을 문구가 있어야 한다."""
+        import app.devsim.service as service
+
+        (tmp_path / service.STRUCTURE_FILENAME).write_text("v x\n")
+        monkeypatch.setattr(
+            service,
+            "_prepare_device",
+            lambda w, s: (_ for _ in ()).throw(RuntimeError("메시가 깨졌습니다")),
+        )
+
+        result = service.run_device_simulation(self._spec(), tmp_path)
+
+        assert not result.succeeded
+        assert any("메시가 깨졌습니다" in e for e in result.errors), result.errors
+
+
+class TestPodmanRecoveryDuringExecution:
+    """컨테이너 실행 단계도 마찬가지다.
+
+    예전에는 기반 실패를 알아보고도 **안내 문구만 붙이고 끝**이었다. 되살리면
+    되는 상황인데 사용자가 직접 다시 눌러야 했다.
+    """
+
+    INFRA_LOG = (
+        'invalid internal status, try resetting the pause process with '
+        '"podman system migrate"'
+    )
+
+    def _spec(self) -> str:
+        return json.dumps(
+            {
+                "electrodes": [{"label": "a", "interfaces": ["source"]}],
+                "biases": [
+                    {
+                        "name": "V",
+                        "electrode": "a",
+                        "role": "sweep",
+                        "sweep": {"start": 0.0, "stop": 1.0, "points": 2},
+                    }
+                ],
+            }
+        )
+
+    def _patch(self, monkeypatch, tmp_path, outcomes):
+        import app.devsim.service as service
+
+        (tmp_path / service.STRUCTURE_FILENAME).write_text("v x\n")
+        monkeypatch.setattr(service, "_prepare_device", lambda w, s: 2)
+        monkeypatch.setattr(service, "_read_dataset", lambda w, t: None)
+        monkeypatch.setattr(service, "repair_podman", lambda: "치웠습니다")
+        monkeypatch.setattr(service, "ensure_pause_process", lambda: None)
+
+        calls = []
+
+        def fake_execute(workdir, image, limits):
+            calls.append(1)
+            return outcomes[min(len(calls) - 1, len(outcomes) - 1)]
+
+        monkeypatch.setattr(service, "_execute", fake_execute)
+        return service, calls
+
+    def test_repairs_and_runs_again(self, tmp_path, monkeypatch) -> None:
+        service, calls = self._patch(
+            monkeypatch, tmp_path, [(125, self.INFRA_LOG, False), (0, "ok", False)]
+        )
+
+        service.run_device_simulation(self._spec(), tmp_path)
+
+        assert len(calls) == 2, "되살린 뒤 한 번 더 돌려야 합니다"
+
+    def test_only_once(self, tmp_path, monkeypatch) -> None:
+        service, calls = self._patch(
+            monkeypatch, tmp_path, [(125, self.INFRA_LOG, False)]
+        )
+
+        result = service.run_device_simulation(self._spec(), tmp_path)
+
+        assert len(calls) == 2
+        assert any(service.ADVICE in e for e in result.errors), result.errors
+
+    def test_a_solver_failure_is_not_retried(self, tmp_path, monkeypatch) -> None:
+        """해석이 발산한 것은 다시 돌려도 같다."""
+        service, calls = self._patch(
+            monkeypatch, tmp_path, [(1, "Convergence failure!", False)]
+        )
+
+        service.run_device_simulation(self._spec(), tmp_path)
+
+        assert len(calls) == 1
