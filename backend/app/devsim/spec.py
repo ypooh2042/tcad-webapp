@@ -33,6 +33,9 @@ MAX_TOTAL_POINTS = 300
 #: 스윕 한 축의 최대 점수.
 MAX_SWEEP_POINTS = 200
 
+#: 단계 전압원의 값 개수 상한. 곡선족이라 많아 봐야 읽을 수 없다.
+MAX_STEP_VALUES = 16
+
 #: 전압 상한. 실제 소자에서 이보다 큰 값은 의미가 없고, 솔버는 발산한다.
 MAX_ABS_VOLTS = 100.0
 
@@ -113,7 +116,12 @@ class Bias(BaseModel):
     electrode: str = Field(min_length=1, max_length=32)
     role: BiasRole
     value: float | None = Field(default=None, ge=-MAX_ABS_VOLTS, le=MAX_ABS_VOLTS)
-    values: list[float] | None = Field(default=None, max_length=16)
+    #: 이 전압원이 훑는 전압들을 직접 적은 것.
+    #:
+    #: 단계에서는 곡선족을, 스윕에서는 곡선의 x 축을 이룬다 — 뜻이 같아 같은
+    #: 자리를 쓴다. 상한이 스윕 기준인 이유는 스윕이 훨씬 많이 필요하기
+    #: 때문이고, 단계는 아래 검증에서 따로 조인다.
+    values: list[float] | None = Field(default=None, max_length=MAX_SWEEP_POINTS)
     sweep: SweepRange | None = None
 
     @model_validator(mode="after")
@@ -122,8 +130,19 @@ class Bias(BaseModel):
             raise ValueError(f"{self.name}: 고정 전압원에는 전압이 필요합니다")
         if self.role is BiasRole.STEP and not self.values:
             raise ValueError(f"{self.name}: 단계 전압원에는 전압 목록이 필요합니다")
-        if self.role is BiasRole.SWEEP and self.sweep is None:
-            raise ValueError(f"{self.name}: 스윕 전압원에는 스윕 범위가 필요합니다")
+        if self.role is BiasRole.SWEEP:
+            if self.sweep is None and not self.values:
+                raise ValueError(
+                    f"{self.name}: 스윕 전압원에는 범위나 전압 목록이 필요합니다"
+                )
+            if self.sweep is not None and self.values:
+                raise ValueError(
+                    f"{self.name}: 스윕 범위와 전압 목록은 둘 중 하나만 씁니다"
+                )
+        if self.role is BiasRole.STEP and len(self.values or ()) > MAX_STEP_VALUES:
+            raise ValueError(
+                f"{self.name}: 단계 전압은 {MAX_STEP_VALUES}개까지입니다"
+            )
         if self.role is BiasRole.FLOAT and (
             self.value is not None or self.values or self.sweep is not None
         ):
@@ -143,6 +162,10 @@ class Bias(BaseModel):
             return [self.value or 0.0]
         if self.role is BiasRole.STEP:
             return list(self.values or [])
+        if self.values:
+            # 직접 적은 목록. **순서를 그대로 지킨다** — 직류에는 이력이 없어
+            # 답은 같지만, 어느 쪽에서 접근하느냐가 수렴을 가른다.
+            return list(self.values)
         assert self.sweep is not None
         return sweep_values(self.sweep.start, self.sweep.stop, self.sweep.points)
 

@@ -318,3 +318,75 @@ class TestFloatingBias:
         assert [b.name for b in spec.floating_biases()] == [
             payload["biases"][0]["name"]
         ]
+
+
+class TestSweepFromAList:
+    """스윕 전압을 **직접 적을 수 있어야 한다.**
+
+    등간격만 되면 어려운 구간에 점을 몰아줄 수 없다. 인버터 전달특성이 딱
+    그런 경우다 — 전환 구간에서만 출력이 급변하는데, 거기 촘촘히 잡으려고
+    전 구간을 촘촘히 하면 쉬운 구간에서 시간을 버린다. 실측에서 0.5 V 간격이
+    전환 구간을 못 넘어 3 점을 잃었다.
+
+    단계 전압원이 이미 목록을 받으므로 같은 자리(`values`)를 쓴다 — 뜻도 같다
+    ("이 전압원이 훑는 전압들").
+    """
+
+    def _listed(self, values):
+        payload = build()
+        for bias in payload["biases"]:
+            if bias["role"] == "sweep":
+                bias.pop("sweep", None)
+                bias["values"] = values
+        return payload
+
+    def test_a_sweep_can_carry_a_list(self) -> None:
+        spec = DeviceSpec.model_validate(self._listed([0.0, 1.0, 1.5, 1.75, 2.0, 5.0]))
+
+        assert spec.sweep_bias().points() == [0.0, 1.0, 1.5, 1.75, 2.0, 5.0]
+
+    def test_the_order_is_kept(self) -> None:
+        """적은 순서대로 걷는다. 직류에는 이력이 없어 답은 같지만, 어느 쪽에서
+        접근하느냐가 수렴을 가르므로 사용자가 정할 수 있어야 한다."""
+        spec = DeviceSpec.model_validate(self._listed([5.0, 2.0, 0.0]))
+
+        assert spec.sweep_bias().points() == [5.0, 2.0, 0.0]
+
+    def test_equal_spacing_still_works(self) -> None:
+        spec = DeviceSpec.model_validate(build())
+
+        assert len(spec.sweep_bias().points()) > 1
+
+    def test_a_sweep_needs_one_or_the_other(self) -> None:
+        payload = build()
+        for bias in payload["biases"]:
+            if bias["role"] == "sweep":
+                bias.pop("sweep", None)
+
+        with pytest.raises(ValidationError, match="스윕"):
+            DeviceSpec.model_validate(payload)
+
+    def test_both_at_once_is_refused(self) -> None:
+        """둘 다 주면 어느 쪽을 쓰겠다는 것인지 알 수 없다."""
+        payload = build()
+        for bias in payload["biases"]:
+            if bias["role"] == "sweep":
+                bias["values"] = [0.0, 1.0]
+
+        with pytest.raises(ValidationError, match="둘 중 하나"):
+            DeviceSpec.model_validate(payload)
+
+    def test_a_long_list_is_allowed_for_a_sweep(self) -> None:
+        """단계는 16 개까지지만 스윕은 곡선의 x 축이라 훨씬 많이 필요하다."""
+        spec = DeviceSpec.model_validate(self._listed([i * 0.1 for i in range(40)]))
+
+        assert len(spec.sweep_bias().points()) == 40
+
+    def test_a_step_source_is_still_capped(self) -> None:
+        payload = build()
+        for bias in payload["biases"]:
+            if bias["role"] == "step":
+                bias["values"] = [float(i) for i in range(20)]
+
+        with pytest.raises(ValidationError, match="단계"):
+            DeviceSpec.model_validate(payload)

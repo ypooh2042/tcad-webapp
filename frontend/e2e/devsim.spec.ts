@@ -117,8 +117,12 @@ test('전극마다 전압원이 하나씩 붙는다', async ({ page, context }) 
     '→ drain',
     '→ body',
   ])
-  // 전극을 고르는 체크박스는 없다.
-  await expect(page.locator('.bias input[type="checkbox"]')).toHaveCount(0)
+  // 전극을 고르는 체크박스는 없다. (스윕 입력 방식을 고르는 체크박스는 그와
+  // 무관하므로 제외한다 — 이 단언이 막으려는 것은 "전압원이 전극을 거느리는"
+  // 옛 모델이 되살아나는 것이다.)
+  await expect(
+    page.locator('.bias input[type="checkbox"]:not([aria-label*="직접 적기"])'),
+  ).toHaveCount(0)
   await expect(page.locator('.bias[data-role="sweep"]')).toHaveCount(1)
 })
 
@@ -206,9 +210,15 @@ test('해석 패널 폭을 끌어서 바꾼다', async ({ page, context }) => {
 
   const splitter = page.getByRole('separator', { name: '해석 패널 폭' })
   const grip = (await splitter.boundingBox())!
-  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  // **뷰포트 안에서 잡는다.** 손잡이는 패널 높이만큼 길어서 뷰포트보다 클 수
+  // 있고, 그러면 중심이 화면 밖이라 마우스가 허공을 누른다. 실측으로 손잡이가
+  // 1136px 인데 뷰포트가 720px 이라 중심(721)이 1px 벗어났다 — 그동안 우연히
+  // 안쪽이었을 뿐이고, 왼쪽 패널에 줄 하나가 늘자 바로 깨졌다.
+  const view = page.viewportSize()!
+  const grabY = Math.min(grip.y + grip.height / 2, view.height - 10)
+  await page.mouse.move(grip.x + grip.width / 2, grabY)
   await page.mouse.down()
-  await page.mouse.move(grip.x - 120, grip.y + grip.height / 2, { steps: 8 })
+  await page.mouse.move(grip.x - 120, grabY, { steps: 8 })
   await page.mouse.up()
 
   const after = (await panel.boundingBox())!.width
@@ -597,4 +607,32 @@ test('무엇을 전극으로 보는지 탭에 적혀 있다', async ({ page, con
   await expect(notice).toBeVisible()
   await expect(notice).toContainText('알루미늄')
   await expect(notice).toContainText('폴리실리콘')
+})
+
+test('스윕 전압을 직접 적을 수 있다', async ({ page, context }) => {
+  // 등간격만 되면 어려운 구간에 점을 몰아줄 수 없다. 인버터 전달특성이 그런
+  // 경우로, 실측에서 0.5 V 간격이 전환 구간을 못 넘어 3 점을 잃었다.
+  test.setTimeout(180_000)
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await signUp(page, uniqueEmail('sweeplist'))
+
+  await page.getByRole('tab', { name: /소자 해석/ }).click()
+  const sweep = page.locator('.bias[data-role="sweep"]')
+  await expect(sweep).toBeVisible({ timeout: 30_000 })
+
+  // 기본은 등간격 — 시작/끝/점 개수 칸이 보인다.
+  await expect(sweep.locator('.sweep-fields')).toBeVisible()
+
+  await sweep.getByRole('checkbox', { name: /직접 적기/ }).check()
+
+  const list = sweep.getByLabel(/스윕 전압/)
+  await expect(list).toBeVisible()
+  await list.fill('0, 1, 1.5, 1.75, 5')
+  await list.blur()
+
+  // 점 수가 목록 길이를 따라간다. 기본 스펙에 단계 전압원이 셋(1·2·4) 있으므로
+  // 5 × 3 = 15 다. 기본 스윕도 6점이라 6을 쓰면 18로 같아져 시험이 무의미해진다.
+  await expect(page.getByText(/바이어스 점 15개/)).toBeVisible()
+  // 실행을 막는 문제가 없어야 한다.
+  await expect(page.locator('.problems li')).toHaveCount(0)
 })

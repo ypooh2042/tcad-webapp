@@ -13,7 +13,7 @@
  */
 import type { Bias, BiasRole, DeviceSpec } from '../../api/types'
 import { CURVE_COLORS } from './IvChart'
-import { sweepGap } from './deviceSpec'
+import { sweepGap, sweepValues } from './deviceSpec'
 import { NameField } from './NameField'
 import { NumberField, NumberListField } from './NumberField'
 
@@ -210,7 +210,44 @@ export function SourceEditor({
 
             {bias.role === 'sweep' ? (
               <>
-                <div className="sweep-fields">
+                {/* 등간격이 기본이지만, 어려운 구간에만 점을 몰아주고 싶을
+                    때가 있다 — 인버터 전달특성이 그렇다. 전환 구간에서만
+                    출력이 급변하는데 전 구간을 촘촘히 하면 쉬운 데서 시간을
+                    버린다. */}
+                <label className="sweep-mode">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(bias.values?.length)}
+                    aria-label={`${bias.name} 전압을 직접 적기`}
+                    onChange={(event) =>
+                      onChange(
+                        replaceBias(spec, index, {
+                          ...bias,
+                          sweep: event.target.checked ? undefined : sweepOf(bias),
+                          values: event.target.checked
+                            ? sweepValues(
+                                sweepOf(bias).start,
+                                sweepOf(bias).stop,
+                                sweepOf(bias).points,
+                              )
+                            : undefined,
+                        }),
+                      )
+                    }
+                  />
+                  전압을 직접 적기
+                </label>
+
+                {bias.values?.length ? (
+                  <NumberListField
+                    label="스윕 전압 (쉼표로 구분, V)"
+                    values={bias.values}
+                    onChange={(values) =>
+                      onChange(replaceBias(spec, index, { ...bias, values }))
+                    }
+                  />
+                ) : (
+                  <div className="sweep-fields">
                   {(['start', 'stop'] as const).map((field) => (
                     <NumberField
                       key={field}
@@ -241,13 +278,18 @@ export function SourceEditor({
                       )
                     }
                   />
-                </div>
+                  </div>
+                )}
                 {/* 점 개수만 보면 얼마나 촘촘한지 감이 안 온다. 간격은 계산해
                     보여주기만 하고 고치게 하지 않는다 — 둘 다 고칠 수 있으면
                     어느 쪽이 기준인지 알 수 없다. */}
-                <p className="hint">
-                  {formatGap(sweepOf(bias))} 간격 · {sweepOf(bias).points}점
-                </p>
+                {bias.values?.length ? (
+                  <p className="hint">{bias.values.length}점 · 적은 순서대로 훑습니다</p>
+                ) : (
+                  <p className="hint">
+                    {formatGap(sweepOf(bias))} 간격 · {sweepOf(bias).points}점
+                  </p>
+                )}
               </>
             ) : null}
           </div>

@@ -721,6 +721,14 @@ body.resizing { user-select: none; cursor: col-resize; }
   opacity: 0.6;
 }
 
+.sweep-mode {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--muted, #666);
+}
+
 .sweep-fields {
   display: flex;
   gap: 8px;

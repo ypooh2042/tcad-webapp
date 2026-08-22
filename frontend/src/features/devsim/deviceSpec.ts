@@ -45,6 +45,9 @@ export function sweepGap(start: number, stop: number, points: number): number {
 function pointsOf(bias: Bias): number[] {
   if (bias.role === 'const') return [bias.value ?? 0]
   if (bias.role === 'step') return bias.values ?? []
+  // 직접 적은 목록. 순서를 그대로 지킨다 — 직류에는 이력이 없어 답은 같지만
+  // 어느 쪽에서 접근하느냐가 수렴을 가른다.
+  if (bias.values?.length) return bias.values
   if (!bias.sweep) return []
   return sweepValues(bias.sweep.start, bias.sweep.stop, bias.sweep.points)
 }
@@ -304,6 +307,16 @@ export function problemsOf(spec: DeviceSpec): string[] {
     driven.set(bias.electrode, bias.name)
     if (bias.role === 'step' && !(bias.values ?? []).length) {
       problems.push(`${bias.name}: 단계 전압을 하나 이상 넣어 주세요.`)
+    }
+    if (bias.role === 'sweep') {
+      if (bias.sweep && bias.values?.length) {
+        problems.push(
+          `${bias.name}: 스윕 범위와 전압 목록은 둘 중 하나만 씁니다.`,
+        )
+      }
+      if (!bias.sweep && !bias.values?.length) {
+        problems.push(`${bias.name}: 스윕 범위나 전압 목록을 넣어 주세요.`)
+      }
     }
     if (
       bias.role === 'float' &&

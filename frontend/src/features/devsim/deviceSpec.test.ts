@@ -454,3 +454,49 @@ describe('부유 전압원', () => {
     expect(problemsOf(all).join()).toMatch(/스윕/)
   })
 })
+
+describe('스윕을 목록으로 적기', () => {
+  // 등간격만 되면 어려운 구간에 점을 몰아줄 수 없다. 인버터 전달특성이 딱
+  // 그런 경우로, 실측에서 0.5 V 간격이 전환 구간을 못 넘어 3 점을 잃었다.
+  function listed(values: number[]): DeviceSpec {
+    const spec = defaultSpec(MOSFET)
+    return {
+      ...spec,
+      biases: spec.biases.map((bias) =>
+        bias.role === 'sweep'
+          ? { name: bias.name, electrode: bias.electrode, role: 'sweep' as const, values }
+          : bias,
+      ),
+    }
+  }
+
+  it('목록으로 적어도 통과한다', () => {
+    expect(problemsOf(listed([0, 1, 1.5, 1.75, 2, 5]))).toEqual([])
+  })
+
+  it('점 수를 목록 길이로 센다', () => {
+    const spec = listed([0, 1, 2])
+    const steps = spec.biases.filter((b) => b.role === 'step')
+    const families = steps.reduce((n, b) => n * Math.max(1, (b.values ?? []).length), 1)
+
+    expect(pointCount(spec)).toBe(3 * families)
+  })
+
+  it('둘 다 주면 짚어준다', () => {
+    const spec = listed([0, 1])
+    spec.biases = spec.biases.map((b) =>
+      b.role === 'sweep' ? { ...b, sweep: { start: 0, stop: 1, points: 2 } } : b,
+    )
+
+    expect(problemsOf(spec).join()).toMatch(/둘 중 하나/)
+  })
+
+  it('둘 다 없으면 짚어준다', () => {
+    const spec = listed([])
+    spec.biases = spec.biases.map((b) =>
+      b.role === 'sweep' ? { name: b.name, electrode: b.electrode, role: 'sweep' } : b,
+    )
+
+    expect(problemsOf(spec).join()).toMatch(/스윕/)
+  })
+})
