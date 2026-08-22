@@ -48,11 +48,22 @@ _CLIENT_TIMEOUT_MARGIN_SECONDS = 30
 
 #: 소자 해석 기본 상한.
 #:
-#: 실측: 재메시한 `nmos.in` 구조가 8143 노드, 바이어스 점당 약 1.6 초.
-#: `spec.MAX_TOTAL_POINTS`(300) 을 다 쓰면 8 분이라 900 초로 잡았다.
+#: 시간은 **큰 구조**를 기준으로 잡는다. 실측 두 가지:
+#:
+#:     nmos.in  재메시 후  8,143 노드 — 바이어스 점당 약 1.6 초
+#:     cmos.in  재메시 후 50,062 노드 — 바이어스 점당 약  20 초
+#:
+#: 직접 솔버라 노드 수에 초선형으로 는다(6.1 배 노드에 12.5 배 시간).
+#: 예전 900 초는 nmos 기준이었고, 큰 구조에서는 45 점밖에 못 돌려
+#: 42 점짜리 인버터 부하선이 실제로 중간에 잘렸다. `spec.MAX_TOTAL_POINTS`(300)
+#: 을 다 쓴 해석이 큰 구조에서 끝나도록 6000 초로 잡는다.
+#:
+#: 길게 잡아도 잡 슬롯이 묶이는 것이 걱정되지 않는 이유: 사용자가 중단할 수
+#: 있고(`routes_jobs.cancel`), 중간까지의 곡선은 `iv.jsonl` 에 남아 건진다.
+#:
 #: 직접 솔버가 메모리를 쓰므로 suprem 기본값(2 GB)보다 넉넉히 준다.
 DEFAULT_LIMITS = SandboxLimits(
-    cpus=1.0, memory_mb=4096, max_pids=128, timeout_seconds=900, max_output_mb=256
+    cpus=1.0, memory_mb=4096, max_pids=128, timeout_seconds=6000, max_output_mb=256
 )
 
 

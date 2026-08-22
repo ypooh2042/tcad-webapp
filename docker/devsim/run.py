@@ -49,6 +49,12 @@ PER_CM_TO_MICRO_PER_UM = 1.0e-4 * 1.0e6
 #: 바이어스를 한 번에 이만큼 넘게 옮기지 않는다. 크게 뛰면 뉴턴이 못 따라간다.
 MAX_BIAS_STEP = 0.25
 
+#: 걸음을 몇 번까지 반으로 줄여 보는가. 0.25 V 에서 세 번이면 0.031 V 다.
+#: 더 쪼개도 안 풀리는 자리는 걸음 크기 문제가 아니라 수렴 기준 쪽 문제이고
+#: (`_TRANSPORT_RELAXED` 참조), 한 번 더 줄일 때마다 그 점에 드는 solve 횟수가
+#: 두 배가 된다 — 못 넘을 벽에서 시간만 태운다.
+MAX_BISECTIONS = 3
+
 _DC = dict(type="dc", solver_type="direct")
 
 #: 수렴 기준. DevSim 자체 MOS 시험(`testing/mos_2d_create.py`)의 값을 그대로 쓴다.
@@ -59,6 +65,21 @@ _DC = dict(type="dc", solver_type="direct")
 #: 같은 자리에서 멈췄으므로 메시가 아니라 이 기준이 원인이었다.
 _EQUILIBRIUM = dict(absolute_error=1.0e-13, relative_error=1.0e-12, maximum_iterations=30)
 _TRANSPORT = dict(absolute_error=1.0e30, relative_error=1.0e-5, maximum_iterations=30)
+
+#: 엄격한 기준으로 안 풀렸을 때 **한 번만** 느슨하게 다시 본다.
+#:
+#: 어려운 바이어스에서 뉴턴이 한계 순환에 빠지는 일이 있다 — 실측한 CMOS
+#: 인버터 부하선에서 RelError 가 4.4e-3 과 3.8e-5 사이를 오가며 1e-5 아래로
+#: 내려가지 못했다. 그때 AbsError 는 내내 2.5e4 였다. 실제로 전류가 흐를 때의
+#: 절대오차가 1e16~1e18 인 것과 견주면 사실상 0 이다. 즉 **답은 이미 충분히
+#: 정확한데 상대 기준만 못 넘고 있었다.**
+#:
+#: 기본을 느슨하게 하지 않는 이유: 지금 기준으로 잘 풀리는 결과들(검증해 둔
+#: nMOS I-V 포함)을 건드리지 않기 위해서다. 막힌 점만 이 기준으로 구제하고,
+#: 몇 점이 그렇게 구제됐는지 결과에 적어 둔다.
+_TRANSPORT_RELAXED = dict(
+    absolute_error=1.0e30, relative_error=1.0e-4, maximum_iterations=50
+)
 
 
 def load() -> dict:
@@ -234,6 +255,8 @@ class Solver:
         self.payload = payload
         self.groups = contact_bias_names(payload)
         self.applied: dict[str, float] = {name: 0.0 for name in self.groups}
+        #: 느슨한 기준으로 구제한 solve 횟수.
+        self.relaxed = 0
 
     def _set(self, bias: str, value: float) -> None:
         for contact in self.groups[bias]:
@@ -242,30 +265,79 @@ class Solver:
             )
 
     def solve(self) -> None:
-        ds.solve(**_TRANSPORT, **_DC)
+        """푼다. 엄격한 기준으로 안 되면 한 번만 느슨하게 다시 본다.
 
-    def ramp_to(self, bias: str, target: float) -> None:
-        """전압을 조금씩 옮긴다. 한 번에 뛰면 뉴턴이 못 따라간다.
+        느슨한 쪽으로 풀린 횟수는 세어 둔다 — 결과의 품질을 사용자가 알아야
+        한다. 이유는 `_TRANSPORT_RELAXED` 주석 참조.
+        """
+        try:
+            ds.solve(**_TRANSPORT, **_DC)
+            return
+        except Exception:
+            pass
+        ds.solve(**_TRANSPORT_RELAXED, **_DC)
+        self.relaxed += 1
 
-        실패하면 **걸어 둔 전압을 원래대로 되돌리고** 예외를 그대로 올린다.
-        중간까지 올라간 채로 두면 다음 점이 어디서 출발하는지 알 수 없다.
+    def _try(self, bias: str, value: float) -> bool:
+        """한 걸음 딛어 본다. 성공하면 그 자리를 굳히고 참."""
+        self._set(bias, value)
+        try:
+            self.solve()
+        except Exception:
+            # 못 풀었으면 걸어 둔 전압을 되돌린다. 남겨 두면 다음 시도가
+            # 어디서 출발하는지 알 수 없다.
+            self._set(bias, self.applied[bias])
+            return False
+        self.applied[bias] = value
+        return True
+
+    def reached(self, bias: str, target: float) -> float:
+        """목표까지 갈 수 있는 데까지 가고, **닿은 전압**을 돌려준다.
+
+        `ramp_to` 와 달리 실패해도 예외를 내지 않고, 되돌리지도 않는다.
+        벽에 부딪힌 자리를 그대로 붙들고 있는다.
+
+        **걸음이 실패하면 반으로 줄여 다시 딛는다.** 이것이 없으면 0.25 V 로
+        못 넘는 자리에서 그냥 포기했고, 더 나쁘게는 그 뒤의 모든 점이 같은
+        자리에서 출발해 같은 첫 걸음을 다시 밟아 반드시 같이 실패했다
+        (실측: CMOS 인버터 부하선 38 점 중 27 점이 그렇게 버려졌는데,
+        정작 진짜로 어려운 점은 하나였다).
         """
         current = self.applied[bias]
         span = target - current
         if span == 0.0:
-            # 이미 그 전압이다. 한 번 더 푸는 것은 같은 답을 다시 얻는 일이다.
-            return
-        steps = max(1, int(abs(span) / MAX_BIAS_STEP + 0.999))
-        for index in range(1, steps + 1):
-            value = current + span * index / steps
-            self._set(bias, value)
-            try:
-                self.solve()
-            except Exception:
-                self._set(bias, current)
-                self.applied[bias] = current
-                raise
-            self.applied[bias] = value
+            return current
+
+        step = MAX_BIAS_STEP
+        shrinks = 0
+        while True:
+            remaining = target - self.applied[bias]
+            if abs(remaining) <= 1e-12:
+                return self.applied[bias]
+            reach = min(step, abs(remaining))
+            value = self.applied[bias] + reach * (1.0 if remaining > 0 else -1.0)
+            if self._try(bias, value):
+                continue
+            if shrinks >= MAX_BISECTIONS:
+                return self.applied[bias]
+            step /= 2.0
+            shrinks += 1
+
+    def ramp_to(self, bias: str, target: float) -> None:
+        """전압을 목표까지 옮긴다. 한 번에 뛰면 뉴턴이 못 따라간다.
+
+        닿지 못하면 **걸어 둔 전압을 원래대로 되돌리고** 예외를 올린다.
+        중간까지 올라간 채로 두면 다음 점이 어디서 출발하는지 알 수 없다.
+        """
+        current = self.applied[bias]
+        landed = self.reached(bias, target)
+        if abs(landed - target) > 1e-12:
+            self._set(bias, current)
+            self.applied[bias] = current
+            raise RuntimeError(
+                f"{bias} 를 {target:g} V 까지 올리지 못했습니다 "
+                f"({landed:g} V 에서 막힘)"
+            )
 
     def reset_to(self, applied: dict[str, float]) -> None:
         """걸어 둔 전압을 통째로 되돌린다. 해를 되돌릴 때 같이 부른다."""
@@ -384,19 +456,25 @@ def run(payload: dict) -> dict:
 
             # 이 곡선의 시작 상태. 다음 곡선이 여기로 돌아온다.
             curve_start = (snapshot(payload), dict(solver.applied))
-            good, good_bias = curve_start[0], curve_start[1]
 
             for value in sweep_values:
-                try:
-                    solver.ramp_to(sweep_name, value)
-                except Exception as error:
-                    restore(good)
-                    solver.reset_to(good_bias)
-                    give_up(combination, value, error)
+                # **간 만큼은 지킨다.** 예전에는 못 닿으면 마지막으로 성공한
+                # 자리로 되돌렸는데, 그러면 다음 점이 같은 자리에서 출발해
+                # 방금 실패한 그 첫 걸음을 다시 밟는다 — 반드시 또 실패한다.
+                # 그래서 어려운 점 하나가 곡선의 나머지를 통째로 무너뜨렸다
+                # (실측: 38 점 중 27 점이 그렇게 버려졌다).
+                #
+                # `reached` 가 서는 자리는 언제나 실제로 풀린 해이므로, 거기
+                # 그대로 두고 다음 목표로 이어 걸으면 된다.
+                landed = solver.reached(sweep_name, value)
+                if abs(landed - value) > 1e-12:
+                    give_up(
+                        combination,
+                        value,
+                        RuntimeError(f"{landed:g} V 에서 막혔습니다"),
+                    )
                     continue
 
-                good = snapshot(payload)
-                good_bias = dict(solver.applied)
                 row = {
                     "sweep": value,
                     "steps": dict(combination),

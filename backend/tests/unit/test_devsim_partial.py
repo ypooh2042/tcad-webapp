@@ -157,3 +157,36 @@ class TestRemeshRunsInTheJobDirectory:
         )
         service.run_device_simulation(spec, tmp_path)
         assert seen["workdir"] == tmp_path
+
+
+class TestDeviceTimeout:
+    """소자 해석 상한은 **큰 구조**를 기준으로 잡아야 한다.
+
+    실측 두 가지:
+      nmos.in  재메시 후  8,143 노드 — 바이어스 점당 약 1.6 초
+      cmos.in  재메시 후 50,062 노드 — 바이어스 점당 약  20 초
+
+    직접 솔버라 노드 수에 대해 초선형으로 는다(6.1 배 노드에 12.5 배 시간).
+    900 초로는 큰 구조에서 45 점밖에 못 돌린다 — 실제로 42 점짜리 인버터
+    부하선이 중간에 잘렸다.
+    """
+
+    #: 이 구조에서 실측한 점당 시간(초).
+    SECONDS_PER_POINT_ON_A_BIG_STRUCTURE = 20
+
+    def test_allows_a_full_sweep_on_the_big_structure(self) -> None:
+        from app.devsim.service import DEFAULT_LIMITS
+        from app.devsim.spec import MAX_TOTAL_POINTS
+
+        needed = MAX_TOTAL_POINTS * self.SECONDS_PER_POINT_ON_A_BIG_STRUCTURE
+        assert DEFAULT_LIMITS.timeout_seconds >= needed, (
+            f"상한을 다 쓴 해석이 {needed} 초 걸리는데 "
+            f"{DEFAULT_LIMITS.timeout_seconds} 초에서 잘립니다"
+        )
+
+    def test_is_longer_than_the_suprem_default(self) -> None:
+        """공정 실행보다 길어야 한다. 짧으면 큰 해석이 늘 잘린다."""
+        from app.core.config import Settings
+        from app.devsim.service import DEFAULT_LIMITS
+
+        assert DEFAULT_LIMITS.timeout_seconds > Settings().job_timeout_seconds
