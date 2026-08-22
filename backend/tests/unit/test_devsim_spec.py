@@ -239,3 +239,82 @@ class TestRoles:
         )
         with pytest.raises(ValidationError):
             DeviceSpec.model_validate(payload)
+
+
+class TestFloatingBias:
+    """출력 노드는 전압을 **주는** 것이 아니라 **풀어서 얻는** 것이다.
+
+    CMOS 인버터의 출력 전위는 회로가 스스로 정한다. 지금처럼 21 개 전압에
+    강제로 묶고 전류가 0 인 지점을 사람이 찾는 방식은, 입력 하나당 21 번 풀어
+    20 번을 버리는 셈이다. 게다가 자연 동작점에서 멀수록 큰 전류가 흘러
+    (실측 −440 µA/µm) 수치적으로도 어렵다.
+
+    부유를 **역할**로 둔 이유: 전압원은 여전히 전극에 1:1 로 붙어 있고 값만
+    없다. 그래서 "전극마다 전압원 하나" 를 강제하는 기존 검증과 화면 구조가
+    그대로 산다.
+    """
+
+    def test_a_floating_bias_needs_no_voltage(self) -> None:
+        payload = build()
+        payload["biases"][0]["role"] = "float"
+        payload["biases"][0].pop("value", None)
+
+        spec = DeviceSpec.model_validate(payload)
+
+        assert spec.biases[0].role is BiasRole.FLOAT
+
+    def test_a_floating_bias_must_not_carry_one(self) -> None:
+        """값을 함께 주면 무엇을 하겠다는 것인지 알 수 없다."""
+        payload = build()
+        payload["biases"][0]["role"] = "float"
+        payload["biases"][0]["value"] = 1.0
+
+        with pytest.raises(ValidationError, match="부유"):
+            DeviceSpec.model_validate(payload)
+
+    def test_all_floating_is_rejected(self) -> None:
+        """전부 부유면 기준 전위가 없다 — 전압은 늘 어딘가에 대한 차이다.
+
+        따로 검사하지 않는다. **스윕 전압원이 필수이고 스윕은 언제나 구동**
+        이므로 기존 규칙이 이미 막는다. 죽은 검증을 더하지 않으려고 이 시험이
+        그 사실을 붙들어 둔다 — 스윕 필수 규칙이 사라지면 여기서 드러난다.
+        """
+        payload = build()
+        for bias in payload["biases"]:
+            bias["role"] = "float"
+            bias.pop("value", None)
+            bias.pop("values", None)
+            bias.pop("sweep", None)
+
+        with pytest.raises(ValidationError, match="스윕"):
+            DeviceSpec.model_validate(payload)
+
+    def test_the_electrode_still_has_a_source(self) -> None:
+        """부유도 전압원이다. 그래서 '전압원 없는 전극' 규칙이 안 깨진다."""
+        payload = build()
+        payload["biases"][0]["role"] = "float"
+        payload["biases"][0].pop("value", None)
+
+        spec = DeviceSpec.model_validate(payload)
+
+        attached = {bias.electrode for bias in spec.biases}
+        assert attached == {e.label for e in spec.electrodes}
+
+    def test_a_floating_bias_walks_no_points(self) -> None:
+        """부유 전압원은 훑을 전압이 없다. 점 수에 기여하면 안 된다."""
+        payload = build()
+        payload["biases"][0]["role"] = "float"
+        payload["biases"][0].pop("value", None)
+        spec = DeviceSpec.model_validate(payload)
+
+        assert spec.biases[0].points() == []
+
+    def test_floating_biases_are_listed(self) -> None:
+        payload = build()
+        payload["biases"][0]["role"] = "float"
+        payload["biases"][0].pop("value", None)
+        spec = DeviceSpec.model_validate(payload)
+
+        assert [b.name for b in spec.floating_biases()] == [
+            payload["biases"][0]["name"]
+        ]

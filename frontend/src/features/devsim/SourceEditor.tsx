@@ -40,6 +40,7 @@ const ROLE_LABEL: Record<BiasRole, string> = {
   sweep: '스윕 (가로축)',
   step: '단계 (곡선족)',
   const: '고정',
+  float: '부유 (풀어서 얻음)',
 }
 
 const DEFAULT_SWEEP = { start: 0, stop: 2.5, points: 6 }
@@ -169,7 +170,7 @@ export function SourceEditor({
                   )
                 }}
               >
-                {(['sweep', 'step', 'const'] as BiasRole[]).map((role) => (
+                {(['sweep', 'step', 'const', 'float'] as BiasRole[]).map((role) => (
                   <option key={role} value={role}>
                     {ROLE_LABEL[role]}
                   </option>
@@ -195,6 +196,16 @@ export function SourceEditor({
                   onChange(replaceBias(spec, index, { ...bias, values }))
                 }
               />
+            ) : null}
+
+            {bias.role === 'float' ? (
+              /* 부유는 넣을 값이 없다. 대신 무엇을 하는 것인지 적어 준다 —
+                 값 칸이 사라지기만 하면 고장으로 보인다. */
+              <p className="hint">
+                전압을 주지 않고 <strong>풀어서 얻습니다.</strong> 인버터의 출력처럼
+                회로가 스스로 정하는 전위에 씁니다. 이 전극에 전류 경로가 둘 이상
+                있어야 합니다.
+              </p>
             ) : null}
 
             {bias.role === 'sweep' ? (

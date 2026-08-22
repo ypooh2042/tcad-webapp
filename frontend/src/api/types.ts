@@ -261,7 +261,14 @@ export interface DevSimInterfaces {
 
 export type GateModel = 'semiconductor' | 'conductor'
 
-export type BiasRole = 'sweep' | 'step' | 'const'
+/**
+ * 전압원이 스윕에서 맡는 자리.
+ *
+ * `float` 는 **전압을 주지 않고 풀어서 얻는다**. 인버터의 출력 같은 노드는
+ * 전위가 미지수라, 강제하면 자연 동작점에서 멀어질수록 큰 전류가 흘러
+ * 물리적으로도 수치적으로도 어려운 문제가 된다.
+ */
+export type BiasRole = 'sweep' | 'step' | 'const' | 'float'
 
 /**
  * 전압원 하나. 전극 **하나**를 몬다.
@@ -313,6 +320,12 @@ export interface IvRow {
   steps: Record<string, number>
   /** 전압원별 전류. 단위는 A/µm. */
   currents: Record<string, number>
+  /**
+   * 부유 전압원의 **풀어서 얻은** 전위(V).
+   *
+   * 부유 노드가 없으면 키 자체가 없다 — 그래야 예전 결과와 모양이 같다.
+   */
+  voltages?: Record<string, number>
 }
 
 /** 수렴에 실패해 건너뛴 점. 조용히 빼면 값이 없다는 것도 모른 채 곡선을 읽는다. */

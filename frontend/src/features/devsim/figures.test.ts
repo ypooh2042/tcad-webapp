@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { IvDataset, IvRow } from '../../api/types'
-import { dominantBias, figuresOf, seriesOf, toMicroAmps } from './figures'
+import { dominantBias, figuresOf, floatingNames, seriesOf, toMicroAmps } from './figures'
 
 /**
  * 문턱전압 1V, 선형영역 이득 1e-4 인 교과서 nMOS 의 전달 특성.
@@ -194,5 +194,52 @@ describe('seriesOf — 단위', () => {
     const [curve] = seriesOf(transfer(), 'Vd')
     const peak = Math.max(...curve.points.map((p) => Math.abs(p.y)))
     expect(peak).toBeCloseTo(2e-4, 6)
+  })
+})
+
+describe('부유 노드 전압 곡선', () => {
+  // 부유 노드가 있으면 결과의 성격이 달라진다. 전류가 아니라 **전압**이
+  // 나오고, 인버터라면 그것이 전달특성(VTC)이다.
+  const vtc: IvDataset = {
+    sweep: 'Vin',
+    biases: ['Vin', 'Vdd', 'Vout'],
+    current_unit: 'uA/um',
+    rows: [
+      { sweep: 0, steps: {}, currents: { Vdd: 8.4e-5 }, voltages: { Vout: 5.0 } },
+      { sweep: 2, steps: {}, currents: { Vdd: 110 }, voltages: { Vout: 1.017 } },
+      { sweep: 5, steps: {}, currents: { Vdd: 5.8e-5 }, voltages: { Vout: 0.0 } },
+    ],
+    total: 3,
+    completed: 3,
+    error: null,
+  }
+
+  it('전압 계열을 뽑는다', () => {
+    const series = seriesOf(vtc, 'Vout', 'voltage')
+
+    expect(series[0].points.map((p) => p.y)).toEqual([5.0, 1.017, 0.0])
+  })
+
+  it('전압에는 µA 환산을 하지 않는다', () => {
+    // V 에 1e6 을 곱하면 5 V 가 5,000,000 이 된다.
+    const series = seriesOf(vtc, 'Vout', 'voltage')
+
+    expect(series[0].points[0].y).toBe(5.0)
+  })
+
+  it('전류 계열은 그대로 환산한다', () => {
+    const series = seriesOf(vtc, 'Vdd', 'current')
+
+    expect(series[0].points[1].y).toBeCloseTo(110, 6)
+  })
+
+  it('부유 노드 이름을 찾아준다', () => {
+    expect(floatingNames(vtc)).toEqual(['Vout'])
+  })
+
+  it('부유가 없으면 빈 목록이다', () => {
+    const plain = { ...vtc, rows: vtc.rows.map(({ voltages, ...r }) => r) }
+
+    expect(floatingNames(plain)).toEqual([])
   })
 })

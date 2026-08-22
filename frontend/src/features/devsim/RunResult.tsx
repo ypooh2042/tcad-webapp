@@ -11,7 +11,13 @@ import { devsim } from '../../api/endpoints'
 import type { IvDataset, IvFailure, JobConsole, JobDetail } from '../../api/types'
 import { formatDuration } from '../jobs/duration'
 import { useElapsed } from '../jobs/useElapsed'
-import { dominantBias, figuresOf, seriesOf } from './figures'
+import {
+  dominantBias,
+  figuresOf,
+  floatingNames,
+  seriesOf,
+  type SeriesKind,
+} from './figures'
 import { FigureTable } from './FigureTable'
 import { IvChart } from './IvChart'
 
@@ -83,8 +89,14 @@ export function RunResult({ job, output, onCancel }: Props) {
     }
   }, [job, finished])
 
+  //: 부유 노드가 있으면 결과의 성격이 달라진다. 전류가 아니라 **전압**이
+  //: 나오고, 인버터라면 그것이 전달특성(VTC)이다.
+  const floating = useMemo(() => (dataset ? floatingNames(dataset) : []), [dataset])
+  const kind: SeriesKind =
+    bias && floating.includes(bias) ? 'voltage' : 'current'
+
   const series = useMemo(
-    () => (dataset && bias ? seriesOf(dataset, bias) : []),
+    () => (dataset && bias ? seriesOf(dataset, bias, kind) : []),
     [dataset, bias],
   )
 
@@ -170,12 +182,12 @@ export function RunResult({ job, output, onCancel }: Props) {
           <div className="chart-controls">
             <select
               value={bias}
-              aria-label="볼 전류"
+              aria-label="볼 곡선"
               onChange={(event) => setBias(event.target.value)}
             >
               {(dataset?.biases ?? []).map((name) => (
                 <option key={name} value={name}>
-                  {name} 전류
+                  {floating.includes(name) ? `${name} 전압` : `${name} 전류`}
                 </option>
               ))}
             </select>
@@ -191,7 +203,11 @@ export function RunResult({ job, output, onCancel }: Props) {
           <IvChart
             series={series}
             xLabel={`${dataset?.sweep ?? '스윕'} (V)`}
-            yLabel={`I (${dataset?.current_unit ?? 'A/um'})`}
+            yLabel={
+              kind === 'voltage'
+                ? `${bias} (V)`
+                : `I (${dataset?.current_unit ?? 'A/um'})`
+            }
             logScale={logScale}
           />
           <ul className="legend">
@@ -202,12 +218,17 @@ export function RunResult({ job, output, onCancel }: Props) {
               </li>
             ))}
           </ul>
-          <FigureTable
-            rows={series.map((one) => ({
-              label: one.label || '곡선',
-              figures: figuresOf(one),
-            }))}
-          />
+          {/* 지표 표는 전류 전제다(V_th·SS·gm·R_on). 전압 곡선에 그대로 쓰면
+              뜻 없는 숫자가 나오므로 감춘다 — 낼 수 없는 값은 억지로 만들지
+              않는다는 이 파일 계열의 원칙 그대로다. */}
+          {kind === 'current' ? (
+            <FigureTable
+              rows={series.map((one) => ({
+                label: one.label || '곡선',
+                figures: figuresOf(one),
+              }))}
+            />
+          ) : null}
 
           {/* 남길 것은 사용자가 고른다. 돌린 것을 전부 쌓으면 비교 목록에서
               정작 보고 싶은 둘을 찾아야 한다. */}

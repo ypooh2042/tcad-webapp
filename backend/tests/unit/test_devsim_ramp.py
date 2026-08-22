@@ -26,7 +26,9 @@ class FakeSolver(run.Solver):
 
     def __init__(self, fails):
         self.payload = {}
-        self.relaxed = 0
+        # 카운터·상태는 진짜 Solver 것을 그대로 쓴다. 여기서 손으로 나열하면
+        # `Solver` 에 속성이 하나 늘 때마다 이 픽스처가 깨진다 — 실제로 깨졌다.
+        run.Solver._reset_counters(self)
         self.groups = {"V": ["c"]}
         self.applied = {"V": 0.0}
         self.pending = 0.0
@@ -161,8 +163,8 @@ class TestRelaxedRetry:
 
         def fake_solve(**kwargs):
             calls.append(kwargs["relative_error"])
-            if kwargs["relative_error"] == run._TRANSPORT["relative_error"]:
-                raise RuntimeError("Convergence failure!")
+            strict = kwargs["relative_error"] == run._TRANSPORT["relative_error"]
+            return {"converged": not strict, "iterations": [{}]}
 
         monkeypatch.setattr(run.ds, "solve", fake_solve)
         solver = FakeSolver(lambda value: False)
@@ -175,7 +177,9 @@ class TestRelaxedRetry:
         ]
 
     def test_an_easy_solve_never_relaxes(self, monkeypatch) -> None:
-        monkeypatch.setattr(run.ds, "solve", lambda **kwargs: None)
+        monkeypatch.setattr(
+            run.ds, "solve", lambda **kwargs: {"converged": True, "iterations": [{}]}
+        )
         solver = FakeSolver(lambda value: False)
 
         run.Solver.solve(solver)
@@ -192,3 +196,318 @@ class TestRelaxedRetry:
 
         with pytest.raises(Exception):
             run.Solver.solve(solver)
+
+
+class TestInfoSolveStillRaises:
+    """`info=True` 는 **실패 계약을 바꾼다.** 이 시험이 그것을 못 박는다.
+
+    실측 확인:
+
+        info 없이 : 예외를 올린다   devsim.error("Convergence failure!")
+        info=True : 예외 없이 반환   {"converged": False, "iterations": [...]}
+
+    `Solver.solve`·`_try`·`ramp_to`·`reached` 는 전부 **예외로** 실패를 판정한다.
+    `info=True` 를 그냥 끼우면 모든 수렴 실패가 조용히 성공으로 둔갑하고,
+    발산한 값으로 전류를 읽어 **틀린 곡선을 정상 결과로 내보낸다.**
+    계측을 넣는 일이 가장 무해해 보이지만, 조용히 틀릴 수 있는 자리는 여기뿐이다.
+    """
+
+    def _reply(self, converged: bool, iterations: int = 3):
+        return {
+            "converged": converged,
+            "iterations": [
+                {
+                    "iteration": i,
+                    "devices": [
+                        {
+                            "name": "device",
+                            "absolute_error": 2.5e4,
+                            "relative_error": 4.4e-3,
+                            "regions": [
+                                {
+                                    "name": "r1_silicon",
+                                    "equations": [
+                                        {
+                                            "name": "ElectronContinuityEquation",
+                                            "absolute_error": 1.6e4,
+                                            "relative_error": 4.4e-3,
+                                            "absolute_error_node": 12345,
+                                            "relative_error_node": 12345,
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+                for i in range(iterations)
+            ],
+        }
+
+    def test_not_converged_must_raise(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            run.ds, "solve", lambda **kw: self._reply(converged=False)
+        )
+        solver = FakeSolver(lambda v: False)
+
+        with pytest.raises(Exception):
+            run.Solver.solve(solver)
+
+    def test_a_silent_failure_is_never_counted_as_a_rescue(self, monkeypatch) -> None:
+        """둘 다 안 풀렸으면 구제된 것이 아니다. relaxed 가 올라가면 안 된다."""
+        monkeypatch.setattr(
+            run.ds, "solve", lambda **kw: self._reply(converged=False)
+        )
+        solver = FakeSolver(lambda v: False)
+
+        with pytest.raises(Exception):
+            run.Solver.solve(solver)
+
+        assert solver.relaxed == 0
+
+    def test_strict_fail_then_relaxed_success_counts_as_a_rescue(
+        self, monkeypatch
+    ) -> None:
+        seen = []
+
+        def fake(**kw):
+            seen.append(kw["relative_error"])
+            ok = kw["relative_error"] != run._TRANSPORT["relative_error"]
+            return self._reply(converged=ok)
+
+        monkeypatch.setattr(run.ds, "solve", fake)
+        solver = FakeSolver(lambda v: False)
+
+        run.Solver.solve(solver)
+
+        assert solver.relaxed == 1
+        assert seen == [
+            run._TRANSPORT["relative_error"],
+            run._TRANSPORT_RELAXED["relative_error"],
+        ]
+
+    def test_the_message_names_what_blocked_it(self, monkeypatch) -> None:
+        """막힌 자리를 문구에 담는다 — 이 문구가 결과 파일의 `reason` 이 된다.
+
+        지금은 어느 노드가 수렴을 막았는지 알려면 사람이 로그를 읽어야 한다.
+        """
+        monkeypatch.setattr(
+            run.ds, "solve", lambda **kw: self._reply(converged=False)
+        )
+        solver = FakeSolver(lambda v: False)
+
+        with pytest.raises(Exception) as caught:
+            run.Solver.solve(solver)
+
+        message = str(caught.value)
+        assert "ElectronContinuityEquation" in message
+        assert "12345" in message
+
+    def test_a_real_devsim_exception_is_still_raised(self, monkeypatch) -> None:
+        """특이 행렬 같은 진짜 예외는 여전히 그대로 올라와야 한다."""
+        def explode(**kw):
+            raise RuntimeError("Convergence failure!")
+
+        monkeypatch.setattr(run.ds, "solve", explode)
+        solver = FakeSolver(lambda v: False)
+
+        with pytest.raises(Exception, match="Convergence failure"):
+            run.Solver.solve(solver)
+
+    def test_newton_iterations_are_counted(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            run.ds, "solve", lambda **kw: self._reply(converged=True, iterations=7)
+        )
+        solver = FakeSolver(lambda v: False)
+
+        run.Solver.solve(solver)
+
+        assert solver.newton == 7
+        assert solver.solves == 1
+
+
+class TestDevsimRollsBackItself:
+    """실패한 solve 뒤에 노드 값을 **우리가** 되돌릴 필요는 없다.
+
+    한때 "실패하면 뉴턴이 헤매다 만 값이 장치에 남아 다음 걸음이 거기서
+    출발한다"고 보고 복원 코드를 넣었다. 벤치마크 결과가 비트 단위로 같았고,
+    실제로 재 보니 **DevSim 이 스스로 되돌린다** — 강제로 실패시킨 뒤 노드 값
+    변화가 정확히 0.000e+00 V 였다.
+
+    이 시험은 그 사실을 붙들어 둔다. DevSim 이 이 성질을 잃으면 여기서 깨지고,
+    그때는 복원 코드가 필요해진다.
+    """
+
+    def test_a_failed_solve_leaves_the_previous_solution(self) -> None:
+        import devsim as ds
+
+        ds.reset_devsim()
+        ds.create_1d_mesh(mesh="m")
+        ds.add_1d_mesh_line(mesh="m", pos=0, ps=1e-7, tag="l")
+        ds.add_1d_mesh_line(mesh="m", pos=1e-4, ps=1e-7, tag="r")
+        ds.add_1d_contact(mesh="m", name="c0", tag="l", material="metal")
+        ds.add_1d_contact(mesh="m", name="c1", tag="r", material="metal")
+        ds.add_1d_region(mesh="m", material="Si", region="r", tag1="l", tag2="r")
+        ds.finalize_mesh(mesh="m")
+        ds.create_device(mesh="m", device="d")
+
+        from devsim.python_packages.simple_physics import (
+            CreateSiliconPotentialOnly,
+            CreateSiliconPotentialOnlyContact,
+            CreateSolution,
+            GetContactBiasName,
+            SetSiliconParameters,
+        )
+
+        SetSiliconParameters("d", "r", 300)
+        CreateSolution("d", "r", "Potential")
+        ds.node_model(device="d", region="r", name="NetDoping", equation="1e18")
+        CreateSiliconPotentialOnly("d", "r")
+        for contact in ("c0", "c1"):
+            ds.set_parameter(device="d", name=GetContactBiasName(contact), value=0.0)
+            CreateSiliconPotentialOnlyContact("d", "r", contact)
+        ds.solve(type="dc", absolute_error=1e-13, relative_error=1e-12,
+                 maximum_iterations=30)
+
+        before = list(ds.get_node_model_values(device="d", region="r", name="Potential"))
+        # 못 풀 조건: 큰 바이어스에 반복 2회
+        ds.set_parameter(device="d", name=GetContactBiasName("c0"), value=30.0)
+        with pytest.raises(Exception):
+            ds.solve(type="dc", absolute_error=1e-13, relative_error=1e-12,
+                     maximum_iterations=2)
+
+        after = list(ds.get_node_model_values(device="d", region="r", name="Potential"))
+        assert after == before, "DevSim 이 더는 스스로 되돌리지 않는다 — 복원 코드가 필요하다"
+
+
+class TestFloatingContactsInRunPy:
+    """부유 전압원을 회로 노드로 만드는 자리.
+
+    실측으로 확인한 지뢰 둘을 여기서 막는다.
+
+    **1. `set_parameter` 가 회로 별칭을 덮어쓴다.** `run.py` 는 지금 모든
+    접촉에 `set_parameter(GetContactBiasName(...))` 를 건다. 그 파라미터가
+    존재하면 `circuit_node_alias` 가 무력화되고, 조용히 틀리는 것이 아니라
+    **수렴 자체가 깨진다**(출력이 0 에 붙박이).
+
+    **2. 전위만 푸는 평형 단계에서는 회로 노드 행이 빈다.**
+    `CreateSiliconPotentialOnlyContact(is_circuit=True)` 가 만드는 접촉
+    방정식에는 전하만 있고 전류 모델이 없어서(`simple_physics.py:229-241`),
+    평형 단계에서는 전류가 노드로 안 들어가 행렬이 특이해진다. 그래서 접지로
+    가는 아주 큰 저항을 상시 매단다 — 1e12 Ω 이면 5 V 에서 5 pA 라 µA 대
+    전류에 영향이 없다.
+    """
+
+    def test_the_source_skips_set_parameter_for_floating_contacts(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[3] / "docker" / "devsim" / "run.py"
+        ).read_text()
+        # set_parameter 를 거는 자리 **바로 앞**에 부유 여부를 가르는 분기가
+        # 있어야 한다. 앞뒤 20 줄 안에서 찾는다.
+        lines = source.splitlines()
+        at = next(
+            i for i, line in enumerate(lines)
+            if "GetContactBiasName(contact[" in line and "set_parameter" in
+            "".join(lines[max(0, i - 3): i + 1])
+        )
+        around = "\n".join(lines[max(0, at - 20): at + 1])
+
+        assert "is_floating" in around, (
+            "부유 접촉에 set_parameter 를 걸면 회로 별칭이 무력화되어 "
+            f"수렴이 깨진다 — 반드시 건너뛰어야 한다. 본 자리:\n{around}"
+        )
+
+    def test_a_shunt_resistor_is_attached(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[3] / "docker" / "devsim" / "run.py"
+        ).read_text()
+
+        assert "circuit_element" in source, "부유 노드에 접지 경로가 필요하다"
+        assert "SHUNT_OHMS" in source
+
+    def test_the_shunt_is_large_enough_to_ignore(self) -> None:
+        import importlib
+
+        module = importlib.import_module("run")
+        importlib.reload(module)
+        # 5 V 에서 흐르는 전류가 µA 대 신호의 100 만분의 1 아래여야 한다.
+        leak_amps = 5.0 / module.SHUNT_OHMS
+        assert leak_amps < 1e-9, f"{leak_amps:.1e} A 는 무시할 수 없다"
+
+
+class TestSolverLeavesFloatingAlone:
+    """부유 전압원은 **걸어 주는** 대상이 아니다.
+
+    `_set` 은 `ds.set_parameter` 를 부른다. 부유 접촉에 그걸 걸면 회로 별칭이
+    무력화되어 수렴이 깨진다 — 접촉을 만들 때만이 아니라 스윕 도중에도
+    마찬가지다. 그래서 `Solver` 가 아예 그 전압원을 모르게 한다.
+    """
+
+    def payload(self):
+        return {
+            "contacts": [
+                {"name": "c1", "bias": "Vin", "region": "r"},
+                {"name": "c2", "bias": "Vout", "region": "r"},
+                {"name": "c3", "bias": "Vout", "region": "r2"},
+            ],
+            "plan": {"floating": ["Vout"]},
+            "regions": [],
+        }
+
+    def test_floating_sources_are_not_drivable(self) -> None:
+        groups = run.contact_bias_names(self.payload())
+
+        assert "Vin" in groups
+        assert "Vout" not in groups, "부유는 걸어 줄 대상이 아니다"
+
+    def test_a_driven_source_keeps_all_its_contacts(self) -> None:
+        payload = self.payload()
+        payload["plan"]["floating"] = []
+
+        groups = run.contact_bias_names(payload)
+
+        assert sorted(groups) == ["Vin", "Vout"]
+        assert groups["Vout"] == ["c2", "c3"]
+
+    def test_currents_still_report_the_floating_electrode(self) -> None:
+        """전류는 여전히 읽어야 한다. 부유여도 전류는 흐른다."""
+        source = (
+            Path(__file__).resolve().parents[3] / "docker" / "devsim" / "run.py"
+        ).read_text()
+        body = source[source.index("def currents") :]
+        body = body[: body.index("\n\n")]
+
+        assert "floating" not in body, (
+            "currents() 는 부유를 걸러내면 안 된다 — 전류는 접촉마다 읽는다"
+        )
+
+
+class TestFloatingVoltagesInTheResult:
+    """풀어서 얻은 전압이 결과에 실려야 한다.
+
+    이것이 이 기능의 산출물이다 — 전류 곡선이 아니라 **전압 곡선**(VTC)이
+    나온다. `_read_dataset`(`service.py`)과 `scan_devsim_progress` 는 행 dict 를
+    통째로 다루므로 키가 늘어도 그대로 통과한다.
+    """
+
+    def test_the_solver_can_read_a_circuit_node(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[3] / "docker" / "devsim" / "run.py"
+        ).read_text()
+
+        assert "get_circuit_node_value" in source
+
+    def test_rows_carry_the_voltages(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[3] / "docker" / "devsim" / "run.py"
+        ).read_text()
+        tail = source[source.index('"currents": solver.currents()') :]
+
+        assert '"voltages"' in tail[:400], "행에 전압을 실어야 한다"
+
+    def test_no_floating_means_no_extra_key(self) -> None:
+        """부유가 없으면 행 모양이 예전과 같아야 한다 — 기존 결과와 섞이므로."""
+        solver = FakeSolver(lambda v: False)
+        solver.payload = {"plan": {"floating": []}, "contacts": [], "regions": []}
+
+        assert run.Solver.voltages(solver) == {}

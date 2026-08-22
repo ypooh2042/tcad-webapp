@@ -43,11 +43,21 @@ class BiasRole(str, Enum):
     `SWEEP` 안쪽 루프. 정확히 하나. 곡선의 x 축이 된다.
     `STEP`  바깥 루프. 곡선족을 만든다(Id-Vd 의 Vgs).
     `CONST` 고정. 보통 소스와 기판이 0 이다.
+    `FLOAT` **부유.** 전압을 주지 않고 풀어서 얻는다.
+
+    부유가 왜 필요한가: 인버터의 출력 같은 노드는 전위가 **미지수**다. 회로가
+    스스로 정한다. 그걸 전압으로 강제하면 자연 동작점에서 멀어질수록 큰 전류가
+    흘러(실측 −440 µA/µm) 물리적으로도 수치적으로도 어려운 문제가 된다.
+
+    부유를 전극이 아니라 **역할**로 둔 이유: 전압원은 여전히 전극에 1:1 로
+    붙어 있고 값만 없다. 그래서 "전극마다 전압원 하나" 를 강제하는 검증과
+    화면 구조가 그대로 산다.
     """
 
     SWEEP = "sweep"
     STEP = "step"
     CONST = "const"
+    FLOAT = "float"
 
 
 class ElectrodeChoice(BaseModel):
@@ -114,12 +124,21 @@ class Bias(BaseModel):
             raise ValueError(f"{self.name}: 단계 전압원에는 전압 목록이 필요합니다")
         if self.role is BiasRole.SWEEP and self.sweep is None:
             raise ValueError(f"{self.name}: 스윕 전압원에는 스윕 범위가 필요합니다")
+        if self.role is BiasRole.FLOAT and (
+            self.value is not None or self.values or self.sweep is not None
+        ):
+            raise ValueError(
+                f"{self.name}: 부유 전압원에는 전압을 주지 않습니다 "
+                "(풀어서 얻는 값입니다)"
+            )
         if self.values and any(abs(v) > MAX_ABS_VOLTS for v in self.values):
             raise ValueError(f"{self.name}: 전압이 너무 큽니다")
         return self
 
     def points(self) -> list[float]:
-        """이 전압원이 훑는 전압들."""
+        """이 전압원이 훑는 전압들. 부유는 훑을 것이 없다."""
+        if self.role is BiasRole.FLOAT:
+            return []
         if self.role is BiasRole.CONST:
             return [self.value or 0.0]
         if self.role is BiasRole.STEP:
@@ -160,6 +179,10 @@ class DeviceSpec(BaseModel):
     def step_biases(self) -> list[Bias]:
         return [b for b in self.biases if b.role is BiasRole.STEP]
 
+    def floating_biases(self) -> list[Bias]:
+        """전압을 주지 않고 풀어서 얻는 전압원들. 회로 노드가 된다."""
+        return [b for b in self.biases if b.role is BiasRole.FLOAT]
+
     def const_biases(self) -> list[Bias]:
         return [b for b in self.biases if b.role is BiasRole.CONST]
 
@@ -199,18 +222,20 @@ class DeviceSpec(BaseModel):
             raise ValueError("스윕 전압원은 정확히 하나여야 합니다")
 
         known = set(labels)
-        driven: dict[str, str] = {}
+        # 이름이 `driven` 이 아니라 `attached` 인 이유: 부유 전압원은 붙어
+        # 있지만 구동하지는 않는다.
+        attached: dict[str, str] = {}
         for bias in self.biases:
             if bias.electrode not in known:
                 raise ValueError(f"{bias.electrode!r} 라는 전극이 없습니다")
-            if bias.electrode in driven:
+            if bias.electrode in attached:
                 raise ValueError(
                     f"전극 {bias.electrode!r} 에 전압원이 둘"
-                    f"({driven[bias.electrode]}, {bias.name}) 붙어 있습니다"
+                    f"({attached[bias.electrode]}, {bias.name}) 붙어 있습니다"
                 )
-            driven[bias.electrode] = bias.name
+            attached[bias.electrode] = bias.name
 
-        loose = known - set(driven)
+        loose = known - set(attached)
         if loose:
             raise ValueError(
                 f"전압원이 없는 전극이 있습니다: {', '.join(sorted(loose))}"

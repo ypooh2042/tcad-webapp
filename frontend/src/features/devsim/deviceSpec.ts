@@ -305,6 +305,14 @@ export function problemsOf(spec: DeviceSpec): string[] {
     if (bias.role === 'step' && !(bias.values ?? []).length) {
       problems.push(`${bias.name}: 단계 전압을 하나 이상 넣어 주세요.`)
     }
+    if (
+      bias.role === 'float' &&
+      (bias.value !== undefined || bias.values?.length || bias.sweep)
+    ) {
+      problems.push(
+        `${bias.name}: 부유 전압원에는 전압을 주지 않습니다 (풀어서 얻는 값입니다).`,
+      )
+    }
   }
 
   const undriven = labels.filter((label) => !driven.has(label))

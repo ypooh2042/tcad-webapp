@@ -250,3 +250,58 @@ class TestEmptyElectrode:
 
         with pytest.raises(ElectrodeNotFound, match="그런계면없음"):
             restorable(contacts, spec)
+
+
+class TestFloatingInThePlan:
+    """부유 전압원은 컨테이너가 **회로 노드**로 만들어야 한다.
+
+    그러려면 어느 전압원이 부유인지 페이로드에 실려야 한다. 접촉에는 이미
+    `"bias"` 가 있어 소속을 알 수 있으므로, 이름 목록 하나만 더하면 된다.
+    """
+
+    def _floating(self, label: str = "B"):
+        payload = spec_payload()
+        for bias in payload["biases"]:
+            if bias["electrode"] == label:
+                bias["role"] = "float"
+                bias.pop("value", None)
+        return payload
+
+    def test_the_plan_names_the_floating_sources(self, contacts) -> None:
+        spec = DeviceSpec.model_validate(self._floating())
+
+        built = build_payload(contacts, spec)
+
+        assert built["plan"]["floating"] == ["Vb"]
+
+    def test_no_floating_means_an_empty_list(self, contacts) -> None:
+        """키는 늘 있어야 한다. 없을 때만 다르게 읽으면 컨테이너가 갈린다."""
+        spec = DeviceSpec.model_validate(spec_payload())
+
+        built = build_payload(contacts, spec)
+
+        assert built["plan"]["floating"] == []
+
+    def test_a_floating_source_is_not_a_constant(self, contacts) -> None:
+        """부유는 걸어 줄 전압이 없다. constants 에 섞이면 0 V 로 구동된다."""
+        spec = DeviceSpec.model_validate(self._floating())
+
+        built = build_payload(contacts, spec)
+
+        assert "Vb" not in built["plan"]["constants"]
+
+    def test_its_contacts_still_carry_the_bias_name(self, contacts) -> None:
+        """접촉이 어느 회로 노드에 붙는지 이 이름으로 안다."""
+        spec = DeviceSpec.model_validate(self._floating())
+
+        built = build_payload(contacts, spec)
+
+        floating = [c for c in built["contacts"] if c["bias"] == "Vb"]
+        assert floating, built["contacts"]
+
+    def test_the_point_count_ignores_floating(self, contacts) -> None:
+        spec = DeviceSpec.model_validate(self._floating())
+
+        built = build_payload(contacts, spec)
+
+        assert built["plan"]["total"] == 3 * 2  # 스윕 3점 × 단계 2개

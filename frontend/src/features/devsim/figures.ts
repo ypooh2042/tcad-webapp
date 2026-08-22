@@ -95,7 +95,27 @@ export function dominantBias(dataset: IvDataset): string | null {
 }
 
 /** 단계 조합마다 곡선 하나. 스윕 값 순으로 정렬한다. */
-export function seriesOf(dataset: IvDataset, bias: string): Series[] {
+/**
+ * 결과에서 **풀어서 얻은** 전압을 가진 전압원 이름들.
+ *
+ * 부유 노드가 없으면 행에 `voltages` 키 자체가 없어 빈 목록이 된다.
+ */
+export function floatingNames(dataset: IvDataset): string[] {
+  const names = new Set<string>()
+  for (const row of dataset.rows) {
+    for (const name of Object.keys(row.voltages ?? {})) names.add(name)
+  }
+  return [...names].sort()
+}
+
+/** 곡선의 세로축이 무엇인가. 전압에는 전류 환산을 하면 안 된다. */
+export type SeriesKind = 'current' | 'voltage'
+
+export function seriesOf(
+  dataset: IvDataset,
+  bias: string,
+  kind: SeriesKind = 'current',
+): Series[] {
   const grouped = new Map<string, Series>()
   for (const row of dataset.rows) {
     const key = JSON.stringify(row.steps)
@@ -112,7 +132,11 @@ export function seriesOf(dataset: IvDataset, bias: string): Series[] {
     }
     series.points.push({
       x: row.sweep,
-      y: toMicroAmps(row.currents[bias] ?? 0, dataset.current_unit),
+      // 전압은 이미 V 다. `toMicroAmps` 를 태우면 5 V 가 5,000,000 이 된다.
+      y:
+        kind === 'voltage'
+          ? (row.voltages?.[bias] ?? 0)
+          : toMicroAmps(row.currents[bias] ?? 0, dataset.current_unit),
     })
   }
   const result = [...grouped.values()]

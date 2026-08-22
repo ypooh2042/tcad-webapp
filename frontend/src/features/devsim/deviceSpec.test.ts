@@ -1,3 +1,4 @@
+import type { DeviceSpec } from '../../api/types'
 import { describe, expect, it } from 'vitest'
 import type { DevSimInterface } from '../../api/types'
 import {
@@ -397,5 +398,59 @@ describe('기본 조건', () => {
     const sweep = defaultSpec(MOSFET).biases.find((b) => b.role === 'sweep')
     expect(sweep?.sweep).toEqual({ start: 0, stop: 2.5, points: 6 })
     expect(sweepGap(0, 2.5, 6)).toBeCloseTo(0.5)
+  })
+})
+
+describe('부유 전압원', () => {
+  // 출력 노드의 전위는 **미지수**다. 회로가 스스로 정한다. 전압으로 강제하면
+  // 자연 동작점에서 멀어질수록 큰 전류가 흘러(실측 −440 µA/µm) 물리적으로도
+  // 수치적으로도 어려운 문제가 된다.
+  //
+  // 부유를 전극이 아니라 **역할**로 둔 덕에 "전극마다 전압원 하나" 전제가
+  // 그대로 산다 — 전압원은 붙어 있고 값만 없다.
+  function withFloat(): DeviceSpec {
+    const spec = defaultSpec(MOSFET)
+    return {
+      ...spec,
+      biases: spec.biases.map((bias, index) =>
+        index === 0
+          ? { name: bias.name, electrode: bias.electrode, role: 'float' as const }
+          : bias,
+      ),
+    }
+  }
+
+  it('부유는 전압을 갖지 않아도 된다', () => {
+    expect(problemsOf(withFloat())).toEqual([])
+  })
+
+  it('전압을 함께 주면 짚어준다', () => {
+    const spec = withFloat()
+    spec.biases[0] = { ...spec.biases[0], value: 1.5 }
+
+    expect(problemsOf(spec).join()).toMatch(/부유/)
+  })
+
+  it('전극은 여전히 전압원을 갖는다', () => {
+    // 이 규칙이 안 깨지는 것이 역할 방식을 고른 이유다.
+    expect(problemsOf(withFloat()).join()).not.toMatch(/전압원이 없는/)
+  })
+
+  it('부유는 점 수를 늘리지 않는다', () => {
+    expect(pointCount(withFloat())).toBe(pointCount(defaultSpec(MOSFET)))
+  })
+
+  it('전부 부유면 스윕이 없다고 짚는다', () => {
+    const spec = defaultSpec(MOSFET)
+    const all = {
+      ...spec,
+      biases: spec.biases.map((bias) => ({
+        name: bias.name,
+        electrode: bias.electrode,
+        role: 'float' as const,
+      })),
+    }
+
+    expect(problemsOf(all).join()).toMatch(/스윕/)
   })
 })

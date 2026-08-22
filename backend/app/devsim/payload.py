@@ -81,6 +81,10 @@ def build_payload(
         "sweep": {"bias": sweep.name, "values": sweep.points()},
         "steps": spec.step_combinations(),
         "constants": {bias.name: bias.points()[0] for bias in spec.const_biases()},
+        #: 전압을 주지 않고 **풀어서 얻을** 전압원들. 컨테이너가 이 이름으로
+        #: 회로 노드를 만들고, 같은 이름을 `bias` 로 가진 접촉들을 거기 건다.
+        #: 없을 때도 키는 있다 — 컨테이너가 두 갈래로 갈리지 않게.
+        "floating": [bias.name for bias in spec.floating_biases()],
         "total": total_points(spec),
     }
 
